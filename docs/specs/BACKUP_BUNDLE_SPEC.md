@@ -142,7 +142,12 @@ snapshot staging drops a bundle's staged config and cookies (before the
 database swap, under one staging lock — v0.51.341; a drop that fails refuses
 the staging). The preview's cookies line names the file the boot restores to:
 the bundle config's `paths.cookies_file`, env overrides applied. `// CANCEL
-RESTORE` drops all of it.
+RESTORE` drops all of it. (v0.51.342) A member that fails to stage after the
+database swap unstages the whole bundle — nothing from it stays pending, and
+the refusal says so. A cookies file or `motif.yaml` bind-mounted as a single
+file is written in place: the cookies file keeps the mode the host gave it,
+`motif.yaml` ends 0600, and a write that fails part-way puts the original
+bytes back.
 
 **THEMES CHECK (tag 3, optional).** A block below RESTORE: `// CHECK THEMES`
 walks the newest bundle's census (or an uploaded one) against `themes_dir`
@@ -218,6 +223,19 @@ Mirrors the four snapshot endpoints under one list:
 - **Secrets in logs.** The manifest and the preview never carry secret
   values; the events scrubber keys on names, not values, so nothing
   interpolates `plex.token` into a message.
-- **The tar member gate.** Only the four known member names are extracted,
-  to the staging area, never with their archived paths — no `../`, no
-  symlinks, size-capped.
+- **The tar member gate.** (v0.51.342) One forward pass (`r|`) judges each
+  header before a byte of it is read: only the four member names, each once;
+  regular files only (no links, devices, CONTTYPE or pax sparse members);
+  per-member caps (database 4 GiB, manifest 64 MiB, `motif.yaml` 1 MiB,
+  cookies 16 MiB); and tarfile's next-header offset must equal the gated
+  size rounded to a block — stream mode seeks by the RAW header size one
+  read at a time, and pax keys can change `TarInfo.size` after that offset
+  is computed. Nothing is extracted with its archived path. The gzip
+  trailer is verified, and what follows the end of the archive is bounded:
+  one 2 MiB raw allowance shared by the last tar fetch and the trailer read,
+  and 4 MiB inflated. Empty gzip members parse in a loop inside one
+  `read()`, so only a raw-byte budget on the file stops a flood of them.
+- **Bind mounts.** Docker refuses a rename over a single-file bind mount
+  (EBUSY/EXDEV/EPERM), so the boot writes those files in place after a
+  `.prerestore-<stamp>` copy — and never chmods a file whose mode the host
+  owns (the cookies file can be shared with other containers).

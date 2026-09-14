@@ -14,10 +14,12 @@ Per-row strategy:
 """
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import threading
 from pathlib import Path
+from stat import S_ISREG
 
 from .db import get_conn, transaction
 from .editions import edition_key_for_folder
@@ -27,6 +29,9 @@ from .sections import list_sections
 from . import progress as op_progress
 
 log = logging.getLogger(__name__)
+
+# v0.51.342: pathlib 3.12's is_file() ignore list, explicit — one stat, and 3.14's swallow-all is_file() can't move the split
+_CANONICAL_ABSENT_ERRNOS = (errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP)
 
 
 # v1.18.48: class-9 hot-path sub-pattern (see CLAUDE.md). find_theme_sidecar_path's
@@ -1115,7 +1120,7 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     with get_conn(db_path) as conn:
         rows = conn.execute(
             "SELECT media_type, tmdb_id, section_id, edition_key, file_path, "
-            "       file_size, file_sha256 "
+            "       file_size, file_sha256, canonical_hash_miss_sig "
             "FROM local_files WHERE file_path IS NOT NULL AND file_path != ''"
             + _scope_sql, _scope_params
         ).fetchall()
@@ -1150,33 +1155,47 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     from concurrent.futures import ThreadPoolExecutor
     from .adopt import _hash_file
 
-    def _healed_size(p, row_r, st_size):
+    def _healed_size(p, row_r, st):
         # v0.51.338: a size-stale row whose bytes still hash to file_sha256 gets its size back.
         rec = row_r["file_size"]
-        if not (rec and row_r["file_sha256"] and st_size > 0 and st_size != rec):
-            return None
+        if not (rec and row_r["file_sha256"] and st.st_size > 0 and st.st_size != rec):
+            return None, None
+        sig = f"{st.st_size}:{st.st_mtime_ns}:{st.st_ctime_ns}:{rec}:{row_r['file_sha256']}"
+        if row_r["canonical_hash_miss_sig"] == sig:
+            return None, sig  # v0.51.342: these bytes already missed this sha — ctime can't be set from user space
         try:
             sha, n = _hash_file(p)
         except OSError as e:
             log.debug("verify_canonical_health: hash %s failed (%s) — size stamp left "
                       "as-is, the row stays CHANGED", row_r["file_path"], e)
-            return None
-        return n if sha == row_r["file_sha256"] else None
+            return None, None
+        return (n, None) if sha == row_r["file_sha256"] else (None, sig)
 
     def _stat_present(row_r):
         try:
             p = themes_dir / row_r["file_path"]
-            if not p.is_file():
-                return (row_r, False, None, None)
+            try:
+                st = p.stat()
+            except OSError as e:
+                # v0.51.342: one stat instead of is_file() + stat() — only is_file()'s own ignore list reads missing.
+                if e.errno in _CANONICAL_ABSENT_ERRNOS:
+                    return (row_r, False, None, None, None, None)
+                raise
+            except ValueError as e:
+                log.debug("verify_canonical_health: %r is not a statable path (%s) — reads missing, as is_file() "
+                          "did", row_r["file_path"], e)
+                return (row_r, False, None, None, None, None)
+            if not S_ISREG(st.st_mode):
+                return (row_r, False, None, None, None, None)
             # v0.51.167: a 0-byte theme.mp3 is a corrupt/failed download — the
             # downloader itself removes + re-downloads one (downloader.py:589), and
             # ffmpeg can't measure it (the loudness audit's rc=254 "No such file"
             # cohort). Functionally missing, so stamp canonical_present=0 and let the
             # CANONICAL HEALTH repair surface it instead of ranking it healthy.
-            st_size = p.stat().st_size
-            return (row_r, st_size > 0, None, _healed_size(p, row_r, st_size))
+            heal, miss_sig = _healed_size(p, row_r, st)
+            return (row_r, st.st_size > 0, None, heal, st.st_size, miss_sig)
         except OSError as e:
-            return (row_r, None, e, None)
+            return (row_r, None, e, None, None, None)
 
     if rows:
         with ThreadPoolExecutor(max_workers=16) as _ex:
@@ -1184,14 +1203,16 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     else:
         stat_results = []
     size_heals: list = []
-    for r, present, err, heal_size in stat_results:
+    for r, present, err, heal_size, st_size, miss_sig in stat_results:
         if err is not None:
             skipped += 1
             (log.warning if skipped == 1 else log.debug)(
                 "verify_canonical_health: stat %s failed (%s) — skipped "
                 "(preserving prior canonical_present)", r["file_path"], err)
             continue
-        row = (1 if present else 0, now, r["media_type"], r["tmdb_id"],
+        # v0.51.342: a present file at another size than recorded is a CHANGED candidate — the page re-stats only these.
+        changed = 1 if present and (r["file_size"] or 0) > 0 and st_size != r["file_size"] else None
+        row = (1 if present else 0, now, changed, miss_sig, r["media_type"], r["tmdb_id"],
                r["section_id"], r["edition_key"])
         (present_updates if present else missing_updates).append(row)
         if heal_size is not None:
@@ -1223,14 +1244,15 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
         with get_conn(db_path) as conn, transaction(conn):
             conn.executemany(
                 "UPDATE local_files SET canonical_present = ?, "
-                "    canonical_health_checked_at = ? "
+                "    canonical_health_checked_at = ?, canonical_changed_candidate = ?, "
+                "    canonical_hash_miss_sig = ? "
                 "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
                 "  AND edition_key = ?",
                 updates)
             if size_heals:
                 # v0.51.338: compare-and-set so a writer that re-stamped the row meanwhile wins.
                 healed = conn.executemany(
-                    "UPDATE local_files SET file_size = ? "
+                    "UPDATE local_files SET file_size = ?, canonical_changed_candidate = NULL "
                     "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
                     "  AND edition_key = ? AND file_size = ? AND file_sha256 = ?",
                     size_heals).rowcount

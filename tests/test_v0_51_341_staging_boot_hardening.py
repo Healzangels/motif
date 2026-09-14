@@ -29,6 +29,10 @@ from tests.test_v0_51_339_bundle_staging_boot import LIVE_YAML, _H, _boot, _bund
 
 STAMP = "20260913-010203"
 LISTED_SNAPSHOT = "motif-20260101-000000.db"
+# v0.51.342: every errno _replace_or_write_in_place answers with a write in place — only EBUSY was exercised
+IN_PLACE_ERRNOS = pytest.mark.parametrize("err", [errno.EBUSY, errno.EXDEV, errno.EPERM], ids=["EBUSY", "EXDEV", "EPERM"])
+# v0.51.342: root opens a 0400 file anyway, so the refused first boot these tests rely on never happens
+NEEDS_CHMOD_REFUSAL = pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores a 0400 mode")
 
 
 def _sha(p: Path) -> str:
@@ -128,11 +132,13 @@ def test_the_pre_restore_copies_of_the_replaced_secrets_are_owner_only(tmp_path)
 
 # ── 2. a single-file bind mount ──────────────────────────────────────
 
-def test_a_bind_mounted_cookies_file_is_restored_in_place_with_one_undo_copy(tmp_path, monkeypatch):
+@NEEDS_CHMOD_REFUSAL
+@IN_PLACE_ERRNOS
+def test_a_bind_mounted_cookies_file_is_restored_in_place_with_one_undo_copy(tmp_path, monkeypatch, err):
     _, cd = _live(tmp_path)
     target = cd / "cookies.txt"
     (cd / bundle.COOKIES_PENDING).write_text("# bundle cookies\n")
-    _replace_refused_onto(monkeypatch, "cookies.txt", errno.EBUSY)  # what rename(2) answers onto a mount point
+    _replace_refused_onto(monkeypatch, "cookies.txt", err)  # what rename(2) answers onto a mount point
     target.chmod(0o400)  # boot 1: the in-place write is refused as well — the pending waits
     try:
         assert bundle.apply_pending_cookies(cd, target, now_stamp="20260913-010203")["applied"] == []
@@ -144,17 +150,19 @@ def test_a_bind_mounted_cookies_file_is_restored_in_place_with_one_undo_copy(tmp
     assert not (cd / bundle.COOKIES_PENDING).exists() and not list(cd.glob("*.restore-tmp"))
     assert [p.read_text() for p in cd.glob("cookies.txt.prerestore-*")] == ["# live cookies\n"], \
         "one undo copy across both boots"
-    assert stat.S_IMODE(target.stat().st_mode) == 0o600, "restored credentials never stay group/other-readable"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644, "v0.51.342: the host's mode — 0600 locked other containers reading the mount out"
     (cd / bundle.COOKIES_PENDING).write_text("# bundle cookies\n")  # boot 3: a pending whose removal failed applies again
     assert bundle.apply_pending_cookies(cd, target, now_stamp="20260915-010203")["errors"] == {}
     assert len(list(cd.glob("cookies.txt.prerestore-*"))) == 1, "nothing was replaced, so no copy of the restored file"
 
 
-def test_a_bind_mounted_motif_yaml_is_restored_in_place_with_one_undo_copy(tmp_path, monkeypatch):
+@NEEDS_CHMOD_REFUSAL
+@IN_PLACE_ERRNOS
+def test_a_bind_mounted_motif_yaml_is_restored_in_place_with_one_undo_copy(tmp_path, monkeypatch, err):
     _, cd = _live(tmp_path)
     live = cd / "motif.yaml"
     (cd / bundle.CONFIG_PENDING).write_text("plex:\n  token: BUNDLE-TOKEN\n")
-    _replace_refused_onto(monkeypatch, "motif.yaml", errno.EBUSY)
+    _replace_refused_onto(monkeypatch, "motif.yaml", err)
     live.chmod(0o400)
     try:
         assert bundle.apply_pending_config(cd, now_stamp="20260913-010203")["applied"] == []
@@ -168,12 +176,13 @@ def test_a_bind_mounted_motif_yaml_is_restored_in_place_with_one_undo_copy(tmp_p
     assert [p.read_text() for p in cd.glob("motif.yaml.prerestore-*")] == [LIVE_YAML], "one undo copy across both boots"
 
 
-def test_boot_restores_bind_mounted_config_and_cookies_in_place(tmp_path, monkeypatch):
+@IN_PLACE_ERRNOS
+def test_boot_restores_bind_mounted_config_and_cookies_in_place(tmp_path, monkeypatch, err):
     db, cd = _live(tmp_path)
     monkeypatch.setenv("MOTIF_COOKIES_FILE", str(cd / "cookies.txt"))
     bundle.stage_bundle_restore(db, cd, _bundle(tmp_path / "mk"), keep_config=False)
-    _replace_refused_onto(monkeypatch, "motif.yaml", errno.EBUSY)
-    _replace_refused_onto(monkeypatch, "cookies.txt", errno.EBUSY)
+    _replace_refused_onto(monkeypatch, "motif.yaml", err)
+    _replace_refused_onto(monkeypatch, "cookies.txt", err)
     seen: list[str] = []
     _boot(monkeypatch, cd, seen)
     assert _marker_rows(db) == 1 and "BUNDLE-TOKEN" in seen[0]

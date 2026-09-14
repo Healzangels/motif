@@ -17,6 +17,7 @@ count toward retention.
 from __future__ import annotations
 
 import errno
+import gzip
 import hashlib
 import io
 import json
@@ -27,6 +28,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import zlib
 from pathlib import Path
 
 from . import db_backup
@@ -222,7 +224,7 @@ def read_manifest(path: Path) -> dict:
 # v0.51.339: boot applies the DB first; apply_pending_config then apply_pending_cookies (settings.cookies_file) follow only a DB that applied.
 
 import os as _os
-from dataclasses import dataclass as _dataclass, field as _field
+from dataclasses import dataclass as _dataclass, field as _field, replace as _replace
 
 from .config_file import SECRET_MASK, is_secret_config_key, mask_config_value
 
@@ -241,6 +243,10 @@ class BundleCheck:
     has_config: bool = False
     has_cookies: bool = False
     staged: list[str] = _field(default_factory=list)
+    # v0.51.342: what the one pass verified, handed on instead of re-read — repr=False: the config carries the Plex token
+    config_bytes: bytes | None = _field(default=None, repr=False)
+    cookies_bytes: bytes | None = _field(default=None, repr=False)
+    db_source: db_backup.VerifiedSource | None = _field(default=None, repr=False)
 
 
 def _parse_error_summary(e: Exception) -> str:
@@ -284,6 +290,20 @@ def flatten_config(text: str | bytes, *, side: str) -> tuple[dict[str, object], 
     return flat, None
 
 
+_LEAF_KINDS = ((bool, (bool,), "true or false"), (int, (int,), "an integer"), (float, (int, float), "a number"),
+               (str, (str,), "a string"), (list, (list,), "a list"), (dict, (dict,), "a mapping"))
+
+
+def _leaf_type_error(default, value) -> str | None:
+    """Why `value` cannot stand in for a leaf whose dataclass default is `default` — by YAML type, never the value — or None."""
+    for kind, accepted, word in _LEAF_KINDS:  # bool first: a bool is an int to isinstance
+        if isinstance(default, kind):
+            if isinstance(value, accepted) and (kind is bool or not isinstance(value, bool)):
+                return None
+            return f"must be {word}, not {type(value).__name__}"
+    return None  # a None default takes null or anything; a type this rule does not know is the loader's
+
+
 def _loader_contract_error(raw: dict) -> str | None:
     """How `raw` breaks ConfigFile.load()'s contract — by dotted key or exception type, never a value — or None."""
     import dataclasses
@@ -292,7 +312,12 @@ def _loader_contract_error(raw: dict) -> str | None:
     def walk(target, node: dict, path: str) -> str | None:
         for f in dataclasses.fields(target):
             cur = getattr(target, f.name)
-            if f.name not in node or not dataclasses.is_dataclass(cur):
+            if f.name not in node:
+                continue
+            if not dataclasses.is_dataclass(cur):
+                err = _leaf_type_error(cur, node[f.name])  # v0.51.342: "plex: {url: 5}" hydrated, then plex.py's cfg.url.rstrip crashed the boot that swapped it in
+                if err:
+                    return f"{path}{f.name} {err}"
                 continue
             if not isinstance(node[f.name], dict):  # v0.51.341: a dataclass section, at any depth, must be a mapping
                 return f"{path}{f.name} must be a mapping, not {type(node[f.name]).__name__}"
@@ -351,26 +376,148 @@ def config_diff(live_text: str, bundle_text: str) -> list[dict]:
     return [] if (live_err or bundle_err) else _diff_rows(live, other)
 
 
-def _extract_members(path: Path, into: Path) -> dict[str, Path]:
-    """Extract only the known member NAMES into `into` (never the archived
-    paths; anything else in the archive is a refusal). Returns name → file."""
-    got: dict[str, Path] = {}
-    with tarfile.open(path, "r:gz") as tar:
-        for m in tar.getmembers():
-            if m.name not in MEMBERS:
-                raise ValueError(f"not a motif bundle: unexpected member {m.name!r}")
-            if not m.isfile():
-                raise ValueError(f"not a motif bundle: {m.name} is not a plain file")
-            f = tar.extractfile(m)
-            if f is None:
-                raise ValueError(f"not a motif bundle: {m.name} unreadable")
-            dest = into / m.name
-            with dest.open("wb") as out:
-                shutil.copyfileobj(f, out)
-            if m.name in (MEMBER_CONFIG, MEMBER_COOKIES):
-                _owner_only(dest)  # v0.51.339: 0600 rides copy2 and the boot swap live — never the umask's 0644 or the archive's m.mode; a chmod-refusing share warns, it never refuses the bundle
-            got[m.name] = dest
-    return got
+_STREAM_BUF = 1 << 20
+# v0.51.342: the spec's "size-capped", judged on each header before a byte is written — nothing capped a member
+_MEMBER_CAP = {MEMBER_DB: 4 << 30, MEMBER_MANIFEST: 64 << 20, MEMBER_CONFIG: 1 << 20, MEMBER_COOKIES: 16 << 20}
+# v0.51.342: one gz.read past end-of-archive scans empty gzip members / zero padding unbounded (seconds under STAGING_LOCK); both sit above a 1 MiB fetch + gzip's 128 KiB readahead
+_TAIL_RAW_BUDGET = 2 << 20
+_TAIL_INFLATE_BUDGET = 4 << 20
+
+
+class _BundleTail(Exception):
+    """v0.51.342: over _TAIL_RAW_BUDGET raw bytes read since tarfile last fetched an inflated chunk."""
+
+
+class _TailGuard:
+    """v0.51.342: the raw file gzip reads, refusing once it pulls more than _TAIL_RAW_BUDGET bytes between reset()s."""
+    def __init__(self, f):
+        self._f = f
+        self._n = 0
+
+    def reset(self) -> None:
+        self._n = 0
+
+    def read(self, size=-1):
+        data = self._f.read(size)
+        self._n += len(data)
+        if self._n > _TAIL_RAW_BUDGET:
+            raise _BundleTail(f"not a motif bundle: over {_TAIL_RAW_BUDGET} bytes of data after the archive's end")
+        return data
+
+    def readable(self) -> bool:
+        return True
+
+    def __getattr__(self, name):  # seek/tell/seekable/mode/name fall through to the real file, exactly as the bare fileobj did
+        return getattr(self._f, name)
+
+
+class _TarFeed:
+    """v0.51.342: what tarfile reads — every 1 MiB it fetches gets a fresh raw allowance, so a real database never trips it."""
+    def __init__(self, gz, guard):
+        self._gz, self._guard = gz, guard
+
+    def read(self, size=-1):
+        self._guard.reset()
+        return self._gz.read(size)
+
+
+class _HashingReader:
+    def __init__(self, f, h):
+        self._f, self._h = f, h
+
+    def read(self, n=-1):
+        data = self._f.read(n)
+        self._h.update(data)
+        return data
+
+
+def _member_refusal(m: tarfile.TarInfo, seen: dict) -> str | None:
+    """Why this header is refused — judged as the stream meets it, before any of its bytes are read — or None."""
+    if m.name not in MEMBERS:
+        return f"not a motif bundle: unexpected member {m.name!r}"
+    if m.name in seen:  # v0.51.342: the old extractor silently kept the LAST copy of a repeated name
+        return f"not a motif bundle: {m.name} appears twice"
+    if m.type not in (tarfile.REGTYPE, tarfile.AREGTYPE):  # v0.51.342: regular files only — isfile() also passed CONTTYPE and sparse members
+        return f"not a motif bundle: {m.name} is not a plain file"
+    if m.sparse is not None or any(k.startswith("GNU.sparse.") for k in m.pax_headers):  # v0.51.342: a pax sparse member rides a REGTYPE header, and its realsize replaces the size capped below
+        return f"not a motif bundle: {m.name} is not a plain file"
+    if not 0 <= m.size <= _MEMBER_CAP[m.name]:
+        return f"not a motif bundle: {m.name} is {m.size} bytes, over its {_MEMBER_CAP[m.name]}-byte cap"
+    return None
+
+
+def _inspect_into(path: Path, workdir: Path) -> BundleCheck:
+    """inspect_bundle's one pass, into an empty directory the caller owns and removes. Never raises; an ok check's db_source lives only as long as workdir."""
+    shas: dict[str, str] = {}
+    sizes: dict[str, int] = {}
+    small: dict[str, bytes] = {}
+    try:
+        # v0.51.342: ONE forward pass — getmembers() then extractfile() inflated the archive twice per open, and a flow opened it 2-5 times
+        with open(path, "rb") as raw, gzip.GzipFile(fileobj=(guard := _TailGuard(raw)), mode="rb") as gz:
+            with tarfile.open(fileobj=_TarFeed(gz, guard), mode="r|", bufsize=_STREAM_BUF) as tar:
+                for m in tar:
+                    why = _member_refusal(m, shas)
+                    if why:
+                        return BundleCheck(False, why)
+                    if tar.offset != m.offset_data + -(-m.size // tarfile.BLOCKSIZE) * tarfile.BLOCKSIZE:  # v0.51.342: a pax size capped here while tarfile skipped the raw base-256 one, and "r|" seeks that skip one read at a time
+                        return BundleCheck(False, f"not a motif bundle: {m.name} is not a plain file")
+                    h = hashlib.sha256()
+                    src = _HashingReader(tar.extractfile(m), h)
+                    if m.name == MEMBER_DB:
+                        with open(workdir / MEMBER_DB, "xb") as out:
+                            shutil.copyfileobj(src, out, _STREAM_BUF)
+                    else:
+                        small[m.name] = src.read()  # capped above; never on disk before it is staged
+                    shas[m.name], sizes[m.name] = h.hexdigest(), m.size
+            drained = 0  # v0.51.342: on to the gzip trailer (CRC32 + length, never checked before) straight from gz — no fetch resets the guard, so the whole tail shares the last fetch's raw allowance
+            while chunk := gz.read(_STREAM_BUF):
+                drained += len(chunk)
+                if drained > _TAIL_INFLATE_BUDGET:
+                    return BundleCheck(False, f"not a motif bundle: over {_TAIL_INFLATE_BUDGET} bytes of data after the archive's end")
+    except (tarfile.TarError, OSError, ValueError, EOFError, zlib.error, IndexError, RecursionError, _BundleTail) as e:  # v0.51.342: zlib.error — a deflate fault past the first 1 MiB is read through extractfile, where tarfile does not wrap it; IndexError (a GNU sparse 'S' extended header at end of stream) + RecursionError (a ~400-deep chain of 'g'/'x'/'L' headers) crash tarfile's parser before any gate; _BundleTail bounds the archive's tail
+        msg = str(e)  # v0.51.339: refusals carry the prefix once — never "not a motif bundle: not a motif bundle:"
+        log.warning("bundle check: %s refused while reading the archive (%s: %s)", path.name, type(e).__name__, msg)
+        return BundleCheck(False, msg if msg.startswith("not a motif bundle:") else f"not a motif bundle: {msg}")
+    if MEMBER_MANIFEST not in shas or MEMBER_DB not in shas:
+        return BundleCheck(False, "not a motif bundle: manifest.json or motif.db missing")
+    try:
+        manifest = json.loads(small[MEMBER_MANIFEST].decode("utf-8"))
+    except Exception as e:
+        return BundleCheck(False, f"not a motif bundle: manifest unreadable ({e})")
+    if not isinstance(manifest, dict):  # v0.51.339: a foreign manifest's shapes are guarded, not trusted (was a 500)
+        return BundleCheck(False, "not a motif bundle: manifest.json is not an object")
+    if manifest.get("kind") != "motif-bundle":
+        return BundleCheck(False, "not a motif bundle: manifest kind mismatch")
+    fmt = manifest.get("format")
+    if not isinstance(fmt, int) or fmt > BUNDLE_FORMAT:
+        return BundleCheck(False, f"bundle format {fmt!r} is newer than this build reads "
+                                  f"({BUNDLE_FORMAT}) — upgrade motif before restoring")
+    members = manifest.get("members") or {}
+    if not isinstance(members, dict):
+        return BundleCheck(False, "not a motif bundle: manifest members is not an object")
+    for name, meta in members.items():
+        if name not in shas:
+            return BundleCheck(False, f"bundle is missing {name} the manifest lists")
+        if not isinstance(meta, dict):
+            return BundleCheck(False, f"not a motif bundle: the manifest entry for {name} is not an object")
+        if shas[name] != meta.get("sha256"):
+            return BundleCheck(False, f"{name} does not match the manifest checksum")
+    for name in shas:
+        if name != MEMBER_MANIFEST and name not in members:
+            return BundleCheck(False, f"bundle carries {name} the manifest does not list")
+    dbc = db_backup.inspect_restore_source(workdir / MEMBER_DB)
+    if not dbc.ok:
+        return BundleCheck(False, dbc.error, manifest=manifest, db=dbc)
+    return BundleCheck(True, None, manifest=manifest, db=dbc,
+                       has_config=MEMBER_CONFIG in shas, has_cookies=MEMBER_COOKIES in shas,
+                       config_bytes=small.get(MEMBER_CONFIG), cookies_bytes=small.get(MEMBER_COOKIES),
+                       db_source=db_backup.VerifiedSource(workdir / MEMBER_DB, sizes[MEMBER_DB], shas[MEMBER_DB], dbc))
+
+
+def _remove_tree(p: Path) -> None:
+    def warn(fn, path, exc):
+        log.warning("bundle restore: could not remove %s (%s) — delete it by hand", path, exc)
+    shutil.rmtree(p, onexc=warn)  # v0.51.342: was ignore_errors — an extraction left on /config went unlogged
 
 
 def inspect_bundle(path: Path) -> BundleCheck:
@@ -380,62 +527,18 @@ def inspect_bundle(path: Path) -> BundleCheck:
     snapshot restore checks. Never raises."""
     tmp = Path(tempfile.mkdtemp(prefix=".bundle-inspect-", dir=path.parent))
     try:
-        try:
-            got = _extract_members(path, tmp)
-        except (tarfile.TarError, OSError, ValueError, EOFError) as e:
-            msg = str(e)  # v0.51.339: _extract_members' refusals carry the prefix already — never "not a motif bundle: not a motif bundle:"
-            return BundleCheck(False, msg if msg.startswith("not a motif bundle:") else f"not a motif bundle: {msg}")
-        if MEMBER_MANIFEST not in got or MEMBER_DB not in got:
-            return BundleCheck(False, "not a motif bundle: manifest.json or motif.db missing")
-        try:
-            manifest = json.loads(got[MEMBER_MANIFEST].read_text("utf-8"))
-        except Exception as e:
-            return BundleCheck(False, f"not a motif bundle: manifest unreadable ({e})")
-        if not isinstance(manifest, dict):  # v0.51.339: a foreign manifest's shapes are guarded, not trusted (was a 500)
-            return BundleCheck(False, "not a motif bundle: manifest.json is not an object")
-        if manifest.get("kind") != "motif-bundle":
-            return BundleCheck(False, "not a motif bundle: manifest kind mismatch")
-        fmt = manifest.get("format")
-        if not isinstance(fmt, int) or fmt > BUNDLE_FORMAT:
-            return BundleCheck(False, f"bundle format {fmt!r} is newer than this build reads "
-                                      f"({BUNDLE_FORMAT}) — upgrade motif before restoring")
-        members = manifest.get("members") or {}
-        if not isinstance(members, dict):
-            return BundleCheck(False, "not a motif bundle: manifest members is not an object")
-        for name, meta in members.items():
-            if name not in got:
-                return BundleCheck(False, f"bundle is missing {name} the manifest lists")
-            if not isinstance(meta, dict):
-                return BundleCheck(False, f"not a motif bundle: the manifest entry for {name} is not an object")
-            if _sha256_file(got[name]) != meta.get("sha256"):
-                return BundleCheck(False, f"{name} does not match the manifest checksum")
-        for name in got:
-            if name != MEMBER_MANIFEST and name not in members:
-                return BundleCheck(False, f"bundle carries {name} the manifest does not list")
-        dbc = db_backup.inspect_restore_source(got[MEMBER_DB])
-        if not dbc.ok:
-            return BundleCheck(False, dbc.error, manifest=manifest, db=dbc)
-        return BundleCheck(True, None, manifest=manifest, db=dbc,
-                           has_config=MEMBER_CONFIG in got, has_cookies=MEMBER_COOKIES in got)
+        return _replace(_inspect_into(path, tmp), db_source=None)  # v0.51.342: the extraction dies with tmp — never hand out a token to a deleted file
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        _remove_tree(tmp)
 
 
-def bundle_config_bytes(path: Path) -> bytes | None:
-    """The bundle's motif.yaml bytes, or None when it carries none."""
-    with tarfile.open(path, "r:gz") as tar:
-        try:
-            m = tar.getmember(MEMBER_CONFIG)
-        except KeyError:
-            return None
-        f = tar.extractfile(m)
-        return f.read() if f else None
-
-
-def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None = None) -> dict:
+def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None = None,
+            check: BundleCheck | None = None) -> dict:
     """What a restore from this bundle would do — for the settings card's
-    preview, before anything is staged. Secrets are masked."""
-    check = inspect_bundle(path)
+    preview, before anything is staged. Secrets are masked. `check`: an
+    inspection of these same bytes the caller already holds."""
+    if check is None:
+        check = inspect_bundle(path)
     if not check.ok:
         raise ValueError(check.error or "invalid bundle")
     m = check.manifest or {}
@@ -447,7 +550,7 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
     cookies_at = str(cookies_target) if cookies_target else None
     if check.has_config:
         live, parse_error["live"] = flatten_config(live_bytes, side="live")
-        bundle_bytes = bundle_config_bytes(path) or b""
+        bundle_bytes = check.config_bytes or b""  # v0.51.342: from the one pass — bundle_config_bytes re-opened the archive and inflated it twice for a few hundred bytes
         other, parse_error["bundle"] = flatten_config(bundle_bytes, side="bundle")
         if not (parse_error["live"] or parse_error["bundle"]):
             diff = _diff_rows(live, other)
@@ -497,14 +600,27 @@ class StagingError(Exception):
 
 
 class _InPlaceWriteFailed(OSError):
-    """The in-place write into a mounted file failed after truncating it."""
+    """The in-place write into a mounted file failed after truncating it; `restored` when its original bytes went back."""
+    restored = False
 
 
-def _stage_file(src: Path, pending: Path) -> None:
+def _stage_file(data: bytes, pending: Path) -> None:
     tmp = pending.with_name(pending.name + ".tmp")
-    shutil.copyfile(src, tmp)  # v0.51.341: copy2's copystat raised PermissionError on a share that refuses chmod — the staging 500'd
-    _owner_only(tmp)
-    _os.replace(tmp, pending)
+    try:
+        # v0.51.342: the checksum-verified bytes, never re-read from disk; born 0600, so a chmod-refusing share never leaves the token group-readable
+        fd = _os.open(tmp, _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC, 0o600)
+        with open(fd, "wb") as f:
+            f.write(data)
+        _owner_only(tmp)
+        _os.replace(tmp, pending)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log.warning("bundle restore: could not remove %s (%s)", tmp.name, e)
+        raise
 
 
 def _named_failures(failed: dict[str, str]) -> str:
@@ -524,8 +640,8 @@ def _partial_drop(removed: list[str], failed: dict[str, str], *, db_staged: bool
     return f"; {', '.join(removed)} WAS dropped — a restart now applies the staged {staged} with {live}"
 
 
-def _refuse_beside_stale_config(db_path: Path, config_dir: Path) -> None:
-    """stage_restore's before_swap: drop an earlier staging's config/cookies, or refuse before its database is replaced."""
+def _refuse_beside_stale_config(db_path: Path, config_dir: Path) -> list[str]:
+    """stage_restore's before_swap: drop an earlier staging's config/cookies (returns the names dropped), or refuse before its database is replaced."""
     removed, failed = clear_pending_config(config_dir)
     if failed:
         db_staged = db_backup.restore_pending_path(db_path).exists()
@@ -535,6 +651,37 @@ def _refuse_beside_stale_config(db_path: Path, config_dir: Path) -> None:
             f"{'the staged database was not replaced' if db_staged else 'nothing was staged'}"
             f"{_partial_drop(removed, failed, db_staged=db_staged)}; remove {', '.join(failed)} from the config "
             "directory, then stage again")
+    return removed
+
+
+def _unstage_after_swap(db_path: Path, config_dir: Path, staged: list[str], member: str, err: BaseException, *,
+                        dropped: list[str], replaced_db: bool) -> StagingError:
+    """A bundle member failed after its database swapped in: remove what this call staged, and say what that leaves."""
+    log.error("bundle restore: %s could not be staged after the database was (%s) — unstaging this bundle", member, err)
+    paths = {"database": db_backup.restore_pending_path(db_path), "config": config_dir / CONFIG_PENDING,
+             "cookies": config_dir / COOKIES_PENDING}
+    stays: dict[str, str] = {}
+    for word in staged:
+        try:
+            paths[word].unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log.error("bundle restore: could not unstage %s (%s) — it still applies at restart", paths[word].name, e)
+            stays[paths[word].name] = str(e)
+    earlier = []
+    if dropped:
+        earlier.append(f"{' and '.join(dropped)} {'was' if len(dropped) == 1 else 'were'} already dropped")
+    if replaced_db:
+        earlier.append("the database it staged was already replaced")
+    said = f"; from the earlier restore, {', and '.join(earlier)}" if earlier else ""
+    if stays:
+        return StagingError(
+            f"not staged: {member} could not be staged ({err}), and {', '.join(stays)} could not be removed "
+            f"({_named_failures(stays)}) — {'it applies' if len(stays) == 1 else 'they apply'} at restart{said}; "
+            f"remove {', '.join(stays)} by hand, then stage again")
+    return StagingError(f"not staged: {member} could not be staged ({err}) — nothing from this bundle is staged{said}; "
+                        "stage again once the cause is fixed")
 
 
 def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
@@ -543,35 +690,46 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
     operator keeps the live config — motif.yaml and cookies.txt as
     <name>.restore-pending in config_dir. Raises ValueError when the bundle
     fails inspection, StagingError when an earlier staging's config cannot
-    be dropped. Nothing live changes until the next boot."""
+    be dropped or a member fails after the database swap (this bundle is
+    then unstaged whole). Nothing live changes until the next boot."""
     with STAGING_LOCK:
-        check = inspect_bundle(bundle_path)
-        if not check.ok:
-            raise ValueError(check.error or "invalid bundle")
-        tmp = Path(tempfile.mkdtemp(prefix=".bundle-stage-", dir=config_dir))
+        tmp = Path(tempfile.mkdtemp(prefix=".bundle-stage-", dir=db_path.parent))  # v0.51.342: beside the pending file, so the checked database MOVES into place
         try:
-            got = _extract_members(bundle_path, tmp)
-            if not keep_config and MEMBER_CONFIG in got:
-                _, cfg_err = flatten_config(got[MEMBER_CONFIG].read_bytes(), side="bundle")
+            check = _inspect_into(bundle_path, tmp)  # v0.51.342: one pass + one integrity_check — was inspect_bundle, a second extraction, then stage_restore's own re-check
+            if not check.ok:
+                raise ValueError(check.error or "invalid bundle")
+            if not keep_config and check.has_config:
+                _, cfg_err = flatten_config(check.config_bytes, side="bundle")
                 if cfg_err:  # v0.51.339: staged, it swaps in at boot and ConfigFile.load() raises — the next boot would crash
                     raise ValueError(f"the bundle's motif.yaml does not parse ({cfg_err}) — "
                                      "restore with KEEP MY CURRENT CONFIG, or fix the bundle")
+            dropped: list[str] = []
+            replaced_db = db_backup.restore_pending_path(db_path).exists()
             # v0.51.339: a bundle stages exactly its own members — an earlier staging's cookies never ride along
-            db_backup.stage_restore(db_path, got[MEMBER_DB],  # v0.51.341: dropped BEFORE the swap — a refused drop leaves the earlier database staged
-                                    before_swap=lambda: _refuse_beside_stale_config(db_path, config_dir))
+            db_backup.stage_restore(db_path, check.db_source.path, verified=check.db_source,  # v0.51.341: dropped BEFORE the swap — a refused drop leaves the earlier database staged
+                                    before_swap=lambda: dropped.extend(_refuse_beside_stale_config(db_path, config_dir)))
             check.staged.append("database")
             if not keep_config:
-                if MEMBER_CONFIG in got:
-                    _stage_file(got[MEMBER_CONFIG], config_dir / CONFIG_PENDING)
-                    check.staged.append("config")
-                if MEMBER_COOKIES in got:
-                    _stage_file(got[MEMBER_COOKIES], config_dir / COOKIES_PENDING)
-                    check.staged.append("cookies")
+                member = MEMBER_CONFIG
+                try:
+                    if check.has_config:
+                        _stage_file(check.config_bytes, config_dir / CONFIG_PENDING)
+                        check.staged.append("config")
+                    member = MEMBER_COOKIES
+                    if check.has_cookies:
+                        _stage_file(check.cookies_bytes, config_dir / COOKIES_PENDING)
+                        check.staged.append("cookies")
+                except BaseException as e:  # v0.51.342: an ENOSPC here left the new database staged with no config — it applied at boot beside the live motif.yaml
+                    undone = _unstage_after_swap(db_path, config_dir, check.staged, member, e,
+                                                 dropped=dropped, replaced_db=replaced_db)
+                    if not isinstance(e, Exception):
+                        raise
+                    raise undone from e
         finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+            _remove_tree(tmp)
         log.info("bundle restore staged from %s: %s; applies on next restart",
                  bundle_path.name, ", ".join(check.staged))
-        return check
+        return _replace(check, db_source=None, config_bytes=None, cookies_bytes=None)  # v0.51.342: the token's file is gone and the caller never needs the bytes
 
 
 def stage_snapshot_restore(db_path: Path, config_dir: Path, source_path: Path) -> db_backup.RestoreCheck:
@@ -675,16 +833,35 @@ def _replace_or_write_in_place(src: Path, dest: Path) -> bool:
         log.warning("bundle restore: %s cannot be replaced by a rename (%s) — writing the restored bytes into it in place",
                     dest, e)
     data = src.read_bytes()
-    f = open(dest, "r+b")  # never truncates on open: a refusal here leaves the live file whole
+    fd = _os.open(dest, _os.O_RDWR)  # never truncates on open: a refusal here leaves the live file whole
     try:
-        with f:
-            f.truncate(0)
-            f.write(data)
-            f.flush()
-            _os.fsync(f.fileno())
-    except OSError as e:
-        raise _InPlaceWriteFailed(f"{e} while writing {dest} in place — it may be partly written") from e
+        with open(fd, "rb", closefd=False) as f:
+            original = f.read()  # v0.51.342: what the truncate destroys — a partial file was left, and the next boot's undo copy was of it
+        try:
+            _rewrite_fd(fd, data)
+        except OSError as e:
+            try:
+                _rewrite_fd(fd, original)
+            except OSError as back:
+                log.error("bundle restore: %s was left partly written (%s), and its original bytes could not be "
+                          "written back (%s)", dest, e, back)
+                raise _InPlaceWriteFailed(f"{e} while writing {dest} in place — it may be partly written") from e
+            log.error("bundle restore: writing %s in place failed (%s) — its original bytes were written back", dest, e)
+            failed = _InPlaceWriteFailed(f"{e} while writing {dest} in place — its original bytes were written back")
+            failed.restored = True
+            raise failed from e
+    finally:
+        _os.close(fd)
     return True
+
+
+def _rewrite_fd(fd: int, data: bytes) -> None:
+    _os.lseek(fd, 0, _os.SEEK_SET)
+    _os.ftruncate(fd, 0)
+    view = memoryview(data)
+    while view:
+        view = view[_os.write(fd, view):]
+    _os.fsync(fd)
 
 
 def apply_pending_config(config_dir: Path, *, now_stamp: str) -> dict | None:
@@ -704,7 +881,7 @@ def apply_pending_config(config_dir: Path, *, now_stamp: str) -> dict | None:
                 safety[MEMBER_CONFIG] = keep.name
         in_place = _replace_or_write_in_place(pending, live)
     except OSError as e:
-        kept = "restore it from its pre-restore copy" if isinstance(e, _InPlaceWriteFailed) else "live file kept"
+        kept = "restore it from its pre-restore copy" if isinstance(e, _InPlaceWriteFailed) and not e.restored else "live file kept"
         log.error("apply_pending_config: motif.yaml not swapped (%s) — %s, pending file kept for a retry", e, kept)
         return {"applied": [], "safety": safety, "errors": {MEMBER_CONFIG: str(e)}}
     if in_place:
@@ -742,7 +919,7 @@ def apply_pending_cookies(config_dir: Path, live: Path, *, now_stamp: str) -> di
         _owner_only(tmp)
         in_place = _replace_or_write_in_place(tmp, dest)  # v0.51.339: the temp sits beside the target, so the swap is atomic on the target's own mount
     except (OSError, ValueError) as e:  # ValueError: a cookies path with no file name (e.g. "/") — never-raises holds at boot
-        kept = "restore it from its pre-restore copy" if isinstance(e, _InPlaceWriteFailed) else "live file kept"
+        kept = "restore it from its pre-restore copy" if isinstance(e, _InPlaceWriteFailed) and not e.restored else "live file kept"
         log.error("apply_pending_cookies: %s not restored (%s) — %s, "
                   "pending file kept for a retry", dest or live, e, kept)
         if tmp is not None:
@@ -754,7 +931,8 @@ def apply_pending_cookies(config_dir: Path, live: Path, *, now_stamp: str) -> di
                 log.warning("apply_pending_cookies: could not remove %s (%s)", tmp, ce)
         return {"applied": [], "safety": safety, "errors": {str(dest or live): str(e)}}
     if in_place:
-        _owner_only(dest)  # v0.51.341: written in place, the mounted file kept its own mode
+        # v0.51.342: no chmod — 0600 on a host's bind-mounted file locked out every other container that reads it
+        log.info("apply_pending_cookies: %s was written in place — its mode is left as the host set it", dest)
         try:
             tmp.unlink()
         except OSError as e:

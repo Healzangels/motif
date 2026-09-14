@@ -319,8 +319,9 @@ def test_migration_from_v78(tmp_path):
         assert conn.execute(
             "SELECT name FROM sqlite_master WHERE name='theme_revisions'"
         ).fetchone() is not None
+        # v0.51.342: was == 79, a mirror of the version at .277 — the chain lands at the current version.
         assert conn.execute("SELECT MAX(version) FROM schema_version"
-                            ).fetchone()[0] == 79
+                            ).fetchone()[0] == dbm.CURRENT_SCHEMA_VERSION
 
 
 def test_v0_51_277_version_pin():

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import signal
+import sqlite3
 import sys
 import threading
 from pathlib import Path
@@ -21,6 +22,7 @@ import uvicorn
 
 from . import __version__
 from .config import get_settings
+from .core.canonical_health import forget_canonical_checks
 from .core.db import init_db
 from .core.auth import init_auth_schema, cleanup_expired_sessions
 from .core.events import log_event
@@ -331,6 +333,16 @@ def main() -> int:
     # Restore-before-any-DB-touch is preserved: the restore block above ran,
     # and init_db migrates a restored file forward.
     init_db(settings.db_path)
+    if _restore and _restore.get("applied"):
+        # v0.51.342: a restored database's check results describe the disk when that backup was taken — a false ✓.
+        try:
+            n = forget_canonical_checks(settings.db_path)
+            log.warning("Canonical health: set aside %d check result(s) the restored database carried — they "
+                        "describe the disk when that backup was taken; CANONICAL HEALTH reads 'Not checked yet' "
+                        "until the next check", n)
+        except sqlite3.Error as e:
+            log.error("Canonical health: could not clear the restored database's check results (%s) — CHANGED "
+                      "shows the backup's results until the next check", e)
 
     # Seed motif.yaml on first run if missing (also handles v1.3.x migration)
     _bootstrap_config_file(settings)

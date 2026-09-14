@@ -19,6 +19,7 @@ dir by validated filename; the API layer serves downloads.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -303,26 +304,58 @@ def inspect_restore_source(path: Path) -> RestoreCheck:
     return RestoreCheck(True, sv, None)
 
 
-def stage_restore(db_path: Path, source_path: Path, *, before_swap=None) -> RestoreCheck:
+@dataclass(frozen=True)
+class VerifiedSource:
+    """A database this process extracted and checked (inspect_restore_source ok): stage_restore moves it and re-hashes it, never re-checks it."""
+    path: Path
+    size: int
+    sha256: str
+    check: RestoreCheck
+
+
+def _sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def stage_restore(db_path: Path, source_path: Path, *, before_swap=None,
+                  verified: VerifiedSource | None = None) -> RestoreCheck:
     """Validate `source_path`, then copy it to the restore-pending
     path next to db_path (temp-then-rename so a half-written pending
     file is never applied). The swap happens at the next boot via
     apply_pending_restore. Raises ValueError if validation fails.
     `before_swap()` runs once the copy is whole; if it raises, the
-    earlier pending file (if any) is left in place."""
-    check = inspect_restore_source(source_path)
-    if not check.ok:
-        raise ValueError(check.error or "invalid restore source")
+    earlier pending file (if any) is left in place. With `verified`
+    the checked file is MOVED, and staged only while its size and
+    sha256 still match what was checked."""
+    if verified is None:
+        check = inspect_restore_source(source_path)
+        if not check.ok:
+            raise ValueError(check.error or "invalid restore source")
+    else:
+        check = verified.check
+        if not check.ok or Path(verified.path) != Path(source_path):  # v0.51.342: a token vouches only for the one file its check read
+            raise ValueError(check.error or "invalid restore source")
     pending = restore_pending_path(db_path)
     pending.parent.mkdir(parents=True, exist_ok=True)
     tmp = pending.with_name(pending.name + ".tmp")
     try:
-        shutil.copyfile(source_path, tmp)  # v0.51.341: copy2's copystat raised PermissionError on a share that refuses chmod — the staging 500'd
-        try:
-            shutil.copystat(source_path, tmp)  # v0.51.341: copy2's mode + times whenever the share allows them
-        except OSError as e:
-            log.warning("restore staging: could not copy the mode/times of %s onto the pending file (%s) — "
-                        "it keeps the share's defaults", source_path.name, e)
+        if verified is None:
+            shutil.copyfile(source_path, tmp)  # v0.51.341: copy2's copystat raised PermissionError on a share that refuses chmod — the staging 500'd
+            try:
+                shutil.copystat(source_path, tmp)  # v0.51.341: copy2's mode + times whenever the share allows them
+            except OSError as e:
+                log.warning("restore staging: could not copy the mode/times of %s onto the pending file (%s) — "
+                            "it keeps the share's defaults", source_path.name, e)
+        else:
+            os.replace(source_path, tmp)  # v0.51.342: the checked file itself — a second integrity_check plus a full copy was half of an 11 s staging
+            if os.lstat(tmp).st_size != verified.size or _sha256_of(tmp) != verified.sha256:  # v0.51.342: lstat — a link swapped in never carries the file's size
+                log.error("restore staging: %s changed between its check and its staging — nothing staged",
+                          source_path.name)
+                raise ValueError("the checked database changed before it could be staged — nothing was staged; try again")
         if before_swap is not None:
             before_swap()
         os.replace(tmp, pending)

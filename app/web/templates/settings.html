@@ -1544,9 +1544,12 @@
       anything is staged; a bundle joins the list above and shows its
       preview here first.
       {# v0.51.337: the themes check after a restore on a new box #}
-      After a restore, <a href="/admin/canonical-health">// CANONICAL HEALTH</a>
-      checks the themes directory against what the database expects and
-      brings back what Plex still holds.
+      {# v0.51.342: a restored database's check results are set aside at boot — nothing is checked until RUN CHECK #}
+      After a restore, open <a href="/admin/canonical-health">// CANONICAL HEALTH</a>
+      and // RUN CHECK: the restored database's check results are set aside, so
+      the page reads Not checked yet until the check compares the themes directory
+      with what the database expects. // RESTORE FROM PLEX then brings back what
+      Plex still holds.
     </p>
     {# v0.51.336: the bundle restore preview — what a restore would do,
        before anything is staged (docs/specs/BACKUP_BUNDLE_SPEC.md § 5). #}

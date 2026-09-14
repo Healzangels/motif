@@ -26,7 +26,7 @@ prompted the rule.
 | Layer | Detail |
 |---|---|
 | API + UI | FastAPI on `:5309`; Jinja2 templates in `app/web/templates/` |
-| DB | SQLite at `/config/motif.db`; current schema **v79** (`CURRENT_SCHEMA_VERSION` in `app/core/db.py`), forward-only migrations in `app/core/db.py` |
+| DB | SQLite at `/config/motif.db`; current schema **v80** (`CURRENT_SCHEMA_VERSION` in `app/core/db.py`), forward-only migrations in `app/core/db.py` |
 | Worker | APScheduler cron (sync) + custom job loop (downloads/place/refresh) |
 | Sync transport | tiered: git (dulwich differential) → snapshot (database branch tarball) → remote (per-item HTTP) |
 | Download | yt-dlp with `cookies.txt` from `/config` |
@@ -89,14 +89,14 @@ this list grows, audit every existing site.
 
 | Site | File:line | Purpose |
 |---|---|---|
-| `computeSrcLetter` | `app.js:~10828` | SRC pill T/U/A vs P/– classification |
-| `renderLibraryRow` inline-SRC | `app.js:~11076` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
+| `computeSrcLetter` | `app.js:~11058` | SRC pill T/U/A vs P/– classification |
+| `renderLibraryRow` inline-SRC | `app.js:~11315` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
 | row quick-play | `lib/quick-play.js` (the rule, loaded by base.html + required by `tests/js/test_quick_play.js`) · `app.js` `quickPlayToggle` / `bindQuickPlay` / the slot in `renderLibraryRow` | the row's leading ▶ plays what the INFO card headline says plays (v0.51.333) |
 | SRC filter prune | `lib/src-filter.js` `keepOfferedLetters` (loaded by base.html + required by `tests/js/test_src_filter.js`) · `app.js` `_pruneSrcFilterToOfferedChips` in `loadLibrary` + the SRC ALL branch | the filter holds only letters whose chip this page offers — AT off /anime, A/M on /collections; no server gate on purpose (at- ids come from URL shape) (v0.51.338) |
-| `updateLibrarySelectionUi` selection bucket | `app.js:~13349` | themed-vs-not counts for bulk-bar (v1.18.24) |
-| `isPlexAgentRow` | `app.js:~17238` | "Plex already supplying" confirm prompt gate (v1.18.75) |
-| Bulk PUSH predicates (3 sites) | `app.js:~13506` / `~13663` / `~15750` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
-| Bulk LPS M-sidecar gate | `app.js:~13537` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
+| `updateLibrarySelectionUi` selection bucket | `app.js:~13579` | themed-vs-not counts for bulk-bar (v1.18.24) |
+| `isPlexAgentRow` | `app.js:~17471` | "Plex already supplying" confirm prompt gate (v1.18.75) |
+| Bulk PUSH predicates (3 sites) | `app.js:~13736` / `~13893` / `~16032` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
+| Bulk LPS M-sidecar gate | `app.js:~13767` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
 | SRC SQL | `api.py:_SRC_LETTER_SQL` | DB-side equivalent — must agree with JS |
 
 The forgetting cost is **silent UX wrong-classification**:

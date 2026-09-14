@@ -354,7 +354,8 @@ def test_no_cookies_target_when_the_bundle_config_cannot_name_one(tmp_path, monk
         "a refused bundle config forces KEEP, and a kept config restores no cookies"
     odd = _bundle(tmp_path / "odd", "paths:\n  cookies_file: 5\n")
     p = bundle.preview(odd, cd / "motif.yaml", cookies_target=live_ck)
-    assert p["cookies_target"] is None and p["config_parse_error"]["bundle"] is None
+    assert p["cookies_target"] is None and "paths.cookies_file" in (p["config_parse_error"]["bundle"] or ""), \
+        "v0.51.342: refused by its key — staged, the boot built Path(5) for settings.cookies_file"
 
 
 @pytest.mark.parametrize("case", ["bundle-key", "bundle-key-env", "no-config-member"])

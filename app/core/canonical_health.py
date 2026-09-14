@@ -39,6 +39,11 @@ into a sibling edition's folder (v1.21.x edition-isolation rule).
 from __future__ import annotations
 
 import logging
+import threading
+import time
+from collections import Counter
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import nullcontext
 from pathlib import Path
 
 log = logging.getLogger("motif.canonical_health")
@@ -51,34 +56,18 @@ log = logging.getLogger("motif.canonical_health")
 _NO_URL_SOURCE_KINDS = ("upload", "adopt", "plex_cloud")
 
 
-def _override_url(conn, r) -> str | None:
-    """The user_overrides URL the download worker would resolve for this row —
-    section-scoped first, then the '' global fallback (mirrors worker.py:1646)."""
-    row = conn.execute(
-        "SELECT youtube_url FROM user_overrides "
-        "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? AND edition_key = ?",
-        (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
-    ).fetchone()
-    if row is None:
-        row = conn.execute(
-            "SELECT youtube_url FROM user_overrides "
-            "WHERE media_type = ? AND tmdb_id = ? AND section_id = '' AND edition_key = ?",
-            (r["media_type"], r["tmdb_id"], r["edition_key"]),
-        ).fetchone()
-    return row["youtube_url"] if row else None
-
-
-def classify_repair(conn, r) -> str:
+def classify_repair(r) -> str:
     """'redownload' if the row's recorded source is a re-fetchable URL, else
     'canonical_missing' (surface for manual re-place). See the module docstring
-    for the full rule; keyed off source_kind + the worker's URL resolution so it
-    agrees with what a re-download would actually do."""
+    for the full rule; keyed off source_kind + the worker's URL resolution
+    (r["override_url"], resolved in _broken_rows) so it agrees with what a
+    re-download would actually do."""
     if r["source_kind"] in _NO_URL_SOURCE_KINDS:
         return "canonical_missing"
     # source_kind is 'url', 'themerrdb', or NULL(legacy). A live override URL is
     # always re-fetchable (a U row); otherwise fall back to the TDB URL, but only
     # for a genuinely TDB-tracked item (a plex_orphan carries no meaningful TDB URL).
-    if _override_url(conn, r):
+    if r["override_url"]:
         return "redownload"
     if r["upstream_source"] != "plex_orphan" and (r["tdb_url"] or "").strip():
         return "redownload"
@@ -93,7 +82,14 @@ def _broken_rows(conn) -> list:
     Plex-folder copy → RESTORE FROM PLEX is available for a manual row)."""
     return conn.execute(
         "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
-        "       lf.file_path, lf.source_kind, "
+        "       lf.file_path, lf.source_kind, lf.file_size, lf.file_sha256, "
+        # v0.51.342: the worker's section-then-global override (worker.py:1646) in the row — was up to 2 SELECTs per row.
+        "       COALESCE((SELECT uo.youtube_url FROM user_overrides uo "
+        "                 WHERE uo.media_type = lf.media_type AND uo.tmdb_id = lf.tmdb_id "
+        "                   AND uo.section_id = lf.section_id AND uo.edition_key = lf.edition_key), "
+        "                (SELECT uo.youtube_url FROM user_overrides uo "
+        "                 WHERE uo.media_type = lf.media_type AND uo.tmdb_id = lf.tmdb_id "
+        "                   AND uo.section_id = '' AND uo.edition_key = lf.edition_key)) AS override_url, "
         "       t.title, t.year, t.youtube_url AS tdb_url, t.upstream_source, "
         "       EXISTS(SELECT 1 FROM placements p "
         "              WHERE p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id "
@@ -154,12 +150,14 @@ def broken_canonical_report(conn, themes_dir: "Path | None" = None, *,
     (restorable_from_plex — a surviving sidecar or a plex_upload placement), and
     with a themes_dir the report adds the CHANGED rows (present, wrong size)."""
     rows = _broken_rows(conn)
+    # v0.51.342: every broken row's placements in one SELECT — the report was 2.3 SELECTs per broken row.
+    placements = _broken_placements(conn)
     redownloadable: list[dict] = []
     canonical_missing: list[dict] = []
     restorable = 0
     for r in rows:
         entry = _entry(r)
-        p, sidecar = _placement_for(conn, r)
+        p, sidecar = _pick_placement(placements.get(_row_key(r), []))
         entry["has_live_placement"] = bool(r["has_live_placement"])
         # v0.51.339: restore_from_plex's own gates — the stored flag and a bare kind promised rows the bulk skips.
         store = bool(plex_available and p is not None and str(p["plex_rating_key"] or "").isdigit()
@@ -167,12 +165,18 @@ def broken_canonical_report(conn, themes_dir: "Path | None" = None, *,
         entry["plex_copy"] = "sidecar" if sidecar else "store" if store else None
         if entry["plex_copy"]:
             restorable += 1
-        if classify_repair(conn, r) == "redownload":
+        if classify_repair(r) == "redownload":
             redownloadable.append(entry)
         else:
             canonical_missing.append(entry)
     changed = changed_canonicals(conn, themes_dir) if themes_dir else []
+    # v0.51.342: BROKEN and CHANGED are the last check's findings — the page says how old they are.
+    tracked, never, oldest, newest = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(canonical_health_checked_at IS NULL), 0), "
+        "       MIN(canonical_health_checked_at), MAX(canonical_health_checked_at) "
+        "FROM local_files WHERE file_path IS NOT NULL AND file_path != ''").fetchone()
     return {
+        "checked": {"tracked": tracked, "never": never, "oldest": oldest, "newest": newest},
         "broken": len(rows),
         "redownloadable": redownloadable,
         "canonical_missing": canonical_missing,
@@ -201,7 +205,7 @@ def enqueue_canonical_repairs(conn) -> dict:
     surfaced = 0
     no_op = 0
     for r in rows:
-        if classify_repair(conn, r) != "redownload":
+        if classify_repair(r) != "redownload":
             surfaced += 1
             continue
         n = _enqueue_download(
@@ -247,22 +251,55 @@ def enqueue_canonical_repairs(conn) -> dict:
 # third state a bundle's census implies: a file that is present but no
 # longer the size the database recorded.
 
+_PLACEMENT_ORDER = (
+    # v0.51.341: DESC sorts NULL last — a verified-missing (0) row outranked an unverified one.
+    "CASE WHEN theme_present = 1 THEN 0 "
+    "WHEN theme_present IS NULL THEN 1 ELSE 2 END, placed_at DESC, "
+    # v0.51.342: a final tie-break so the batched and the per-row picks agree.
+    "media_folder"
+)
+
 _PLACEMENT_SQL = (
     "SELECT media_folder, placement_kind, plex_rating_key, theme_present "
     "FROM placements WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
-    # v0.51.341: DESC sorts NULL last — a verified-missing (0) row outranked an unverified one.
-    "AND edition_key = ? ORDER BY CASE WHEN theme_present = 1 THEN 0 "
-    "WHEN theme_present IS NULL THEN 1 ELSE 2 END, placed_at DESC"
+    "AND edition_key = ? ORDER BY " + _PLACEMENT_ORDER
+)
+
+# v0.51.342: every broken row's placements in one SELECT, each row's in _PLACEMENT_SQL's own order.
+_BROKEN_PLACEMENTS_SQL = (
+    "SELECT media_type, tmdb_id, section_id, edition_key, "
+    "       media_folder, placement_kind, plex_rating_key, theme_present "
+    "FROM placements p WHERE EXISTS (SELECT 1 FROM local_files lf "
+    "  WHERE lf.canonical_present = 0 AND lf.media_type = p.media_type "
+    "    AND lf.tmdb_id = p.tmdb_id AND lf.section_id = p.section_id "
+    "    AND lf.edition_key = p.edition_key) "
+    "ORDER BY media_type, tmdb_id, section_id, edition_key, " + _PLACEMENT_ORDER
 )
 
 
+def _row_key(r) -> tuple:
+    return (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"])
+
+
+def _broken_placements(conn) -> dict:
+    """{row key: that broken row's placements, in pick order}."""
+    by_row: dict[tuple, list] = {}
+    for p in conn.execute(_BROKEN_PLACEMENTS_SQL).fetchall():
+        by_row.setdefault(_row_key(p), []).append(p)
+    return by_row
+
+
 def _placement_for(conn, r):
+    """(placement, sidecar_survives) for one row — see _pick_placement."""
+    return _pick_placement(conn.execute(
+        _PLACEMENT_SQL, (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
+    ).fetchall())
+
+
+def _pick_placement(rows):
     """(placement, sidecar_survives): the first placement whose sidecar is still
     on disk, else the first Plex's store can serve, else the first by theme_present
     then recency; (None, False) if none."""
-    rows = conn.execute(
-        _PLACEMENT_SQL, (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
-    ).fetchall()
     # v0.51.339: the PK includes media_folder — fetchone() took the dead folder while a sibling held the sidecar.
     for p in rows:
         if _sidecar_survives(p["media_folder"]):
@@ -273,13 +310,30 @@ def _placement_for(conn, r):
     return (store or (rows[0] if rows else None)), False
 
 
+# v0.51.342: whole-file GETs of up to ~10 MB — kept below PROBE_MAX_WORKERS (6), which fetches 2 KB ranges.
+RESTORE_PLEX_WORKERS = 4
+# v0.51.342: reasons that mean Plex did not answer — 401/403/404/500 and no_theme_entry are answers.
+_PLEX_NO_ANSWER = ("plex_themes:transport", "plex_fetch:transport", "plex_themes:502", "plex_themes:503",
+                   "plex_themes:504", "plex_fetch:502", "plex_fetch:503", "plex_fetch:504")
+_PLEX_BACKOFF_BASE_S = 0.5  # v0.51.342: first backoff after a no-answer
+_PLEX_BACKOFF_CAP_S = 8.0  # v0.51.342: the backoff never sleeps longer than this
+_PLEX_TRIP_AFTER = 8  # v0.51.342: consecutive no-answers before the run may stop asking
+_PLEX_TRIP_WINDOW_S = 60.0  # v0.51.342: …and only this long after the first — a Plex restart must not end the run
+
+
+def _run_conn(db_path: Path, conn):
+    """The caller's connection when it passed one, else a fresh one for this write."""
+    from .db import get_conn
+    return nullcontext(conn) if conn is not None else get_conn(db_path)
+
+
 def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
-                    placement_kind: str | None) -> None:
+                    placement_kind: str | None, conn=None) -> None:
     """After bytes landed at the canonical path: re-hash, stamp size / sha /
     downloaded_at / canonical_present=1, and record the placement kind when the
     restore changed it (a hardlink that had to fall back to a copy)."""
     import hashlib
-    from .db import get_conn, transaction
+    from .db import transaction
     from .events import now_iso
     from .worker import _cond_columns
     rehash_failed = False  # v0.51.338: unknown bytes were written — clear the anchors rather than keep them
@@ -297,8 +351,9 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
         rehash_failed = True
     # v0.51.338: new bytes void the loudness/norm anchors (revisions.py rule) — else // UNDO un-gains raw bytes.
     new_bytes = rehash_failed or sha != prior_sha
-    with get_conn(db_path) as conn, transaction(conn):
-        conn.execute(
+    # v0.51.342: the bulk passes its one connection — a connect + 3 PRAGMAs per restored row was the P3 cost.
+    with _run_conn(db_path, conn) as c, transaction(c):
+        c.execute(
             "UPDATE local_files SET file_size = ?, file_sha256 = ?, downloaded_at = ?, "
             "canonical_present = 1"
             + (", loudness_i=?, loudness_tp=?, loudness_lra=?, loudness_measured_at=?, "
@@ -311,7 +366,7 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
         )
         if placement_kind is not None:
             # v0.51.339: only the folder the bytes came from — edition-wide, a plex_upload sibling ('') became 'hardlink'.
-            conn.execute(
+            c.execute(
                 "UPDATE placements SET placement_kind = ? WHERE media_type = ? AND tmdb_id = ? "
                 "AND section_id = ? AND edition_key = ? AND media_folder = ?",
                 (placement_kind, r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"],
@@ -319,19 +374,21 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
             )
 
 
-def _stamp_present(db_path: Path, r) -> None:
+def _stamp_present(db_path: Path, r, *, conn=None) -> None:
     """The restore guard found a non-empty canonical: stamp canonical_present = 1
     only — size/sha stay as recorded, so CHANGED still reports a mismatch."""
-    from .db import get_conn, transaction
-    with get_conn(db_path) as conn, transaction(conn):
-        conn.execute(
-            "UPDATE local_files SET canonical_present = 1 WHERE media_type = ? AND tmdb_id = ? "
+    from .db import transaction
+    with _run_conn(db_path, conn) as c, transaction(c):
+        c.execute(
+            # v0.51.342: bytes motif did not write — CHANGED re-reads their size
+            "UPDATE local_files SET canonical_present = 1, canonical_changed_candidate = 1 "
+            "WHERE media_type = ? AND tmdb_id = ? "
             "AND section_id = ? AND edition_key = ?",
             (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
         )
 
 
-def restore_from_placement(db_path: Path, themes_dir: Path, r) -> dict:
+def restore_from_placement(db_path: Path, themes_dir: Path, r, *, conn=None) -> dict:
     """Re-create ONE row's canonical from the theme.mp3 still in its Plex folder
     (hardlink first, copy across filesystems). `r` carries media_type, tmdb_id,
     section_id, edition_key, file_path, file_size, file_sha256, media_folder,
@@ -373,7 +430,7 @@ def restore_from_placement(db_path: Path, themes_dir: Path, r) -> dict:
             log.warning("restore-canonical: could not remove staged %s: %s", staged, ue)
         return {"ok": False, "reason": f"link_failed:{e}"}
     _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
-                    placement_kind=kind if r["placement_kind"] != kind else None)
+                    placement_kind=kind if r["placement_kind"] != kind else None, conn=conn)
     return {"ok": True, "kind": kind}
 
 
@@ -392,11 +449,8 @@ def _selected_entry_uri(themes_body) -> str | None:
     return entries[0]["ratingKey"] if len(entries) == 1 else None
 
 
-def refetch_from_plex_store(db_path: Path, themes_dir: Path, plex_client, r) -> dict:
-    """Re-create ONE row's canonical from the bytes Plex itself serves for the
-    item (a plex_upload placement lives in Plex's metadata store, not a folder).
-    Returns {ok, bytes, entry_uri} or {ok: False, reason}."""
-    import os
+def _store_guard(themes_dir: Path, r) -> dict | None:
+    """The store path's refusal when a non-empty canonical is on disk, else None."""
     canonical = themes_dir / r["file_path"]
     try:
         # v0.51.338: a REPAIR ALL download lands before verify re-stamps canonical_present — never replace it.
@@ -404,21 +458,33 @@ def refetch_from_plex_store(db_path: Path, themes_dir: Path, plex_client, r) -> 
             return {"ok": False, "reason": "canonical_already_present"}
     except OSError as e:
         log.warning("restore-from-plex-store: could not stat %s (%s) — attempting the refetch anyway", canonical, e)
-    rk = r["plex_rating_key"]
-    if not rk or not str(rk).isdigit():
-        return {"ok": False, "reason": "no_rating_key"}
-    if plex_client is None:
-        return {"ok": False, "reason": "plex_unavailable"}
-    themes = plex_client.get_themes(rating_key=str(rk))
+    return None
+
+
+def _fetch_from_plex_store(plex_client, r) -> dict:
+    """The bytes Plex serves for one row: {ok, data, entry_uri} or {ok: False, reason}. No disk, no database."""
+    rk = str(r["plex_rating_key"])
+    themes = plex_client.get_themes(rating_key=rk)
     if not themes.get("ok"):
         return {"ok": False, "reason": f"plex_themes:{themes.get('http_status') or themes.get('error')}"}
     uri = _selected_entry_uri(themes.get("body"))
     if not uri:
         return {"ok": False, "reason": "no_theme_entry"}
-    got = plex_client.fetch_theme_bytes(item_rating_key=str(rk), entry_uri=uri)
+    got = plex_client.fetch_theme_bytes(item_rating_key=rk, entry_uri=uri)
     data = got.get("bytes") if got.get("ok") else None
     if not data:
         return {"ok": False, "reason": f"plex_fetch:{got.get('http_status') or got.get('error')}"}
+    return {"ok": True, "data": data, "entry_uri": uri}
+
+
+def _publish_store_bytes(db_path: Path, themes_dir: Path, r, data: bytes, uri: str, *, conn=None) -> dict:
+    """Write fetched store bytes to the canonical and stamp them: {ok, bytes, entry_uri} or {ok: False, reason}."""
+    import os
+    # v0.51.342: a download that landed while the bytes were in flight wins.
+    guard = _store_guard(themes_dir, r)
+    if guard is not None:
+        return guard
+    canonical = themes_dir / r["file_path"]
     try:
         canonical.parent.mkdir(parents=True, exist_ok=True)
         tmp = canonical.with_name(canonical.name + ".part")
@@ -430,23 +496,37 @@ def refetch_from_plex_store(db_path: Path, themes_dir: Path, plex_client, r) -> 
                     r["media_type"], r["tmdb_id"], r["section_id"], e)
         return {"ok": False, "reason": f"write_failed:{e}"}
     _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
-                    placement_kind=None)
+                    placement_kind=None, conn=conn)
     return {"ok": True, "bytes": len(data), "entry_uri": uri}
+
+
+def refetch_from_plex_store(db_path: Path, themes_dir: Path, plex_client, r, *, conn=None) -> dict:
+    """Re-create ONE row's canonical from the bytes Plex itself serves for the
+    item (a plex_upload placement lives in Plex's metadata store, not a folder).
+    Returns {ok, bytes, entry_uri} or {ok: False, reason}."""
+    guard = _store_guard(themes_dir, r)
+    if guard is not None:
+        return guard
+    rk = r["plex_rating_key"]
+    if not rk or not str(rk).isdigit():
+        return {"ok": False, "reason": "no_rating_key"}
+    if plex_client is None:
+        return {"ok": False, "reason": "plex_unavailable"}
+    got = _fetch_from_plex_store(plex_client, r)
+    if not got["ok"]:
+        return got
+    return _publish_store_bytes(db_path, themes_dir, r, got["data"], got["entry_uri"], conn=conn)
 
 
 def _broken_rows_with_placement(conn) -> list[dict]:
     """The broken rows as dicts carrying the fields both restore paths need."""
     out = []
-    for r in _broken_rows(conn):
-        lf = conn.execute(
-            "SELECT file_size, file_sha256 FROM local_files WHERE media_type = ? AND tmdb_id = ? "
-            "AND section_id = ? AND edition_key = ?",
-            (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
-        ).fetchone()
-        p, _sidecar = _placement_for(conn, r)
+    rows = _broken_rows(conn)
+    # v0.51.342: two SELECTs for the whole list — file_size/file_sha256 ride _broken_rows, placements come batched.
+    placements = _broken_placements(conn)
+    for r in rows:
+        p, _sidecar = _pick_placement(placements.get(_row_key(r), []))
         d = {k: r[k] for k in r.keys()}
-        d["file_size"] = lf["file_size"] if lf else None
-        d["file_sha256"] = lf["file_sha256"] if lf else None
         d["media_folder"] = p["media_folder"] if p else None
         d["placement_kind"] = p["placement_kind"] if p else None
         d["plex_rating_key"] = p["plex_rating_key"] if p else None
@@ -454,59 +534,258 @@ def _broken_rows_with_placement(conn) -> list[dict]:
     return out
 
 
-def restore_from_plex(db_path: Path, themes_dir: Path, plex_client) -> dict:
+class _PlexGate:
+    """The store fetches' stop rule: back off while Plex gives no answer, stop asking once it has given none for a while."""
+
+    def __init__(self, clock=time.monotonic, sleep=None):
+        self._lock = threading.Lock()
+        self._n = 0
+        self._first_at = None
+        self.tripped = False
+        self.cancelled = threading.Event()
+        # v0.51.342: the default backoff is a wait the cancel ends — a cancelled run never sleeps one out.
+        self._clock, self._sleep = clock, sleep if sleep is not None else self.cancelled.wait
+
+    def before(self) -> bool:
+        with self._lock:
+            if self.tripped:
+                return False
+            n = self._n
+        if n > 0:
+            self._sleep(min(_PLEX_BACKOFF_BASE_S * 2 ** (n - 1), _PLEX_BACKOFF_CAP_S))
+        with self._lock:
+            return not self.tripped
+
+    def after(self, reason) -> None:
+        with self._lock:
+            if reason is None or not str(reason).startswith(_PLEX_NO_ANSWER):
+                self._n, self._first_at = 0, None
+                return
+            self._n += 1
+            now = self._clock()
+            if self._first_at is None:
+                self._first_at = now
+            # v0.51.342: count AND time — four workers make eight no-answers in ~8 s, shorter than a Plex restart.
+            if not self.tripped and self._n >= _PLEX_TRIP_AFTER and now - self._first_at >= _PLEX_TRIP_WINDOW_S:
+                self.tripped = True
+                log.warning("restore from plex: Plex gave no answer to %d requests over %.0f s — the remaining "
+                            "store rows are skipped as plex_unreachable", self._n, now - self._first_at)
+
+
+def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_client_factory=None,
+                      workers: int = RESTORE_PLEX_WORKERS, progress_cb=None, cancel_check=None) -> dict:
     """The bulk: every broken canonical that Plex still holds a copy of — the
     sidecar in its Plex folder first (no network), else Plex's own store for a
     plex_upload placement. Rows with neither are skipped with a reason; nothing
     is re-downloaded here (that is REPAIR ALL). Never overwrites a present file."""
     from .db import get_conn
+    gate = _PlexGate()
+    plex_on = plex_client is not None or plex_client_factory is not None
+    n_workers = max(1, workers) if plex_client_factory is not None else 1
+    counts = {"restored_sidecar": 0, "restored_store": 0, "skipped_count": 0}
+    reasons: dict[int, str] = {}
+    cancelled = False
+    done = 0
+    # v0.51.342: one connection for the run — the pool only talks to Plex; every disk write and stamp is this thread's.
     with get_conn(db_path) as conn:
         rows = _broken_rows_with_placement(conn)
-    restored_sidecar = 0
-    restored_store = 0
-    skipped: list[dict] = []
-    for r in rows:
-        res = None
-        if r["media_folder"]:
-            res = restore_from_placement(db_path, themes_dir, r)
-            if res["ok"]:
-                restored_sidecar += 1
+        total = len(rows)
+        # v0.51.342: rows sharing a canonical path run serially after the pool, in report order — the serial run's winner.
+        shared = {p for p, n in Counter(str(r["file_path"]).casefold() for r in rows).items() if n > 1}
+        log.info("restore from plex: %d broken rows (%d on a shared canonical path), %d Plex worker(s), Plex %s",
+                 total, sum(1 for r in rows if str(r["file_path"]).casefold() in shared), n_workers,
+                 "configured" if plex_on else "not configured")
+
+        def tick():
+            if progress_cb is not None:
+                progress_cb(done, total, dict(counts))
+
+        def land(i, kind, reason=None):
+            nonlocal done
+            if kind == "skip":
+                reasons[i] = reason
+                counts["skipped_count"] += 1
+            else:
+                counts["restored_" + kind] += 1
+            done += 1
+
+        def land_skip(i, r, reason):
+            if reason == "canonical_already_present":
+                # v0.51.339: verify's own rule (non-empty = present) — else the row stays listed until the daily verify.
+                _stamp_present(db_path, r, conn=conn)
+            land(i, "skip", reason)
+
+        def store_refusal(r):
+            refusal = _store_guard(themes_dir, r)
+            if refusal is None and (not r["plex_rating_key"] or not str(r["plex_rating_key"]).isdigit()):
+                refusal = {"ok": False, "reason": "no_rating_key"}
+            if refusal is None and not plex_on:
+                refusal = {"ok": False, "reason": "plex_unavailable"}
+            return refusal
+
+        def row_rules(i, r, store_step):
+            res = None
+            if r["media_folder"]:
+                res = restore_from_placement(db_path, themes_dir, r, conn=conn)
+                if res["ok"]:
+                    land(i, "sidecar")
+                    return
+            # v0.51.338: a present canonical ends the row — falling through let the store overwrite it.
+            present = res is not None and res.get("reason") == "canonical_already_present"
+            if not present and (r["placement_kind"] == "plex_upload"
+                                or (r["media_folder"] in (None, "") and r["plex_rating_key"])):
+                res2 = store_refusal(r)
+                if res2 is None:
+                    res2 = store_step(i, r)
+                    if res2 is None:
+                        return
+                if res2["ok"]:
+                    land(i, "store")
+                    return
+                res = res2
+            land_skip(i, r, (res or {}).get("reason") or "no_plex_copy")
+
+        queued: list[int] = []
+        later: list[int] = []
+        tick()
+        for i, r in enumerate(rows):
+            if cancel_check is not None and cancel_check():
+                cancelled = True
+                break
+            if str(r["file_path"]).casefold() in shared:
+                later.append(i)
                 continue
-        # v0.51.338: a present canonical ends the row — falling through let the store overwrite it.
-        present = res is not None and res.get("reason") == "canonical_already_present"
-        if not present and (r["placement_kind"] == "plex_upload"
-                            or (r["media_folder"] in (None, "") and r["plex_rating_key"])):
-            res2 = refetch_from_plex_store(db_path, themes_dir, plex_client, r)
-            if res2["ok"]:
-                restored_store += 1
-                continue
-            res = res2
-        reason = (res or {}).get("reason") or "no_plex_copy"
-        if reason == "canonical_already_present":
-            # v0.51.339: verify's own rule (non-empty = present) — else the row stays listed until the daily verify.
-            _stamp_present(db_path, r)
-        skipped.append({"title": r["title"] or f'{r["media_type"]}/{r["tmdb_id"]}',
-                        "media_type": r["media_type"], "tmdb_id": r["tmdb_id"],
-                        "section_id": r["section_id"], "reason": reason})
-    log.info("restore from plex: %d from sidecars, %d from Plex's store, %d skipped of %d broken",
-             restored_sidecar, restored_store, len(skipped), len(rows))
-    return {"broken": len(rows), "restored_sidecar": restored_sidecar,
+            before = done
+            row_rules(i, r, lambda j, _row: queued.append(j))
+            if done != before:
+                tick()
+
+        if queued and not cancelled:
+            local = threading.local()
+            clients: list = []
+            clients_lock = threading.Lock()
+
+            def pool_client():
+                if plex_client_factory is None:
+                    return plex_client
+                c = getattr(local, "client", None)
+                if c is None:
+                    c = local.client = plex_client_factory()
+                    with clients_lock:
+                        clients.append(c)
+                return c
+
+            def work(i):
+                if not gate.before():
+                    return i, {"ok": False, "reason": "plex_unreachable"}
+                if gate.cancelled.is_set():
+                    return i, None  # v0.51.342: woke from a backoff after the cancel — never ask Plex; not tried.
+                got = _fetch_from_plex_store(pool_client(), rows[i])
+                gate.after(None if got["ok"] else got["reason"])
+                return i, got
+
+            todo = iter(queued)
+            pending: set = set()
+            pool = ThreadPoolExecutor(n_workers, thread_name_prefix="restore-from-plex")
+            try:
+                refilling = True
+                while True:
+                    # v0.51.342: a finished fetch holds its bytes until published — at most 2 × workers bodies wait.
+                    while refilling and len(pending) < 2 * n_workers:
+                        nxt = next(todo, None)
+                        if nxt is None:
+                            break
+                        pending.add(pool.submit(work, nxt))
+                    if not pending:
+                        break
+                    finished, rest = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
+                    pending = set(rest)
+                    for i, got in sorted((f.result() for f in finished), key=lambda t: t[0]):
+                        if got is None:
+                            continue
+                        r = rows[i]
+                        if got["ok"]:
+                            got = _publish_store_bytes(db_path, themes_dir, r, got["data"], got["entry_uri"],
+                                                       conn=conn)
+                            if got["ok"]:
+                                land(i, "store")
+                                continue
+                        land_skip(i, r, got["reason"])
+                    if finished:
+                        tick()
+                    if refilling and cancel_check is not None and cancel_check():
+                        refilling, cancelled = False, True
+                        gate.cancelled.set()
+                        # v0.51.342: a queued fetch still asked a hung Plex after the cancel — drop it; running ones publish.
+                        pending = {f for f in pending if not f.cancel()}
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)
+                for c in clients:
+                    try:
+                        c.close()
+                    except Exception as e:  # noqa: BLE001 — a close error must not relabel a finished run
+                        log.debug("restore from plex: closing a Plex client failed: %s", e)
+
+        if later and not cancelled:
+            tail: list = []
+
+            def tail_client():
+                if plex_client is not None or plex_client_factory is None:
+                    return plex_client
+                if not tail:
+                    tail.append(plex_client_factory())
+                return tail[0]
+
+            def fetch_now(i, r):
+                if not gate.before():
+                    return {"ok": False, "reason": "plex_unreachable"}
+                got = refetch_from_plex_store(db_path, themes_dir, tail_client(), r, conn=conn)
+                gate.after(None if got["ok"] else got["reason"])
+                return got
+
+            try:
+                for i in later:
+                    if cancel_check is not None and cancel_check():
+                        cancelled = True
+                        break
+                    row_rules(i, rows[i], fetch_now)
+                    tick()
+            finally:
+                for c in tail:
+                    try:
+                        c.close()
+                    except Exception as e:  # noqa: BLE001 — a close error must not relabel a finished run
+                        log.debug("restore from plex: closing a Plex client failed: %s", e)
+
+    skipped = [{"title": rows[i]["title"] or f'{rows[i]["media_type"]}/{rows[i]["tmdb_id"]}',
+                "media_type": rows[i]["media_type"], "tmdb_id": rows[i]["tmdb_id"],
+                "section_id": rows[i]["section_id"], "reason": reasons[i]} for i in sorted(reasons)]
+    restored_sidecar, restored_store = counts["restored_sidecar"], counts["restored_store"]
+    log.info("restore from plex: %d from sidecars, %d from Plex's store, %d skipped of %d broken%s%s",
+             restored_sidecar, restored_store, len(skipped), total,
+             f" — cancelled, {total - done} not tried" if cancelled else "",
+             " — Plex gave no answer" if gate.tripped else "")
+    return {"broken": total, "restored_sidecar": restored_sidecar,
             "restored_store": restored_store, "restored": restored_sidecar + restored_store,
-            "skipped": skipped}
+            "skipped": skipped, "cancelled": cancelled, "not_attempted": total - done,
+            "plex_unreachable": gate.tripped}
 
 
 def changed_canonicals(conn, themes_dir: Path) -> list[dict]:
     """Rows whose canonical IS on disk but no longer the size the database
     recorded — a truncated write, an external edit, a file swapped underneath
     motif. A size the database never recorded (NULL / 0) cannot be judged and
-    is left alone. Read-only: stats, never stamps."""
+    is left alone. Read-only: stats, never stamps.
+    v0.51.342: the last check's candidates, re-read now — a page open stats these, not the tree."""
     rows = conn.execute(
         "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, lf.file_path, "
         "       lf.file_size, lf.source_kind, t.title, t.year, COALESCE(ps.is_anime, 0) AS is_anime "
         "FROM local_files lf "
         "LEFT JOIN themes t ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id "
         "LEFT JOIN plex_sections ps ON ps.section_id = lf.section_id "
-        "WHERE COALESCE(lf.canonical_present, 1) = 1 AND COALESCE(lf.file_size, 0) > 0 "
+        # v0.51.342: only verify's candidates — the live stat below still decides, so a writer's restamp clears a row at once.
+        "WHERE lf.canonical_changed_candidate = 1 "
+        "  AND COALESCE(lf.canonical_present, 1) = 1 AND COALESCE(lf.file_size, 0) > 0 "
         "ORDER BY lf.media_type, t.title, lf.tmdb_id, lf.section_id, lf.edition_key"
     ).fetchall()
     out = []
@@ -518,3 +797,16 @@ def changed_canonicals(conn, themes_dir: Path) -> list[dict]:
         if st.st_size != r["file_size"] and st.st_size > 0:
             out.append({**_entry(r), "recorded": r["file_size"], "on_disk": st.st_size})
     return out
+
+
+def forget_canonical_checks(db_path: Path) -> int:
+    """After a staged database restore: the rows' check results describe the disk
+    when that backup was taken. Clears them (canonical_present stays, so BROKEN and
+    the library DL sort keep the restored stamps); returns the rows touched."""
+    from .db import get_conn, transaction
+    with get_conn(db_path) as conn, transaction(conn):
+        return conn.execute(
+            "UPDATE local_files SET canonical_health_checked_at = NULL, canonical_changed_candidate = NULL, "
+            "    canonical_hash_miss_sig = NULL "
+            "WHERE canonical_health_checked_at IS NOT NULL OR canonical_changed_candidate IS NOT NULL "
+            "   OR canonical_hash_miss_sig IS NOT NULL").rowcount

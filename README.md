@@ -354,7 +354,7 @@ Most settings are configured from the web UI at **/settings** and saved to `/con
 | TOKENS     | API token management                                                       |
 | PASSWORD   | admin password change                                                      |
 | HOMEPAGE   | Custom API widget config example for Homepage dashboard                   |
-| DATABASE   | snapshots of `motif.db` and **backup bundles** (snapshot + `motif.yaml` + `cookies.txt` + a themes census — as sensitive as `/config`), a schedule with retention, restore — a bundle previews the config diff first and can keep your current config; after a restore, `/admin/canonical-health` checks the themes directory and `// RESTORE FROM PLEX` brings back what Plex still holds |
+| DATABASE   | snapshots of `motif.db` and **backup bundles** (snapshot + `motif.yaml` + `cookies.txt` + a themes census — as sensitive as `/config`), a schedule with retention, restore — a bundle previews the config diff first and can keep your current config; after a restore, open `/admin/canonical-health` and `// RUN CHECK` (a restored database's check results are set aside until then), and `// RESTORE FROM PLEX` brings back what Plex still holds |
 
 ### Bootstrap env vars
 

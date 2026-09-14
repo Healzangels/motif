@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import sqlite3
 
 import pytest
@@ -94,6 +95,14 @@ def _row(db, tmdb):
 
 
 def _changed(db, themes):
+    with get_conn(db) as conn:
+        # v0.51.342: every row a candidate, so the writer tests keep exercising the live size comparison.
+        conn.execute("UPDATE local_files SET canonical_changed_candidate = 1")
+        return changed_canonicals(conn, themes)
+
+
+def _listed(db, themes):
+    """What the page lists: verify's own candidates, re-read."""
     with get_conn(db) as conn:
         return changed_canonicals(conn, themes)
 
@@ -209,7 +218,8 @@ def test_verify_heals_a_size_stale_row_and_keeps_a_real_change(bench, monkeypatc
     _seed(db, themes, tmdb=12, disk=swapped, sha=_sha(ORIGINAL), size=len(ORIGINAL))
     # a healthy row: nothing to hash.
     _seed(db, themes, tmdb=13, disk=ORIGINAL, sha=_sha(ORIGINAL), size=len(ORIGINAL))
-    before = {r["tmdb_id"] for r in _changed(db, themes)}
+    before = {t for t in (11, 12, 13)
+              if (themes / _row(db, t)["file_path"]).stat().st_size != _row(db, t)["file_size"]}
     assert before == {11, 12}
 
     hashed = []
@@ -226,7 +236,7 @@ def test_verify_heals_a_size_stale_row_and_keeps_a_real_change(bench, monkeypatc
 
     assert _row(db, 11)["file_size"] == stale.stat().st_size
     assert _row(db, 12)["file_size"] == len(ORIGINAL)      # left for CHANGED to report
-    after = _changed(db, themes)
+    after = _listed(db, themes)
     assert [r["tmdb_id"] for r in after] == [12]
     assert after[0]["on_disk"] == len(swapped)
     # only the size-mismatched rows cost a hash; a healthy row never does.
@@ -234,8 +244,15 @@ def test_verify_heals_a_size_stale_row_and_keeps_a_real_change(bench, monkeypatc
     assert any(rec.levelno == logging.INFO and "healed" in rec.getMessage()
                for rec in caplog.records)
 
-    # a second pass has nothing left to heal and hashes only the genuine change.
+    # v0.51.342: the memo (P1) — a second pass has nothing to heal and does not re-hash the same genuine change…
     hashed.clear()
+    plex_enum.verify_canonical_health(db, themes)
+    assert len(hashed) == 0
+    assert [r["tmdb_id"] for r in _listed(db, themes)] == [12]
+    # …until the file moves.
+    p = themes / _row(db, 12)["file_path"]
+    st = p.stat()
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
     plex_enum.verify_canonical_health(db, themes)
     assert len(hashed) == 1
 

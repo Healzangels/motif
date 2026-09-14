@@ -151,3 +151,62 @@ def test_null_section_skipped(cfg):
     cfg.plex.url = "http://orig"
     _apply_partial_config(cfg, {"plex": None})
     assert cfg.plex.url == "http://orig"
+
+
+# ── v0.51.342: float leaves (loudness.target_lufs) ──────────────────
+
+@pytest.mark.parametrize("sent, stored", [
+    (-16, -16.0), (-18.5, -18.5), (0, 0.0), ("-16", -16.0), (" -12.5 ", -12.5), ("-7e0", -7.0),
+])
+def test_float_field_takes_a_json_number_or_numeric_string(cfg, sent, stored):
+    _apply_partial_config(cfg, {"loudness": {"target_lufs": sent}})
+    assert cfg.loudness.target_lufs == stored
+    assert type(cfg.loudness.target_lufs) is float
+
+
+@pytest.mark.parametrize("sent", [
+    True, False, None, "", "abc", "-16 LUFS", "nan", "inf", "-Infinity", "1e999",
+    float("nan"), float("inf"), float("-inf"), pytest.param(10 ** 400, id="int-too-big-for-float"), [-16], {"v": -16},
+])
+def test_float_field_refuses_a_non_number_naming_the_key_not_the_value(cfg, sent):
+    with pytest.raises(ValueError) as e:
+        _apply_partial_config(cfg, {"loudness": {"target_lufs": sent}})
+    msg = str(e.value)
+    assert "loudness.target_lufs" in msg
+    if isinstance(sent, str) and sent.strip():
+        assert sent.strip() not in msg, "the refusal names the key, never echoes the value"
+    if isinstance(sent, int) and not isinstance(sent, bool):
+        assert str(sent) not in msg
+    assert cfg.loudness.target_lufs == -18.0 and type(cfg.loudness.target_lufs) is float
+
+
+@pytest.mark.parametrize("loaded", [-16, "-16"], ids=["loaded-int", "loaded-str"])
+@pytest.mark.parametrize("sent, stored", [(-18.5, -18.5), (-16.5, -16.5), ("-16.5", -16.5), (-16, -16.0)])
+def test_float_field_saves_a_float_whatever_type_the_yaml_loaded(cfg, loaded, sent, stored):
+    # v0.51.342: _hydrate_dataclass keeps YAML's type, so a hand-edited `target_lufs: -16` is an int here.
+    cfg.loudness.target_lufs = loaded
+    _apply_partial_config(cfg, {"loudness": {"target_lufs": sent}})
+    assert cfg.loudness.target_lufs == stored
+    assert type(cfg.loudness.target_lufs) is float
+
+
+@pytest.mark.parametrize("loaded", [-16, "-16"], ids=["loaded-int", "loaded-str"])
+@pytest.mark.parametrize("sent", [True, None, "abc", "-16.5 LUFS", float("inf"), float("nan"), [-16]])
+def test_float_field_refusal_names_the_key_whatever_type_the_yaml_loaded(cfg, loaded, sent):
+    cfg.loudness.target_lufs = loaded
+    with pytest.raises(ValueError) as e:
+        _apply_partial_config(cfg, {"loudness": {"target_lufs": sent}})
+    msg = str(e.value)
+    assert "loudness.target_lufs" in msg
+    if isinstance(sent, str):
+        assert sent not in msg, "the refusal names the key, never echoes the value"
+    assert cfg.loudness.target_lufs == loaded
+
+
+def test_float_field_range_stays_validates_job(cfg):
+    from app.core.config_file import validate
+    _apply_partial_config(cfg, {"loudness": {"target_lufs": -90}})
+    assert cfg.loudness.target_lufs == -90.0
+    errors = validate(cfg, require_themes_dir=False)
+    assert any("loudness.target_lufs must be between -70 and 0" in e for e in errors), errors
+    assert not any("unexpected type" in e for e in errors), errors

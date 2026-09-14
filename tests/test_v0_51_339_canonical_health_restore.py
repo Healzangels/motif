@@ -307,51 +307,104 @@ const els = new Map();
 const document = {
   getElementById(id) {
     if (!els.has(id)) {
-      els.set(id, { id, style: { display: "none" }, textContent: "", innerHTML: "", className: "",
-                    disabled: false, listeners: {},
-                    addEventListener(type, fn) { this.listeners[type] = fn; } });
+      const el = { id, style: { display: "none" }, innerHTML: "", className: "", disabled: false,
+                   listeners: {}, texts: [], shown: "", dataset: {},
+                   addEventListener(type, fn) { this.listeners[type] = fn; } };
+      // v0.51.342: every text an element showed, so a note the restore poll replaces still counts.
+      Object.defineProperty(el, "textContent", {
+        get() { return this.shown; },
+        set(v) { this.shown = String(v); this.texts.push(this.shown); },
+      });
+      // v0.51.342: the server-rendered state of the element, before the binder runs.
+      const ssr = (scenario.ssr || {})[id];
+      if (ssr) {
+        if ("display" in ssr) el.style.display = ssr.display;
+        if ("disabled" in ssr) el.disabled = ssr.disabled;
+        if ("text" in ssr) el.shown = ssr.text;
+        Object.assign(el.dataset, ssr.dataset || {});
+      }
+      els.set(id, el);
     }
     return els.get(id);
   },
 };
 const queue = scenario.responses.slice();
+const unexpected = [];
+// v0.51.342: a held response answers only at its "release:<key>" step — a request still in flight.
+const holds = new Map();
 async function api(method, url) {
-  if (!queue.length) throw new Error(`unexpected api call ${method} ${url}`);
-  return queue.shift();
+  if (!queue.length) {
+    unexpected.push(`${method} ${url}`);
+    throw new Error(`unexpected api call ${method} ${url}`);
+  }
+  const next = queue.shift();
+  if (next && next.__hold) {
+    return new Promise((resolve) => holds.set(next.__hold.key, () => resolve(next.__hold.value)));
+  }
+  if (next && next.__throw) {
+    const err = new Error(`${next.__throw.status}: ${next.__throw.detail || "error"}`);
+    err.status = next.__throw.status;
+    throw err;
+  }
+  return next;
 }
+// v0.51.342: timers wait for a "tick" step — the restore poll re-arms itself.
+const timers = new Map();
+let timerSeq = 0;
 const ctx = vm.createContext({
   document, api, console, URLSearchParams,
   htmlEscape: (s) => String(s), fmtBytes: (n) => String(n), _autoDismissOpStatus: () => {},
+  setTimeout: (fn) => { timerSeq += 1; timers.set(timerSeq, fn); return timerSeq; },
+  clearTimeout: (id) => { timers.delete(id); },
 });
 vm.runInContext(fs.readFileSync(srcPath, "utf8"), ctx);
 const flush = () => new Promise((r) => setImmediate(r));
-const snap = () => Object.fromEntries([...els].map(([id, e]) =>
-  [id, { display: e.style.display, text: e.textContent, html: e.innerHTML }]));
+// v0.51.342: __timers = the armed timers, so a second poll chain shows as two.
+const snap = () => Object.assign(Object.fromEntries([...els].map(([id, e]) =>
+  [id, { display: e.style.display, text: e.textContent, html: e.innerHTML, disabled: e.disabled,
+         className: e.className, texts: e.texts.slice(), title: e.title || "" }])), { __timers: timers.size });
 (async () => {
   const snaps = [];
   ctx.bindCanonicalHealth();
   await flush();
   snaps.push(snap());
-  for (const id of scenario.clicks) {
-    await document.getElementById(id).listeners.click();
+  for (const step of scenario.clicks) {
+    if (step === "tick") {
+      for (const [id, fn] of [...timers]) { timers.delete(id); await fn(); }
+    } else if (step.startsWith("release:")) {
+      holds.get(step.slice("release:".length))();
+      await flush();
+    } else {
+      await document.getElementById(step).listeners.click();
+    }
     await flush();
     snaps.push(snap());
   }
-  process.stdout.write(JSON.stringify({ snaps, left: queue.length }));
+  process.stdout.write(JSON.stringify({ snaps, left: queue.length, unexpected }));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
 
 
-def _run_page(tmp_path, responses, clicks):
+def _app_fn(name: str) -> str:
+    """One module-level app.js helper the binder calls, whole (to its closing brace)."""
+    start = APP_JS.index(f"\n  function {name}(") + 1
+    return APP_JS[start:APP_JS.index("\n  }\n", start)] + "\n  }\n"
+
+
+def _run_page(tmp_path, responses, clicks, ssr=None):
     start = APP_JS.index("  function bindCanonicalHealth() {")
-    (tmp_path / "bind.js").write_text(APP_JS[start:APP_JS.index("\n  function ", start + 1)])
-    (tmp_path / "scenario.json").write_text(json.dumps({"responses": responses, "clicks": clicks}))
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    # v0.51.342: the page's own fmtRelativePast + gatewayTimeoutNote ride along — the restore poll words with them.
+    (tmp_path / "bind.js").write_text(_app_fn("fmtRelativePast") + _app_fn("gatewayTimeoutNote")
+                                      + APP_JS[start:APP_JS.index("\n  function ", start + 1)])
+    (tmp_path / "scenario.json").write_text(json.dumps({"responses": responses, "clicks": clicks, "ssr": ssr or {}}))
     (tmp_path / "driver.js").write_text(_DRIVER)
     r = subprocess.run([_NODE, str(tmp_path / "driver.js"), str(tmp_path / "bind.js"),
                         str(tmp_path / "scenario.json")],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr[-2000:]
     out = json.loads(r.stdout)
+    assert out["unexpected"] == [], f"the page made api calls the scenario did not expect: {out['unexpected']}"
     assert out["left"] == 0, "the page made fewer api calls than the scenario expects"
     return out["snaps"]
 
@@ -376,7 +429,9 @@ def test_the_missing_block_repaints_instead_of_keeping_the_last_rows(tmp_path):
     first = _report(missing=[_row(801, "Stale Manual Title", "sidecar")], restorable=1)
     # that row got fixed; a re-downloadable row still has a Plex copy, so the bulk still shows
     second = _report(redownloadable=[_row(802, "Fresh Redownload", "sidecar")], restorable=1)
-    s1, s2, s3 = _run_page(tmp_path, [first, second, _report()], ["canon-check-btn", "canon-check-btn"])
+    # v0.51.342: the page also asks the restore job's status on load.
+    s1, s2, s3 = _run_page(tmp_path, [first, {"status": "idle"}, second, _report()],
+                           ["canon-check-btn", "canon-check-btn"])
     assert "Stale Manual Title" in s1["canon-missing-tbody"]["html"]
     assert s1["canon-missing-block"]["display"] == ""
     assert "Stale Manual Title" not in s2["canon-missing-tbody"]["html"], "the previous render's row survived"
@@ -399,16 +454,20 @@ _SKIP_WORDING = {
     "plex_fetch:": "Plex fetch failed",
     "write_failed:": "copy failed",
     "no_plex_copy": "no Plex copy",
+    # v0.51.342: the run stopped asking a Plex that gave no answer.
+    "plex_unreachable": "Plex gave no answer — not tried",
 }
 
 
 def _emitted_skip_reasons() -> set[str]:
-    """The reason literals (an f-string's literal prefix) the three restore functions can return."""
+    """The reason literals (an f-string's literal prefix) the restore functions and their store helpers can return."""
     import ast
     tree = ast.parse((REPO / "app" / "core" / "canonical_health.py").read_text())
     fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
     out: set[str] = set()
-    for name in ("restore_from_placement", "refetch_from_plex_store", "restore_from_plex"):
+    # v0.51.342: the store path's reasons moved into the three helpers the bulk drives directly.
+    for name in ("restore_from_placement", "refetch_from_plex_store", "restore_from_plex",
+                 "_store_guard", "_fetch_from_plex_store", "_publish_store_bytes"):
         for node in ast.walk(fns[name]):
             if isinstance(node, ast.Dict):
                 for k, v in zip(node.keys, node.values):
@@ -437,7 +496,9 @@ def test_the_restore_status_words_each_skip_reason(tmp_path):
     restore = {"ok": True, "broken": len(skipped), "restored": 0, "restored_sidecar": 0,
                "restored_store": 0, "skipped": skipped}
     page = _report(missing=[_row(901, "Anything", "sidecar")], restorable=1)
-    snaps = _run_page(tmp_path, [page, restore, _report()], ["canon-restore-plex-btn"])
+    # v0.51.342: idle on load → the start → the finished run's status → the reloaded report.
+    snaps = _run_page(tmp_path, [page, {"status": "idle"}, {"ok": True, "started": True},
+                                 {"status": "done", **restore}, _report()], ["canon-restore-plex-btn"])
     text = snaps[1]["canon-restore-plex-status"]["text"]
     assert "had no Plex copy" not in text, text
     head = f" · {len(skipped)} skipped ("

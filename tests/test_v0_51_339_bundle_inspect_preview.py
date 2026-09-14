@@ -258,17 +258,22 @@ def test_diff_shows_the_settings_the_old_regex_hid(tmp_path):
 
 
 def test_unknown_keys_fall_back_on_their_last_segment_only():
-    live = ("extras:\n  my_api_key: K-LIVE\n  auth_mode: basic\n  cookie_jar: a\n  token:\n    name: n1\n"
-            "downloads:\n  proxy_url:\n    user: u\n    pass: NESTED-PW-1\n")
-    other = ("extras:\n  my_api_key: K-BUNDLE\n  auth_mode: oidc\n  cookie_jar: b\n  token:\n    name: n2\n"
-             "downloads:\n  proxy_url:\n    user: u\n    pass: NESTED-PW-2\n")
+    live = "extras:\n  my_api_key: K-LIVE\n  auth_mode: basic\n  cookie_jar: a\n  token:\n    name: n1\n"
+    other = "extras:\n  my_api_key: K-BUNDLE\n  auth_mode: oidc\n  cookie_jar: b\n  token:\n    name: n2\n"
     d = {r["key"]: r for r in bundle.config_diff(live, other)}
     assert d["extras.my_api_key"]["secret"] and d["extras.my_api_key"]["bundle"] == bundle.MASK
     assert d["extras.auth_mode"] == {"key": "extras.auth_mode", "secret": False, "live": "basic", "bundle": "oidc"}
     assert d["extras.cookie_jar"]["bundle"] == "b" and d["extras.token.name"]["bundle"] == "n2"
-    assert d["downloads.proxy_url.pass"]["secret"] and d["downloads.proxy_url.pass"]["bundle"] == bundle.MASK, \
+    assert "K-BUNDLE" not in json.dumps(d)
+    # v0.51.342: a mapping under the str leaf downloads.proxy_url is refused by its key before any diff — the mask rule still hides it whole
+    nested = "downloads:\n  proxy_url:\n    user: u\n    pass: NESTED-PW-2\n"
+    assert bundle.config_diff(live, other + nested) == []
+    assert bundle.flatten_config(nested, side="bundle")[1] == "downloads.proxy_url must be a string, not dict"
+    rows = {r["key"]: r for r in bundle._diff_rows({"downloads.proxy_url.pass": "NESTED-PW-1"},
+                                                   {"downloads.proxy_url.pass": "NESTED-PW-2"})}
+    assert rows["downloads.proxy_url.pass"]["secret"] and rows["downloads.proxy_url.pass"]["bundle"] == bundle.MASK, \
         "a mapping where a credential field belongs is hidden whole"
-    assert "NESTED-PW" not in json.dumps(d) and "K-BUNDLE" not in json.dumps(d)
+    assert "NESTED-PW" not in json.dumps(rows)
 
 
 # ── 4. a bundle motif.yaml that does not parse ────────────────────────

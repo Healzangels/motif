@@ -13,8 +13,6 @@ a bare duplicate with nothing linking them).
 """
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -26,13 +24,13 @@ REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 
-def _settings(target: str):
-    d = Path(tempfile.mkdtemp())
-    os.environ["MOTIF_CONFIG_DIR"] = str(d)
-    os.environ["MOTIF_DATA_DIR"] = str(d / "data")
-    os.environ["MOTIF_LOUDNESS_TARGET"] = target
+def _settings(monkeypatch, tmp_path: Path, target: str):
+    # v0.51.342: monkeypatch, not os.environ — the leaked -35 target moved every later test's loudness.target_lufs
+    monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MOTIF_LOUDNESS_TARGET", target)
     from app.config import Settings
-    return Settings(config_dir=d, data_dir=d / "data")
+    return Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
 
 
 def test_band_is_the_stepper_clamp():
@@ -49,22 +47,22 @@ def test_band_is_the_stepper_clamp():
     ("-31", -31.0),    # exact floor
     ("-6", -6.0),      # exact ceil
 ])
-def test_settings_property_clamps_to_the_band(cfg, expect):
+def test_settings_property_clamps_to_the_band(monkeypatch, tmp_path, cfg, expect):
     """This is the single functional read point worker + normalize-one + api_item share.
     Pre-fix it returned the raw config value, so an out-of-band config diverged per-path.
     """
-    s = _settings(cfg)
+    s = _settings(monkeypatch, tmp_path, cfg)
     assert s.loudness_target_lufs == expect
     # the raw config is untouched — config validate's -70..0 typo-guard still applies to it
     if cfg not in ("-20", "-18", "-31", "-6"):
         assert s._cfg.loudness.target_lufs != expect, "clamp must not mutate stored config"
 
 
-def test_worker_and_normalize_one_no_longer_diverge_out_of_band():
+def test_worker_and_normalize_one_no_longer_diverge_out_of_band(monkeypatch, tmp_path):
     """The concrete regression: at config target -35, the download-conditioner (which
     reads the property) and normalize-one (which also resolves the property, then
     re-clamps) must agree. Both resolve to the floor, -31."""
-    s = _settings("-35")
+    s = _settings(monkeypatch, tmp_path, "-35")
     conditioner_target = s.loudness_target_lufs                      # worker.py path
     normalize_default = s.loudness_target_lufs                       # normalize-one default
     clamped = max(LOUDNESS_TARGET_FLOOR, min(LOUDNESS_TARGET_CEIL, normalize_default))

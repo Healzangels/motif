@@ -6336,7 +6336,70 @@
 #   player for a non-numeric rating key; the INFO headline says a backup's
 #   item is not in Plex when it has left; the loudness action label centres on
 #   its first line at phone width.
-__version__ = "0.51.341"
+# 0.51.342: CANONICAL HEALTH and backup bundles, measured faster — the
+#   efficiency findings of the .328–.337 review (operator-authorized), each
+#   with before/after counts from the perfbench harnesses against .340 — and
+#   a SAVE DOWNLOADS bug found on the way.
+#   (1) CANONICAL HEALTH report: verify flags the rows whose size moved (schema
+#   v80: local_files.canonical_changed_candidate + canonical_hash_miss_sig),
+#   and opening the page re-stats only those — 20,000 rows on a 2 ms-stat
+#   share 52.2 s → 0.14 s. CHECK stats each row once, and a missed heal hash
+#   is not repeated until the file or the record moves (20,000 rows 61.6 s →
+#   4.0 s). The v80 migration, and a boot that applies a restored database,
+#   set the old check results aside: the page reads "Not checked yet" until
+#   RUN CHECK (a stamp with no candidates behind it would read as all-clear).
+#   (2) RESTORE FROM PLEX is a page-scoped background job (like the
+#   AnimeThemes sweep, not an op kind): four workers for the Plex HTTP only,
+#   one database connection per run (31 → 1 for 30 rows), progress and
+#   // CANCEL on the page, CHECK answers 409 while it runs, and a marker file
+#   keeps the last run across a restart. 30 rows from Plex's store at 200 ms
+#   latency 12.3 s → 3.3 s. A Plex that gives no answer (transport, 502, 503,
+#   504) is backed off and stops the run only after 8 no-answers AND 60 s — a
+#   Plex restart does not end it; an answered failure (500, 401, 404) never
+#   slows it. The page holds up across restarts and proxy blips: a run cut
+#   off by a restart alarms once, then reads as a quiet "last run" line; a
+#   page loaded mid-run whose first status poll fails keeps polling, with one
+#   poll chain however clicks and polls interleave; the finished run's marker
+#   lands before a new START can claim the job; // CANCEL drops the fetches
+#   not yet started and wakes any asleep in a no-answer backoff, so Plex is
+#   never asked after a cancel. The settings restore hint says to RUN CHECK.
+#   (3) Bundles: one forward pass per flow (GzipFile + tarfile "r|"), one
+#   integrity_check, and the checked database MOVED into the pending slot and
+#   re-hashed before the swap. 300 MiB upload + stage 22.8 s → ~10.5 s:
+#   archive opens 5 → 2, 3,094 → 619 MiB inflated, integrity checks 4 → 2,
+#   copies 3 → 0. Deliberate changes: a corrupt deflate stream is a 422, not
+#   a 500; the gzip trailer's CRC and length are verified (a corrupt census
+#   passed); repeated member names, anything but a regular file (pax sparse
+#   included) and oversized members are refused; the next header must sit
+#   where the gated size puts it — tarfile's stream mode seeks by the raw
+#   header size, so a pax size override made a 1 KB bundle spin a worker for
+#   months (caught in review; .341's seekable reader refused it at once).
+#   What follows the archive's end is bounded — one 2 MiB raw allowance shared
+#   by the last tar fetch and the trailer read, 4 MiB inflated (a crafted tail
+#   held the staging lock 8.6 s) — and the allowance renews per 1 MiB tarfile
+#   reads, so a database of any size passes. tarfile's IndexError and
+#   RecursionError on a malformed header chain are refusals, not 500s.
+#   Pendings are 0600 from verified bytes; an upload name collision compares
+#   bytes.
+#   (4) Staging (carried .341 notes): an in-place (bind-mount) cookies restore
+#   leaves the file's mode as the host set it (motif.yaml still ends 0600); an
+#   in-place write that fails part-way writes the original bytes back; a
+#   member that fails after the database swap unstages the whole bundle and
+#   says so; a bundle motif.yaml leaf of the wrong type is refused by its
+#   dotted key (a hand-edited unquoted `movie_section: 1` now keeps the live
+#   config); the settings restore and cancel errors show motif's words and
+#   re-read the pending banner.
+#   (5) SAVE DOWNLOADS: since v0.51.189 every save of the DOWNLOADS tab
+#   answered 400 — TARGET LOUDNESS arrives as a number, _apply_partial_config
+#   stored the float as text, and validate() refused the whole body, so
+#   nothing on that tab saved. A float field now saves a float whatever type
+#   motif.yaml loaded it as (a hand-edited -16 or '-16' too); a bool, NaN,
+#   infinity, text or null is a 400 naming the key, never the value. A test
+#   PATCHes every settings field with its own default at its own type.
+#   UPGRADE NOTE: schema v80. CANONICAL HEALTH reads "Not checked yet" after
+#   the upgrade until // RUN CHECK. Re-check any DOWNLOADS setting changed
+#   since mid-July — none of those saves landed.
+__version__ = "0.51.342"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -11,6 +11,8 @@ for files present but not the recorded size.
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -200,6 +202,12 @@ def test_bulk_without_plex_still_restores_sidecars(tmp_path):
 
 def test_report_carries_plex_copy_restorable_count_and_changed(tmp_path):
     db, themes, plexdir = _seed(tmp_path)
+    from app.core.plex_enum import verify_canonical_health
+    with get_conn(db) as conn:
+        unchecked = ch.broken_canonical_report(conn, themes, plex_available=True)
+    # v0.51.342: CHANGED is what the last check found — before any check there is nothing, and the page says so.
+    assert unchecked["changed"] == [] and unchecked["checked"]["never"] == unchecked["checked"]["tracked"] == 5
+    verify_canonical_health(db, themes)
     with get_conn(db) as conn:
         rep = ch.broken_canonical_report(conn, themes, plex_available=True)
         # v0.51.339: the store copy is only promised when the bulk can reach Plex.
@@ -253,18 +261,48 @@ def _seed_into(settings, tmp_path):
     return plexdir
 
 
+def _reset_restore_job():
+    from app.web import api as api_mod
+    with api_mod._CANON_RESTORE_LOCK:
+        api_mod._CANON_RESTORE_STATE.clear()
+        api_mod._CANON_RESTORE_STATE["status"] = "idle"
+
+
+def _finish_restore_job(client):
+    """v0.51.342: the POST starts a background job — poll its status to a terminal state, then join the thread."""
+    end = time.monotonic() + 10
+    while True:
+        st = client.get("/api/admin/canonical-health/restore-from-plex/status", headers=AUTH).json()
+        if st["status"] != "running" or time.monotonic() > end:
+            break
+        time.sleep(0.02)
+    for t in threading.enumerate():
+        if t.name == "canonical-restore-from-plex":
+            t.join(10)
+    return st
+
+
 def test_endpoint_restores_from_folders_without_plex_and_reports(admin_client):
     client, settings, tmp_path = admin_client
     _seed_into(settings, tmp_path)
-    r = client.get("/api/admin/canonical-health/report", headers=AUTH)
+    _reset_restore_job()
+    # v0.51.342: a page open reads the last check's CHANGED candidates — RUN CHECK makes the first one.
+    r = client.post("/api/admin/canonical-health/check", headers=AUTH)
     assert r.status_code == 200
     j = r.json()
     # v0.51.339: was 2 — Plex is off here, so 102's store copy is not restorable (the bulk skips it plex_unavailable).
     assert j["counts"]["restorable_from_plex"] == 1 and j["counts"]["changed"] == 1
-    r = client.post("/api/admin/canonical-health/restore-from-plex", headers=AUTH)
-    assert r.status_code == 200, r.text
-    j = r.json()
-    assert j["ok"] and j["restored_sidecar"] == 1 and j["restored_store"] == 0
+    try:
+        r = client.post("/api/admin/canonical-health/restore-from-plex", headers=AUTH)
+        assert r.status_code == 200, r.text
+        # v0.51.342: the POST only starts the run; the summary moved to .../status.
+        assert r.json() == {"ok": True, "started": True}
+        j = _finish_restore_job(client)
+    finally:
+        _finish_restore_job(client)
+        _reset_restore_job()
+    assert j["status"] == "done", j
+    assert j["restored_sidecar"] == 1 and j["restored_store"] == 0
     assert {s["tmdb_id"]: s["reason"] for s in j["skipped"]} == {102: "plex_unavailable", 103: "no_plex_copy"}
     assert (tmp_path / "themes" / "movies" / "101" / "theme.mp3").read_bytes() == b"sidecar-bytes-101"
     r = client.get("/api/admin/canonical-health/report", headers=AUTH)
@@ -282,9 +320,15 @@ def test_endpoint_requires_admin_and_themes_dir(tmp_path, monkeypatch):
     init_db(settings.db_path); init_auth_schema(settings.db_path)
     create_admin(settings.db_path, username="testadmin", password="testpassword")
     client = TestClient(create_app(settings))
+    _reset_restore_job()
     assert client.post("/api/admin/canonical-health/restore-from-plex").status_code in (401, 403)
+    # v0.51.342: the job's status and cancel are admin-only too.
+    assert client.get("/api/admin/canonical-health/restore-from-plex/status").status_code in (401, 403)
+    assert client.post("/api/admin/canonical-health/restore-from-plex/cancel").status_code in (401, 403)
     r = client.post("/api/admin/canonical-health/restore-from-plex", headers=AUTH)
     assert r.status_code == 409, "no themes_dir configured"
+    assert client.get("/api/admin/canonical-health/restore-from-plex/status", headers=AUTH).json() == {
+        "status": "idle"}, "the 409 is decided before the job is claimed"
 
 
 def test_page_markup_and_binder():

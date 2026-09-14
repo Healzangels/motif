@@ -7365,8 +7365,9 @@
         showStaged(r && r.message);
       } catch (e) {
         const gw = gatewayTimeoutNote(e);
-        alert('Restore failed: ' + (gw || (e && e.message ? e.message : 'error')));
-        if (gw) refreshPending();
+        // v0.51.342: motif's own detail, never the raw '500: {"detail": …}' — and a staging that stopped short changes what is pending
+        alert('Restore failed: ' + (gw || (e && e.detail != null ? String(e.detail) : (e && e.message ? e.message : 'error'))));
+        refreshPending();
       }
     });
 
@@ -7406,8 +7407,8 @@
         // v0.51.146: a gateway timeout likely means staging finished server-side —
         // reframe + refresh so the restore-pending banner appears if it did.
         const gw = gatewayTimeoutNote(e);
-        alert('Restore failed: ' + (gw || (e && e.message ? e.message : 'error')));
-        if (gw) refreshPending();
+        alert('Restore failed: ' + (gw || (e && e.detail != null ? String(e.detail) : (e && e.message ? e.message : 'error'))));  // v0.51.342: the StagingError's words, not its JSON
+        refreshPending();  // v0.51.342: a refused drop can still have removed an earlier staging's member
       }
     }
 
@@ -7542,7 +7543,8 @@
           }
           refreshPending();   // best-effort re-confirm, not awaited
         } catch (e) {
-          alert('Cancel failed: ' + (e && e.message ? e.message : 'error'));
+          alert('Cancel failed: ' + (e && e.detail != null ? String(e.detail) : (e && e.message ? e.message : 'error')));  // v0.51.342: the StagingError's words, not its JSON
+          refreshPending();  // v0.51.342: a partial drop removed a member the banner still lists
         }
       });
     }
@@ -7718,6 +7720,7 @@
   // no background-op poll like the loudness audit needs. Gated on the CHECK button
   // so it only fires on that page. Deep-links reuse the loudness outlier ?info_open
   // pattern.
+  // v0.51.342: RESTORE FROM PLEX is the exception — a page-scoped job this binder starts, polls and re-attaches to.
   function bindCanonicalHealth() {
     const checkBtn = document.getElementById('canon-check-btn');
     if (!checkBtn) return;
@@ -7732,9 +7735,21 @@
     const missCount = document.getElementById('canon-missing-count');
     const missBody = document.getElementById('canon-missing-tbody');
     const clearBlock = document.getElementById('canon-clear-block');
+    // v0.51.342: the results are the last check's — the freshness line says how old, the clear text says "when last checked".
+    const freshness = document.getElementById('canon-freshness');
+    const clearText = document.getElementById('canon-clear-text');
     // v0.51.337: RESTORE FROM PLEX (the bulk) + the CHANGED block.
     const restorePlexBtn = document.getElementById('canon-restore-plex-btn');
     const restorePlexStatus = document.getElementById('canon-restore-plex-status');
+    const restoreCancelBtn = document.getElementById('canon-restore-plex-cancel-btn');
+    let restoreRunning = false;
+    let restoreWatching = false;
+    let restoreShown = false;
+    let restoreTimer = null;
+    let restoreGen = 0;
+    let lastRestorable = 0;
+    let checking = false;
+    let repairing = false;
     const chgBlock = document.getElementById('canon-changed-block');
     const chgCount = document.getElementById('canon-changed-count');
     const chgBody = document.getElementById('canon-changed-tbody');
@@ -7772,6 +7787,8 @@
       ['no_theme_entry', 'no theme selected in Plex'],
       ['no_rating_key', 'no Plex rating key'],
       ['no_placement', 'no Plex placement'],
+      // v0.51.342: the run stopped asking a Plex that gave no answer.
+      ['plex_unreachable', 'Plex gave no answer — not tried'],
     ];
     function skipWords(skipped) {
       const groups = new Map();
@@ -7784,8 +7801,36 @@
       return Array.from(groups, ([words, n]) => `${fmt(n)} ${words}`).join(', ');
     }
 
+    function renderFreshness(rep) {
+      if (!freshness) return;
+      const ck = rep.checked || {};
+      const tracked = ck.tracked || 0;
+      const never = ck.never || 0;
+      if (!tracked) {
+        freshness.style.display = 'none';
+        return;
+      }
+      if (never === tracked) {
+        freshness.textContent = 'Not checked yet — // RUN CHECK compares every theme on disk with what motif recorded. '
+          + 'Until it runs, CHANGED is empty and BROKEN shows what motif last recorded.';
+        freshness.className = 'form-hint form-hint-warn';
+        freshness.title = '';
+      } else {
+        // v0.51.342: 26 h = the daily 03:25 UTC pass plus 2 h — older than that, a check was missed.
+        const stale = Date.now() - Date.parse(ck.oldest) > 26 * 3600 * 1000;
+        freshness.textContent = `As of the last check — the oldest result is ${fmtRelativePast(ck.oldest) || ck.oldest}`
+          + (never > 0 ? ` · ${fmt(never)} not checked yet` : '')
+          + (stale ? ' · over a day old — // RUN CHECK re-reads every theme.'
+            : '. A file changed after its check shows at the next one.');
+        freshness.className = stale ? 'form-hint form-hint-warn' : 'form-hint';
+        freshness.title = `oldest ${new Date(ck.oldest).toLocaleString()} · newest ${new Date(ck.newest).toLocaleString()}`;
+      }
+      freshness.style.display = '';
+    }
+
     function render(rep) {
       if (!rep) return;
+      renderFreshness(rep);
       const c = rep.counts || {};
       if (rep.redownloadable && rep.redownloadable.length) {
         rdBody.innerHTML = rep.redownloadable.map((r) =>
@@ -7808,10 +7853,13 @@
       // v0.51.337: the bulk shows only when it applies — some broken row
       // (either bucket) still has a copy in Plex.
       const restorable = c.restorable_from_plex || 0;
-      missBlock.style.display = (missing.length || restorable) ? '' : 'none';
+      lastRestorable = restorable;
+      // v0.51.342: a watched run's result stays up even when the run left nothing missing.
+      missBlock.style.display = (missing.length || restorable || restoreShown) ? '' : 'none';
       if (restorePlexBtn) {
-        restorePlexBtn.style.display = restorable ? '' : 'none';
-        restorePlexBtn.textContent = `// RESTORE FROM PLEX (${fmt(restorable)})`;
+        restorePlexBtn.style.display = (restorable || restoreRunning) ? '' : 'none';
+        // v0.51.342: a report landing mid-run must not clobber the busy label (class 5).
+        if (!restoreRunning) restorePlexBtn.textContent = `// RESTORE FROM PLEX (${fmt(restorable)})`;
       }
       if (chgBlock) {
         const chg = rep.changed || [];
@@ -7838,7 +7886,16 @@
         clearBlock.style.display = 'none';
       } else {
         summary.style.display = 'none';
-        clearBlock.style.display = '';
+        const ck = rep.checked || {};
+        const tracked = ck.tracked || 0;
+        const never = ck.never || 0;
+        // v0.51.342: nothing broken on a never-checked library means nothing was looked at — no ✓.
+        clearBlock.style.display = (tracked && never === tracked) ? 'none' : '';
+        if (clearText) {
+          clearText.textContent = never
+            ? `✓ Nothing missing or changed among the ${fmt(tracked - never)} checked. Nothing to repair.`
+            : '✓ Every tracked canonical was present at its recorded size when last checked. Nothing to repair.';
+        }
       }
     }
 
@@ -7847,54 +7904,167 @@
       catch (e) { console.error('canonical health report load failed:', e); }
     }
 
+    // v0.51.342: while a run is in progress CHECK and REPAIR wait — a check's stamps would undo the restore's.
+    function setRestoreBusy(b) {
+      restoreRunning = b;
+      if (restorePlexBtn) {
+        restorePlexBtn.disabled = b || checking;
+        restorePlexBtn.textContent = b ? '// RESTORING…' : `// RESTORE FROM PLEX (${fmt(lastRestorable)})`;
+        restorePlexBtn.style.display = (b || lastRestorable) ? '' : 'none';
+      }
+      if (restoreCancelBtn) restoreCancelBtn.style.display = b ? '' : 'none';
+      checkBtn.disabled = b || checking;
+      if (repairBtn) repairBtn.disabled = b || repairing;
+    }
+
+    function restoreWords(st) {
+      const skipped = st.skipped || [];
+      return `restored ${fmt(st.restored)} (${fmt(st.restored_sidecar)} from Plex folders, `
+        + `${fmt(st.restored_store)} from Plex's store)`
+        + (skipped.length ? ` · ${fmt(skipped.length)} skipped (${skipWords(skipped)})` : '')
+        + (st.not_attempted ? ` · ${fmt(st.not_attempted)} not tried` : '');
+    }
+
+    async function pollRestore(gen = restoreGen) {
+      // v0.51.342: one poll chain — a poll sent before a click's START answers into no chain.
+      if (gen !== restoreGen) return;
+      restoreTimer = null;
+      let st;
+      try { st = await api('GET', '/api/admin/canonical-health/restore-from-plex/status'); }
+      catch (_) {
+        // v0.51.342: no ceiling (class 10) — a blip mid-run re-arms slower instead of dropping the run.
+        if (gen === restoreGen && restoreRunning) restoreTimer = setTimeout(() => pollRestore(gen), 5000);
+        return;
+      }
+      if (!st || gen !== restoreGen) return;
+      if (st.status === 'running') {
+        setRestoreBusy(true);
+        restoreWatching = true;
+        restoreShown = true;
+        missBlock.style.display = '';
+        let text = 'listing broken rows…';
+        if (st.total) {
+          text = `restoring ${fmt(st.done)} / ${fmt(st.total)} · `
+            + `${fmt((st.restored_sidecar || 0) + (st.restored_store || 0))} restored · `
+            + `${fmt(st.skipped_count || 0)} skipped`;
+          if (st.done >= 20 && st.elapsed_s) {
+            const left = (st.elapsed_s / st.done) * (st.total - st.done);
+            text += left < 60 ? ' · under a minute left' : ` · about ${fmt(Math.round(left / 60))} min left`;
+          }
+        }
+        restorePlexStatus.textContent = text + (st.cancelling ? ' — cancelling…' : '');
+        restorePlexStatus.className = 'form-status';
+        restoreTimer = setTimeout(() => pollRestore(gen), 1500);
+        return;
+      }
+      const watched = restoreWatching;
+      setRestoreBusy(false);
+      const lastRun = watched ? '' : `last run ${fmtRelativePast(st.finished_at) || st.finished_at}: `;
+      if (st.status === 'done' || st.status === 'cancelled') {
+        restorePlexStatus.textContent = lastRun + (st.status === 'done' ? '✓ ' : '✓ cancelled — ') + restoreWords(st);
+        restorePlexStatus.className = 'form-status form-status-ok';
+      } else if (st.status === 'failed') {
+        restorePlexStatus.textContent = lastRun
+          + `✗ restore failed — ${st.error || 'unknown error'} (${fmt(st.restored || 0)} restored before it stopped)`;
+        restorePlexStatus.className = 'form-status form-status-fail';
+      } else if (st.status === 'interrupted' && (st.first_report || watched)) {
+        // v0.51.342: a staged database restore may be what restarted motif — so RUN CHECK first.
+        restoreShown = true;
+        missBlock.style.display = '';
+        restorePlexStatus.textContent = `✗ the run started ${fmtRelativePast(st.started_at) || st.started_at} was cut off `
+          + 'by a motif restart — RUN CHECK, then RESTORE FROM PLEX restores what is left';
+        restorePlexStatus.className = 'form-status form-status-fail';
+      } else if (st.status === 'interrupted') {
+        // v0.51.342: reported once already — now a last run like any other, not an alarm on every visit.
+        restorePlexStatus.textContent = `last run started ${fmtRelativePast(st.started_at) || st.started_at}: `
+          + 'cut off by a motif restart';
+        restorePlexStatus.className = 'form-status';
+      }
+      if (watched) {
+        restoreWatching = false;
+        await load();
+      }
+    }
+
     checkBtn.addEventListener('click', async () => {
       const orig = checkBtn.textContent;
+      checking = true;
       checkBtn.disabled = true;
       checkBtn.textContent = '// CHECKING…';
       checkStatus.textContent = '';
       checkStatus.className = 'form-status';
+      restoreShown = false;
+      if (restorePlexBtn && !restoreRunning) restorePlexBtn.disabled = true;
       try {
-        render(await api('POST', '/api/admin/canonical-health/check'));
-        checkStatus.textContent = '✓ check complete';
-        checkStatus.className = 'form-status form-status-ok';
-        _autoDismissOpStatus(checkStatus, 6000);
+        const res = await api('POST', '/api/admin/canonical-health/check');
+        render(res);
+        // v0.51.342: no themes dir, a dead themes root and a partial run all read "✓ check complete".
+        const ck = res && res.check;
+        const tracked = ((res && res.checked) || {}).tracked || 0;
+        if (!ck) {
+          checkStatus.textContent = '✗ no themes directory configured — nothing was checked';
+          checkStatus.className = 'form-status form-status-fail';
+        } else if (ck.checked === 0 && ck.skipped > 0) {
+          checkStatus.textContent = '✗ the themes directory did not answer — nothing was re-read; '
+            + 'the results below are from the last check';
+          checkStatus.className = 'form-status form-status-fail';
+        } else if (ck.checked < tracked) {
+          checkStatus.textContent = `checked ${fmt(ck.checked)} of ${fmt(tracked)} — `
+            + 'the rest could not be read and keep their last result';
+          checkStatus.className = 'form-status warn';
+        } else {
+          checkStatus.textContent = '✓ check complete';
+          checkStatus.className = 'form-status form-status-ok';
+          _autoDismissOpStatus(checkStatus, 6000);
+        }
       } catch (e) {
         checkStatus.textContent = '✗ ' + (e && e.message ? e.message : 'check failed');
         checkStatus.className = 'form-status form-status-fail';
       } finally {
-        checkBtn.disabled = false;
+        checking = false;
+        checkBtn.disabled = restoreRunning;
         checkBtn.textContent = orig;
+        if (restorePlexBtn && !restoreRunning) restorePlexBtn.disabled = false;
       }
     });
 
     if (restorePlexBtn) {
       restorePlexBtn.addEventListener('click', async () => {
-        const orig = restorePlexBtn.textContent;
-        restorePlexBtn.disabled = true;
-        restorePlexBtn.textContent = '// RESTORING…';
-        restorePlexStatus.textContent = '';
+        // v0.51.342: a poll still in flight from before the click belongs to no chain.
+        restoreGen += 1;
+        if (restoreTimer) clearTimeout(restoreTimer);
+        restoreTimer = null;
+        setRestoreBusy(true);
+        restorePlexStatus.textContent = 'starting…';
         restorePlexStatus.className = 'form-status';
         try {
-          const res = await api('POST', '/api/admin/canonical-health/restore-from-plex');
-          const skipped = res.skipped || [];
-          restorePlexStatus.textContent =
-            `✓ restored ${fmt(res.restored)} (${fmt(res.restored_sidecar)} from Plex folders, `
-            + `${fmt(res.restored_store)} from Plex's store)`
-            + (skipped.length ? ` · ${fmt(skipped.length)} skipped (${skipWords(skipped)})` : '');
-          restorePlexStatus.className = 'form-status form-status-ok';
-          await load();
+          await api('POST', '/api/admin/canonical-health/restore-from-plex');
         } catch (e) {
-          restorePlexStatus.textContent = '✗ ' + (e && e.message ? e.message : 'restore failed');
-          restorePlexStatus.className = 'form-status form-status-fail';
-        } finally {
-          restorePlexBtn.disabled = false;
-          restorePlexBtn.textContent = orig;
+          const note = gatewayTimeoutNote(e);
+          if (!note) {
+            setRestoreBusy(false);
+            restorePlexStatus.textContent = '✗ ' + (e && e.message ? e.message : 'restore failed');
+            restorePlexStatus.className = 'form-status form-status-fail';
+            return;
+          }
+          // v0.51.342: the proxy timed out on the start — the run may be going; the poll finds out.
+          restorePlexStatus.textContent = note;
         }
+        restoreWatching = true;
+        pollRestore();
+      });
+    }
+    if (restoreCancelBtn) {
+      restoreCancelBtn.addEventListener('click', async () => {
+        try { await api('POST', '/api/admin/canonical-health/restore-from-plex/cancel'); } catch (_) { /* the status poll reports */ }
+        restoreCancelBtn.disabled = true;
+        setTimeout(() => { restoreCancelBtn.disabled = false; }, 3000);
       });
     }
     if (repairBtn) {
       repairBtn.addEventListener('click', async () => {
         const orig = repairBtn.textContent;
+        repairing = true;
         repairBtn.disabled = true;
         repairBtn.textContent = '// REPAIRING…';
         repairStatus.textContent = '';
@@ -7912,13 +8082,22 @@
           repairStatus.textContent = '✗ ' + (e && e.message ? e.message : 'repair failed');
           repairStatus.className = 'form-status form-status-fail';
         } finally {
-          repairBtn.disabled = false;
+          repairing = false;
+          repairBtn.disabled = restoreRunning;
           repairBtn.textContent = orig;
         }
       });
     }
 
+    // v0.51.342: rendered mid-run — attached from the start, so a failed first poll re-arms and a report can't relabel.
+    if (restorePlexStatus && restorePlexStatus.dataset.running) {
+      setRestoreBusy(true);
+      restoreWatching = true;
+      restoreShown = true;
+      missBlock.style.display = '';
+    }
     load();
+    pollRestore();
   }
 
   // v0.51.325 (AnimeThemes tag 4, spec §3.6): /admin/anime-themes — RUN SWEEP,

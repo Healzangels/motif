@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 
 from app.core import plex_enum
 from app.core.canonical_health import (
+    _broken_rows,
     broken_canonical_report,
     classify_repair,
     enqueue_canonical_repairs,
@@ -199,14 +200,11 @@ def test_classify_redownloadable_and_missing(tmp_path):
         _lf(conn, tid=7, tmdb=107, source_kind="themerrdb")
         conn.commit()
 
+        # v0.51.342: classify_repair(r) reads the override _broken_rows resolves in its own query.
+        rows = {r["tmdb_id"]: r for r in _broken_rows(conn)}
+
         def cls(tmdb):
-            r = conn.execute(
-                "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key,"
-                " lf.source_kind, t.youtube_url AS tdb_url, t.upstream_source"
-                " FROM local_files lf JOIN themes t"
-                "   ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id"
-                " WHERE lf.tmdb_id=?", (tmdb,)).fetchone()
-            return classify_repair(conn, r)
+            return classify_repair(rows[tmdb])
 
         assert cls(101) == "redownload"
         assert cls(102) == "canonical_missing"

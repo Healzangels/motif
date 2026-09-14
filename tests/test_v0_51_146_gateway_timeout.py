@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _slice_helpers import slice_between
+
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
@@ -35,8 +37,8 @@ def test_backup_create_reframes_and_refreshes_on_timeout():
 
 
 def test_restore_from_backup_reframes_and_refreshes_pending():
-    i = APP_JS.index("'/api/admin/database-restore'")
-    block = APP_JS[i:i + 500]
+    # v0.51.342: bounded by the next function, not 500 chars — the catch grew and the window sat at 2% headroom
+    block = slice_between(APP_JS, "'/api/admin/database-restore'", "\n    function showStaged(msg) {")
     assert "gatewayTimeoutNote(e)" in block
     assert "refreshPending()" in block
 

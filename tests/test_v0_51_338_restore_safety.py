@@ -154,6 +154,10 @@ def test_sidecar_already_present_is_terminal_for_the_row(tmp_path, monkeypatch):
     store_calls = []
     monkeypatch.setattr(ch, "refetch_from_plex_store",
                         lambda *a, **k: store_calls.append(a) or {"ok": True, "bytes": 0, "entry_uri": "x"})
+    # v0.51.342: the bulk fetches through _fetch_from_plex_store — with refetch patched alone this checked nothing.
+    monkeypatch.setattr(ch, "_fetch_from_plex_store",
+                        lambda *a, **k: store_calls.append(a) or {"ok": True, "data": b"store-overwrite",
+                                                                  "entry_uri": "x"})
     res = ch.restore_from_plex(db, themes, FakePlex())
     assert store_calls == [], "canonical_already_present must not fall through to the store"
     assert res["restored"] == 0

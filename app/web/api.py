@@ -205,6 +205,8 @@ def _apply_partial_config(cfg, body: dict) -> None:
         if not isinstance(section_body, dict):
             raise ValueError(f"section {section_name!r} must be an object")
         section = getattr(cfg, section_name)
+        # v0.51.342: the float branch keys on the DECLARED default — a hand-edited `target_lufs: -16` loads as int and hit the int branch.
+        declared = type(section)()
         for k, v in section_body.items():
             if not hasattr(section, k):
                 raise ValueError(f"unknown field: {section_name}.{k}")
@@ -255,7 +257,19 @@ def _apply_partial_config(cfg, body: dict) -> None:
             if f"{section_name}.{k}" in USERINFO_URL_KEYS and isinstance(v, str) and _is_masked_url_credentials(v):
                 v = unmask_url_credentials(v, getattr(section, k))
             current = getattr(section, k)
-            if isinstance(current, bool):
+            if isinstance(getattr(declared, k), float):
+                # v0.51.342: loudness.target_lufs fell to the str() branch, so validate() 400'd every SAVE DOWNLOADS.
+                import math
+                if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+                    raise ValueError(f"{section_name}.{k} must be a number")
+                try:
+                    num = float(v)
+                except (ValueError, OverflowError):
+                    raise ValueError(f"{section_name}.{k} must be a number") from None
+                if not math.isfinite(num):
+                    raise ValueError(f"{section_name}.{k} must be a finite number")
+                setattr(section, k, num)
+            elif isinstance(current, bool):
                 if isinstance(v, str):
                     setattr(section, k, v.strip().lower() in ("1", "true", "yes", "on"))
                 else:
@@ -6509,6 +6523,45 @@ def _animethemes_sweep_read(settings) -> dict | None:
         return None
 
 
+# v0.51.342: a page-scoped job, not an op kind — 1,675 store rows outlive a proxy read timeout in-request.
+_CANON_RESTORE_LOCK = threading.Lock()
+_CANON_RESTORE_STATE: dict = {"status": "idle"}
+_CANON_RESTORE_FILE = "restore_from_plex.json"
+_CANON_RESTORE_INTERRUPT_LOGGED = False
+# v0.51.342: every marker write and the read that settles a cut-off run hold this — never the event loop.
+_CANON_RESTORE_MARKER_LOCK = threading.Lock()
+
+
+def _canon_restore_view() -> dict:
+    """v0.51.342: the job as the status endpoint reports it — progress while it runs, else this process's last result."""
+    with _CANON_RESTORE_LOCK:
+        st = {k: v for k, v in _CANON_RESTORE_STATE.items() if k not in ("cancel", "t0")}
+        if st.get("status") == "running":
+            st["cancelling"] = bool(_CANON_RESTORE_STATE.get("cancel"))
+            t0 = _CANON_RESTORE_STATE.get("t0")
+            st["elapsed_s"] = round(time.monotonic() - t0, 1) if t0 is not None else 0.0
+    return st
+
+
+def _canon_restore_path(settings) -> Path:
+    return Path(settings.config_dir) / "canonical_health" / _CANON_RESTORE_FILE
+
+
+def _canon_restore_read(settings) -> dict | None:
+    p = _canon_restore_path(settings)
+    try:
+        marker = json.loads(p.read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        log.warning("canonical restore marker unreadable (%s): %s — the page shows no last run", p, e)
+        return None
+    if not isinstance(marker, dict):
+        log.warning("canonical restore marker %s is not an object — the page shows no last run", p)
+        return None
+    return marker
+
+
 def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
     from ..core.loudness_audit import run_loudness_audit
 
@@ -8586,10 +8639,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         canonical theme.mp3 is missing/0-byte on disk (the loudness audit's rc=254
         cohort), split into re-downloadable (REPAIR ALL re-fetches from the recorded
         URL) vs canonical-missing (no URL — re-place manually from the INFO card).
-        The check + repair both run synchronously from the browser; no SSR lock
-        needed. Mirrors /admin/loudness."""
+        The check + repair run synchronously from the browser; RESTORE FROM PLEX
+        is a background job, so its button is SSR-locked while one runs.
+        Mirrors /admin/loudness."""
         _require_admin(request)
-        return templates.TemplateResponse(request, "canonical_health.html", {})
+        return templates.TemplateResponse(request, "canonical_health.html", {
+            "restore_running": _CANON_RESTORE_STATE.get("status") == "running",
+        })
 
     # --- Auth pages ---
 
@@ -27324,12 +27380,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         raise ValueError("bundle manifest has no usable created_at stamp")
                     dest = bdir / name
                     if dest.exists():
-                        if bundle_mod._sha256_file(dest) != bundle_mod._sha256_file(tmp_p):
+                        # v0.51.342: compared with the upload already in memory — two whole-file sha256 passes were pure cost
+                        same = dest.stat().st_size == len(data)
+                        if same:
+                            view, off = memoryview(data), 0
+                            with dest.open("rb") as f:
+                                while same and (chunk := f.read(1 << 20)):
+                                    same = chunk == view[off:off + len(chunk)]
+                                    off += len(chunk)
+                            same = same and off == len(data)
+                        if not same:
                             raise FileExistsError(name)
                     else:
                         os.replace(tmp, dest)
                     return bundle_mod.preview(dest, settings.config_dir / "motif.yaml",
-                                              cookies_target=settings.cookies_file)  # v0.51.341: the live path; a bundle config names its own
+                                              cookies_target=settings.cookies_file,  # v0.51.341: the live path; a bundle config names its own
+                                              check=chk)  # v0.51.342: dest holds exactly the bytes chk read (renamed, or equal) — a second inspection re-inflated and re-checked them
                 finally:
                     try: os.unlink(tmp)
                     except OSError: pass
@@ -27659,7 +27725,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_admin(request)
         from ..core.canonical_health import broken_canonical_report
         from ..core.db import get_conn
-        # v0.51.337: the CHANGED bucket stats every present canonical — a thread.
+        # v0.51.342: re-stats only the last check's CHANGED candidates + broken rows' Plex folders — still a thread
         _td = settings.themes_dir if (settings.is_paths_ready() and settings.themes_dir) else None
         # v0.51.339: the bulk refetches from Plex's store only when Plex is configured — count the same.
         _plex = bool(settings.plex_enabled and settings.plex_url and settings.plex_token)
@@ -27678,18 +27744,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         loop (CLAUDE.md class-12). Skips the stamp when themes_dir is unset (no
         canonical storage configured)."""
         _require_admin(request)
+        with _CANON_RESTORE_LOCK:
+            if _CANON_RESTORE_STATE.get("status") == "running":
+                # v0.51.342: verify's stamp has no compare-and-set — a check after a restore re-stamped 42/42 restored rows broken.
+                raise HTTPException(status_code=409,
+                                    detail="RESTORE FROM PLEX is running — run the check when it finishes")
         from ..core.canonical_health import broken_canonical_report
         from ..core.plex_enum import verify_canonical_health
         from ..core.db import get_conn
 
         def _run():
             _td = settings.themes_dir if (settings.is_paths_ready() and settings.themes_dir) else None
-            if _td:
-                verify_canonical_health(db, _td)
+            check = verify_canonical_health(db, _td) if _td else None
             # v0.51.339: same Plex gate as the bulk, so RESTORE FROM PLEX (N) is what it can restore.
             _plex = bool(settings.plex_enabled and settings.plex_url and settings.plex_token)
             with get_conn(db) as conn:
-                return broken_canonical_report(conn, _td, plex_available=_plex)  # v0.51.337: + changed
+                rep = broken_canonical_report(conn, _td, plex_available=_plex)  # v0.51.337: + changed
+            # v0.51.342: the page names a partial run, a dead themes root or no themes dir — all read "✓ check complete".
+            rep["check"] = check
+            return rep
 
         return await run_in_threadpool(_run)
 
@@ -27718,6 +27791,107 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           f"{summary['surfaced']} surfaced (no URL)")
         return {"ok": True, **summary}
 
+    def _canon_restore_write(obj: dict, lost: str) -> bool:
+        """v0.51.342: the marker, replaced atomically, under _CANON_RESTORE_MARKER_LOCK; a failure is logged, never raised."""
+        import os
+        import tempfile
+        dest = _canon_restore_path(settings)
+        tmp = None
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix=".restore-", suffix=".json", dir=str(dest.parent))
+            with os.fdopen(fd, "w") as fh:
+                json.dump(obj, fh)
+            os.replace(tmp, dest)
+            return True
+        except OSError as e:
+            log.warning("canonical restore: could not write %s (%s) — %s", dest, e, lost)
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except OSError as ue:
+                    log.debug("canonical restore: could not remove the temp marker %s: %s", tmp, ue)
+            return False
+
+    def _canon_restore_finish_marker(obj: dict) -> None:
+        """v0.51.342: the last run's marker; one that can't be written must not leave 'running' to read as a restart."""
+        import os
+        dest = _canon_restore_path(settings)
+        with _CANON_RESTORE_MARKER_LOCK:
+            if _canon_restore_write(obj, "removing the running marker, so after a restart the page shows no last run"):
+                return
+            try:
+                os.unlink(dest)
+            except FileNotFoundError:
+                log.debug("canonical restore: no marker at %s to remove", dest)
+            except OSError as e:
+                log.warning("canonical restore: could not remove %s (%s) — after a restart the page calls this "
+                            "finished run cut off by a restart", dest, e)
+
+    def _canon_restore_run(db_path: Path, themes_dir: Path, plex_cfg, plus_mode, actor: str) -> None:
+        """v0.51.342: the RESTORE FROM PLEX thread — progress into the page state, the
+        summary into the state + marker, then the audit row and the event."""
+        from ..core.canonical_health import restore_from_plex
+        t0 = time.monotonic()
+        with _CANON_RESTORE_LOCK:
+            _CANON_RESTORE_STATE["t0"] = t0
+            started_at = _CANON_RESTORE_STATE.get("started_at")
+        try:
+            with _CANON_RESTORE_MARKER_LOCK:
+                _canon_restore_write({"status": "running", "started_at": started_at, "actor": actor},
+                                     "a restart during this run will not be reported")
+            factory = (lambda: PlexClient(plex_cfg, plus_mode=plus_mode)) if plex_cfg else None
+
+            def _cb(done: int, total: int, counts: dict) -> None:
+                with _CANON_RESTORE_LOCK:
+                    _CANON_RESTORE_STATE.update(stage="restoring", done=done, total=total, **counts)
+
+            def _cancel() -> bool:
+                with _CANON_RESTORE_LOCK:
+                    return bool(_CANON_RESTORE_STATE.get("cancel"))
+
+            summary = restore_from_plex(db_path, themes_dir, None, plex_client_factory=factory,
+                                        progress_cb=_cb, cancel_check=_cancel)
+            final = {"status": "cancelled" if summary["cancelled"] else "done", "started_at": started_at,
+                     "finished_at": now_iso(), "elapsed_s": round(time.monotonic() - t0, 1), "actor": actor,
+                     "skipped_count": len(summary["skipped"]), **summary}
+            # v0.51.342: the marker lands while the state still reads running — a START in between lost its marker to it.
+            _canon_restore_finish_marker(final)
+            with _CANON_RESTORE_LOCK:
+                _CANON_RESTORE_STATE.update(final, stage=None, error=None, total=summary["broken"],
+                                            done=summary["broken"] - summary["not_attempted"])
+            try:
+                with get_conn(db_path) as conn, transaction(conn):
+                    _record_audit(conn, actor=actor, action="canonical_restore_from_plex",
+                                  details={k: v for k, v in summary.items() if k != "skipped"})
+                log_event(db_path, level="INFO", component="api",
+                          message=f"Canonical restore from Plex by {actor}: "
+                                  f"{summary['restored_sidecar']} from sidecars, "
+                                  f"{summary['restored_store']} from Plex's store, "
+                                  f"{len(summary['skipped'])} skipped of {summary['broken']} broken"
+                                  + (f" — cancelled, {summary['not_attempted']} not tried"
+                                     if summary["cancelled"] else "")
+                                  + (" — Plex gave no answer" if summary["plex_unreachable"] else ""))
+            except Exception as e:  # noqa: BLE001 — the restores are committed; an audit failure must not relabel the run
+                log.warning("canonical restore from Plex by %s finished, but its audit row / event could not "
+                            "be written: %s", actor, e)
+        except Exception as e:  # noqa: BLE001 — the job must end in a named state, never a stuck "running"
+            log.exception("canonical restore from Plex failed")
+            with _CANON_RESTORE_LOCK:
+                failed = {k: v for k, v in _CANON_RESTORE_STATE.items() if k not in ("cancel", "t0")}
+                failed.update(status="failed", error=str(e), finished_at=now_iso(), stage=None,
+                              elapsed_s=round(time.monotonic() - t0, 1),
+                              restored=(failed.get("restored_sidecar") or 0) + (failed.get("restored_store") or 0))
+            # v0.51.342: as on the done path — the marker first, then the state a START can claim.
+            try:
+                _canon_restore_finish_marker(failed)
+            finally:
+                with _CANON_RESTORE_LOCK:
+                    _CANON_RESTORE_STATE.update(failed)
+            log_event(db_path, level="WARNING", component="api",
+                      message=f"Canonical restore from Plex by {actor} failed after "
+                              f"{failed['restored']} restored: {e}")
+
     @app.post("/api/admin/canonical-health/restore-from-plex")
     async def api_admin_canonical_health_restore_from_plex(
         request: Request, db: Path = Depends(get_db_path),
@@ -27727,32 +27901,75 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sidecar in its Plex folder first (no network), else Plex's own store
         for a plex_upload placement (fetch_theme_bytes). Rows with neither are
         skipped with a reason; nothing is re-downloaded (REPAIR ALL does that).
-        Threadpool: file copies + Plex round-trips (class-12)."""
+        v0.51.342: starts a page-scoped background job and returns at once —
+        .../status carries the progress and the summary, .../cancel stops it."""
         _require_admin(request)
         if not settings.is_paths_ready() or not settings.themes_dir:
             raise HTTPException(status_code=409, detail="themes_dir not configured")
-        from ..core.canonical_health import restore_from_plex
-        themes_dir = settings.themes_dir
-        def _run():
-            if settings.plex_enabled and settings.plex_url and settings.plex_token:
-                cfg = PlexConfig(
-                    url=settings.plex_url, token=settings.plex_token,
-                    movie_section=settings.plex_movie_section,
-                    tv_section=settings.plex_tv_section, enabled=True,
-                )
-                with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                    return restore_from_plex(db, themes_dir, plex)
-            return restore_from_plex(db, themes_dir, None)
-        summary = await run_in_threadpool(_run)
-        with get_conn(db) as conn, transaction(conn):
-            _record_audit(conn, actor=request.state.user, action="canonical_restore_from_plex",
-                          details={k: v for k, v in summary.items() if k != "skipped"})
-        log_event(db, level="INFO", component="api",
-                  message=f"Canonical restore from Plex by {request.state.user}: "
-                          f"{summary['restored_sidecar']} from sidecars, "
-                          f"{summary['restored_store']} from Plex's store, "
-                          f"{len(summary['skipped'])} skipped of {summary['broken']} broken")
-        return {"ok": True, **summary}
+        from ..core.canonical_health import RESTORE_PLEX_WORKERS
+        cfg = None
+        if settings.plex_enabled and settings.plex_url and settings.plex_token:
+            cfg = PlexConfig(
+                url=settings.plex_url, token=settings.plex_token,
+                movie_section=settings.plex_movie_section,
+                tv_section=settings.plex_tv_section, enabled=True,
+            )
+        with _CANON_RESTORE_LOCK:
+            if _CANON_RESTORE_STATE.get("status") == "running":
+                # v0.51.342: a re-click after a 504 attaches — a second run raced the first's .part / .motif-tmp.
+                return {"ok": True, "started": False, "already_running": True}
+            _CANON_RESTORE_STATE.clear()
+            _CANON_RESTORE_STATE.update(
+                status="running", stage="listing", started_at=now_iso(), actor=request.state.user,
+                done=0, total=0, restored_sidecar=0, restored_store=0, skipped_count=0, error=None,
+                cancel=False, plex=bool(cfg), workers=RESTORE_PLEX_WORKERS)
+        threading.Thread(target=_canon_restore_run,
+                         args=(db, settings.themes_dir, cfg, settings.plus_equiv_mode, request.state.user),
+                         name="canonical-restore-from-plex", daemon=True).start()
+        return {"ok": True, "started": True}
+
+    @app.post("/api/admin/canonical-health/restore-from-plex/cancel")
+    async def api_admin_canonical_health_restore_from_plex_cancel(request: Request):
+        _require_admin(request)
+        with _CANON_RESTORE_LOCK:
+            running = _CANON_RESTORE_STATE.get("status") == "running"
+            if running:
+                _CANON_RESTORE_STATE["cancel"] = True
+        return {"ok": True, "cancelling": running}
+
+    def _canon_restore_last_run() -> dict | None:
+        """v0.51.342: the marker's last run; a 'running' one was cut off — reported once, then rewritten as a last run."""
+        global _CANON_RESTORE_INTERRUPT_LOGGED
+        with _CANON_RESTORE_MARKER_LOCK:
+            with _CANON_RESTORE_LOCK:
+                if _CANON_RESTORE_STATE.get("status") != "idle":
+                    return None
+            marker = _canon_restore_read(settings)
+            if marker is None:
+                return {"status": "idle"}
+            if marker.get("status") != "running":
+                return marker
+            cut = {**marker, "status": "interrupted"}
+            if _CANON_RESTORE_INTERRUPT_LOGGED:
+                return cut
+            _CANON_RESTORE_INTERRUPT_LOGGED = True
+            log.info("canonical restore: the RESTORE FROM PLEX run started %s by %s never finished — motif "
+                     "restarted mid-run; the page reports it once, then as the last run", marker.get("started_at"),
+                     marker.get("actor"))
+            _canon_restore_write(cut, "the next restart reports this cut-off run as news again")
+            return {**cut, "first_report": True}
+
+    @app.get("/api/admin/canonical-health/restore-from-plex/status")
+    async def api_admin_canonical_health_restore_from_plex_status(request: Request):
+        """v0.51.342: the running job's progress, or the last run's summary — from memory,
+        else from the marker a previous process left (a 'running' marker there was cut off)."""
+        _require_admin(request)
+        st = _canon_restore_view()
+        if st.get("status") != "idle":
+            return st
+        last = await run_in_threadpool(_canon_restore_last_run)
+        # v0.51.342: None = a START claimed the job while the marker was read — report that run instead.
+        return _canon_restore_view() if last is None else last
 
     @app.post("/api/admin/loudness/normalize-one")
     async def api_admin_loudness_normalize_one(

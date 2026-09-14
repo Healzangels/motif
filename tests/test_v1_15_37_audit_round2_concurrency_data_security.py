@@ -240,8 +240,10 @@ def test_restore_canonical_writes_through_the_transactional_stamp():
     ch_src = (API_PY.parent.parent / "core" / "canonical_health.py").read_text()
     j = ch_src.index("def _stamp_restored(")
     stamp = ch_src[j:ch_src.index("\ndef ", j + 1)]
-    assert "with get_conn(db_path) as conn, transaction(conn):" in stamp
-    assert "UPDATE placements SET placement_kind" in stamp
+    # v0.51.342: the stamp writes through the bulk's one connection when handed one — still one transaction for both.
+    txn = stamp.index("with _run_conn(db_path, conn) as c, transaction(c):")
+    assert stamp.index("UPDATE local_files SET file_size") > txn
+    assert stamp.index("UPDATE placements SET placement_kind") > txn
 
 
 def test_all_multi_write_get_conn_blocks_now_use_transaction():

@@ -29,7 +29,11 @@
     canonical means motif can no longer re-place or condition that theme.
     <strong>Read-only</strong> — the check only stats files; nothing is
     re-downloaded until you press REPAIR.
+    Opening this page shows what the last check found — only // RUN CHECK,
+    the daily pass at 03:25 UTC, or a Plex refresh of a section re-reads the files.
   </p>
+  {# v0.51.342: how old the results below are — a page open no longer re-reads the themes tree. #}
+  <p class="form-hint" id="canon-freshness" style="display:none"></p>
   <p class="form-hint" id="canon-summary" style="display:none"></p>
 </section>
 
@@ -67,8 +71,10 @@
       <span class="muted small" id="canon-missing-count"></span>
       {# v0.51.337 (feature D tag 3): the bulk — every broken row Plex still
          holds a copy of, the sidecar in its Plex folder or Plex's own store. #}
-      <button type="button" id="canon-restore-plex-btn" class="btn btn-warn" style="display:none">// RESTORE FROM PLEX</button>
-      <span id="canon-restore-plex-status" class="form-status"></span>
+      {# v0.51.342: a background job — SSR-locked while it runs, with // CANCEL (mirrors anime_themes.html). #}
+      <button type="button" id="canon-restore-plex-btn" class="btn btn-warn"{% if restore_running %} disabled{% else %} style="display:none"{% endif %}>{% if restore_running %}// RESTORING…{% else %}// RESTORE FROM PLEX{% endif %}</button>
+      <button type="button" id="canon-restore-plex-cancel-btn" class="btn btn-tiny"{% if not restore_running %} style="display:none"{% endif %}>// CANCEL</button>
+      <span id="canon-restore-plex-status" class="form-status"{% if restore_running %} data-running="1"{% endif %}>{% if restore_running %}restoring…{% endif %}</span>
     </div>
   </header>
   <p class="form-hint">
@@ -78,6 +84,8 @@
     pushed theme — <strong>// RESTORE FROM PLEX</strong> brings every such
     canonical back at once, byte for byte, without a download. The rest need
     a re-place from the INFO card (SET URL / UPLOAD MP3).
+    It runs in the background — leave or reload this page and the progress
+    and the result are still here.
   </p>
   <div class="table-scroll">
     <table class="table table-compact">
@@ -100,6 +108,8 @@
     The file is there, but its size no longer matches what motif recorded when
     it downloaded or placed it. Open the INFO card to compare, restore a
     revision, or re-download.
+    These are the files the last check found; each one's size is re-read when
+    this page opens.
   </p>
   <div class="table-scroll">
     <table class="table table-compact">
@@ -110,6 +120,6 @@
 </section>
 {# All-clear state — shown when a check finds zero broken canonicals. #}
 <section class="block" id="canon-clear-block" style="display:none">
-  <p class="form-hint">✓ Every tracked canonical is present. Nothing to repair.</p>
+  <p class="form-hint" id="canon-clear-text">✓ Every tracked canonical was present at its recorded size when last checked. Nothing to repair.</p>
 </section>
 {% endblock %}

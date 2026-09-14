@@ -170,6 +170,10 @@ CREATE TABLE IF NOT EXISTS local_files (
     -- otherwise a per-render filesystem stat the paginated sort can't see.
     canonical_present INTEGER,
     canonical_health_checked_at TEXT,
+    -- v0.51.342 (schema v80): 1 = CANONICAL HEALTH re-stats this row's size on open — a candidate, never the verdict.
+    canonical_changed_candidate INTEGER,
+    -- v0.51.342 (schema v80): what the last missed heal hash saw — the same bytes are not hashed again.
+    canonical_hash_miss_sig TEXT,
     -- v0.51.157 (schema v72): read-only loudness audit (Phase 0 of the loudness
     -- feature). ffmpeg's EBU R128 loudnorm analysis (app/core/loudness.py) measures
     -- each local-bytes theme WITHOUT re-encoding; these persist the result so the
@@ -1043,7 +1047,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 79
+CURRENT_SCHEMA_VERSION = 80
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2979,6 +2983,19 @@ def _migrate_v78_to_v79(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_v79_to_v80(conn: sqlite3.Connection) -> None:
+    """v80 (v0.51.342): local_files CHANGED candidates — verify marks the rows whose
+    size moved, so a CANONICAL HEALTH page open stats those instead of the tree.
+    Idempotent ADD COLUMNs; the check stamps predate the candidates, so they are cleared."""
+    log.info("Migrating to schema v80 (local_files CHANGED candidates — v0.51.342)")
+    _add_column(conn, "local_files", "canonical_changed_candidate", "INTEGER")
+    _add_column(conn, "local_files", "canonical_hash_miss_sig", "TEXT")
+    # v0.51.342: a check time with no candidates behind it would read as an all-clear.
+    n = conn.execute("UPDATE local_files SET canonical_health_checked_at = NULL").rowcount
+    log.info("v80: cleared %d check stamp(s) that predate size candidates — CANONICAL HEALTH reads "
+             "'Not checked yet' until the next check", n)
+
+
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
     """v67 (v1.23.37): persist canonical health on local_files.
 
@@ -4892,6 +4909,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 78:
                     _migrate_v78_to_v79(conn)
                     current = 79
+                elif current == 79:
+                    _migrate_v79_to_v80(conn)
+                    current = 80
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
