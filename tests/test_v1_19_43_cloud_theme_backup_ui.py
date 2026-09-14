@@ -103,7 +103,7 @@ def test_link_glyph_b_mirrors_bk_shape():
     # Shape properties pinned to confirm structural parity.
     for prop in ("display: inline-block",
                  "font-weight: 700",
-                 "letter-spacing: 0.1em", "text-transform: uppercase"):
+                 "letter-spacing: var(--track)", "text-transform: uppercase"):
         assert prop in bk_rule
         assert prop in b_rule, (
             f"v1.19.43: .link-glyph-b missing {prop!r} — mirror "
@@ -113,6 +113,11 @@ def test_link_glyph_b_mirrors_bk_shape():
     size = re.compile(r"font-size:\s*([^;]+);")
     assert size.search(bk_rule) and size.search(b_rule), (bk_rule, b_rule)
     assert size.search(b_rule).group(1) == size.search(bk_rule).group(1)
+    # v0.51.343: the tracking and its give-back are compared too, not retyped as 0.1em
+    for prop in ("--track", "padding"):
+        decl = re.compile(rf"^\s*{re.escape(prop)}:\s*([^;]+);", re.M)
+        assert decl.search(bk_rule) and decl.search(b_rule), (prop, bk_rule, b_rule)
+        assert decl.search(b_rule).group(1) == decl.search(bk_rule).group(1), prop
 
 
 # ── JS render (linkCell B branch) ────────────────────────────

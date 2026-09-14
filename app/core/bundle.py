@@ -54,6 +54,10 @@ def bundle_name(now_stamp: str) -> str:
     return f"motif-bundle-{now_stamp}.tar.gz"
 
 
+def uploaded_bundle_name(now_stamp: str) -> str:
+    return f"motif-bundle-upload-{now_stamp}.tar.gz"  # v0.51.343: db_backup's retained-False shape — an upload never takes a retention slot
+
+
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:

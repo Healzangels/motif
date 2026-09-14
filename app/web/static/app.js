@@ -7260,8 +7260,10 @@
           // v0.51.335: one list, three kinds — a chip leads the name.
           // v0.51.336: a bundle row's RESTORE previews first (restoreFromName).
           const kind = (b.kind === 'bundle' || b.kind === 'prerestore') ? b.kind : 'snapshot';
+          // v0.51.343: a member absent or over its cap is left out of a bundle; an upload is dated by its upload and sits outside retention
+          const holds = 'the database snapshot + a themes census, plus motif.yaml and cookies.txt unless one was absent or over its size cap — // RESTORE previews what it holds';
           const chipTip = kind === 'bundle'
-            ? 'bundle: the database snapshot + motif.yaml + cookies.txt + a themes census'
+            ? (b.retained === false ? 'uploaded bundle, dated by its upload — kept outside retention until you delete it: ' + holds : 'bundle: ' + holds)
             : kind === 'prerestore' ? 'pre-restore safety copy — kept outside retention'
             : 'database snapshot';
           const chip = `<span class="tier-badge tier-badge-${kind}" title="${chipTip}">`
@@ -16445,6 +16447,7 @@
       } catch (_) { /* placeholder is cosmetic */ }
       let ok = 0;
       let failed = 0;
+      let waiting = 0;
       for (let i = 0; i < titles.length; i++) {
         const t = titles[i];
         try {
@@ -16453,14 +16456,18 @@
           if (!res || typeof res.restored !== 'number') failed++;
           else {
             ok += res.restored;
-            failed += (res.skipped || []).filter((s) => s.reason !== 'canonical_already_present').length;
+            const skipped = res.skipped || [];
+            // v0.51.343: a download still in flight was left untouched on purpose — it waits on the download, it did not fail.
+            waiting += skipped.filter((s) => s.reason === 'download_in_flight').length;
+            failed += skipped.filter((s) => s.reason !== 'canonical_already_present' && s.reason !== 'download_in_flight').length;
           }
         } catch (_) { failed++; }
         btn.textContent = `// RESTORING ${i + 1}/${titles.length}`;
       }
-      btn.textContent = failed
-        ? `// ${ok} RESTORED · ${failed} FAILED`
-        : `// ${ok} RESTORED`;
+      const parts = [`${ok} RESTORED`];
+      if (waiting) parts.push(`${waiting} WAITING ON DOWNLOAD`);
+      if (failed) parts.push(`${failed} FAILED`);
+      btn.textContent = `// ${parts.join(' · ')}`;
       libraryState.selected.clear();
       libraryState.selectedRows.clear();
       setTimeout(() => loadLibrary().catch(()=>{}), 1000);

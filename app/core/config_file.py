@@ -945,8 +945,19 @@ def _is_masked_url_credentials(url: str) -> bool:
         _query_secret_value(q) == _APPRISE_MASK for q in _URL_PARAM_SECRET_RE.finditer(body))
 
 
+def _pre343_url_mask(url: str) -> str:
+    m = _URL_SCHEME_PREFIX_RE.match(url)
+    prefix = m.group(0) if m else ""
+    body = url[len(prefix):]
+    at = body.rfind("@")
+    rest = _URL_QUERY_SECRET_RE.sub(lambda q: f"{q.group(1)}{_APPRISE_MASK}", body[at + 1:])
+    return f"{prefix}{_APPRISE_MASK}@{rest}" if at >= 0 else f"{prefix}{rest}"
+
+
 def unmask_url_credentials(submitted: str, stored: str) -> str:
     """v0.51.341: a PATCHed URL still carrying a mask takes the stored credentials back, its host/path edits kept; ValueError (naming no value) when nothing stored sits behind a mask, so a mask is never written."""
+    if stored and submitted == _pre343_url_mask(stored) != mask_url_credentials(stored):
+        return stored  # v0.51.343: a tab loaded on <=.342 sends back that build's mask (userinfo to the last "@"); joined, the credential moved to a host out of the query
     m = _URL_SCHEME_PREFIX_RE.match(submitted)
     prefix = m.group(0) if m else ""
     body = submitted[len(prefix):]

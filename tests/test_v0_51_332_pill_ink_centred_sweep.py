@@ -72,6 +72,16 @@ TRACKED = [
     ".dash-card-toggle",
     ".library-filter-toggle",
     ".link-badge",
+    # v0.51.343: the per-kind LINK glyphs (row cell, glossary, filter chips) read one --track too
+    ".link-glyph-hardlink",
+    ".link-glyph-copy",
+    ".link-glyph-mismatch",
+    ".link-glyph-pu",
+    ".link-glyph-repush",
+    ".link-glyph-bk",
+    ".link-glyph-b",
+    ".link-glyph-tb",
+    ".link-glyph-ab",
 ]
 
 # families whose every element also matches the owner rule, whose --track they read

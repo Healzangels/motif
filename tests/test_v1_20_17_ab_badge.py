@@ -43,7 +43,7 @@ def test_cyan_pale_token_defined():
 
 def test_link_glyph_ab_uses_cyan_pale():
     idx = APP_CSS.index(".link-glyph-ab {")
-    rule = APP_CSS[idx:idx + 260]
+    rule = APP_CSS[idx:APP_CSS.index("\n}", idx)]  # v0.51.343: the whole rule — a 260-char window rotted when the tracking moved to --track
     assert "color: var(--cyan-pale)" in rule
     assert "rgba(var(--cyan-pale-rgb), 0.5)" in rule
 

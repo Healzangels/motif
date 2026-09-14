@@ -193,9 +193,9 @@ def test_per_row_handler_done_labels_use_bullet_separator():
             "— must use ' · ' (middle dot)"
         )
     # Each handler must include the bullet form somewhere.
+    # v0.51.343: RESTORE joins RESTORED · WAITING ON DOWNLOAD · FAILED like PUSH; test_v0_51_343_restore_waits_on_download pins its text through the real handler
     bullet_done_labels = [
         "${ok} REVERTED · ${failed} FAILED",
-        "${ok} RESTORED · ${failed} FAILED",
     ]
     for needle in bullet_done_labels:
         assert needle in js, (

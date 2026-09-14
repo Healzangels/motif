@@ -4539,10 +4539,11 @@ body.auth-page .auth-card { margin: 0; }
      center, which the user read as the pill being "too large to
      the right". Asymmetric padding cancels the trailing space
      so the visible glyphs sit centered inside the pill border. */
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px; /* v0.51.343: the give-back is the --track itself (0.1em), no longer a hand-typed 4px */
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--ok);
   border: 1px solid rgba(var(--ok-rgb), 0.4);
@@ -4566,10 +4567,11 @@ body.auth-page .auth-card { margin: 0; }
    identically across both surfaces. */
 .link-glyph-copy {
   display: inline-block;
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px;
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--fg-dim);
   border: 1px solid rgba(var(--fg-dim-rgb), 0.45);
@@ -4589,10 +4591,11 @@ body.auth-page .auth-card { margin: 0; }
    repro: the row M was rendering at the base 14px. */
 .link-glyph-mismatch {
   display: inline-block;
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px;
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--red);
   border: 1px solid rgba(var(--red-rgb), 0.45);
@@ -4615,10 +4618,11 @@ body.auth-page .auth-card { margin: 0; }
    from the green hardlink / amber PS. */
 .link-glyph-pu {
   display: inline-block;
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px;
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--cyan);
   border: 1px solid rgba(var(--cyan-rgb), 0.5);
@@ -4630,10 +4634,11 @@ body.auth-page .auth-card { margin: 0; }
    amber PB backup. Same chip geometry as the rest of the LINK family. */
 .link-glyph-repush {
   display: inline-block;
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px;
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--orange);
   border: 1px solid rgba(var(--orange-rgb), 0.55);
@@ -4659,10 +4664,11 @@ body.auth-page .auth-card { margin: 0; }
    per the user's "BP is similar shade to P src" design ask. */
 .link-glyph-bk {
   display: inline-block;
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px;
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--violet-bright);
   border: 1px solid rgba(var(--violet-rgb), 0.5);
@@ -4686,10 +4692,11 @@ body.auth-page .auth-card { margin: 0; }
    P/PS (which use regular amber). */
 .link-glyph-b {
   display: inline-block;
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px;
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--amber-bright);
   border: 1px solid rgba(var(--amber-rgb), 0.5);
@@ -4703,10 +4710,11 @@ body.auth-page .auth-card { margin: 0; }
    tints of P/U — and stays distinct from the T pill it sits beside. */
 .link-glyph-tb {
   display: inline-block;
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px;
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--green-pale);
   border: 1px solid rgba(var(--green-pale-rgb), 0.5);
@@ -4721,10 +4729,11 @@ body.auth-page .auth-card { margin: 0; }
    sits beside. */
 .link-glyph-ab {
   display: inline-block;
-  padding: 1px 4px 1px 5px;
+  padding: 1px calc(5px - var(--track)) 1px 5px;
   font-size: var(--t-micro);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--cyan-pale);
   border: 1px solid rgba(var(--cyan-pale-rgb), 0.5);

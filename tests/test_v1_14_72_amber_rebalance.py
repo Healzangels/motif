@@ -63,7 +63,9 @@ def test_link_glyph_hardlink_color_is_green():
     family (matching .link-badge-hardlink at /pending). Pre-fix
     used --orange (#ff7a3a) which read as amber-family on the
     filter row alongside ED, P, PS, !M etc."""
-    block = _block(".link-glyph-hardlink {", size=800)
+    css = CSS.read_text()
+    start = css.index(".link-glyph-hardlink {")
+    block = css[start:css.index("\n}", start)]  # v0.51.343: the whole rule — the 800-char window rotted when the tracking moved to --track
     assert "color: var(--ok);" in block
     # The orange/amber predecessors must NOT survive in this
     # specific block. v1.15.113 migrated rgba triplets to

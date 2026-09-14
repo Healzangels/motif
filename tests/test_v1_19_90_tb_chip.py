@@ -39,7 +39,7 @@ def test_green_pale_token_defined():
 
 def test_link_glyph_tb_uses_green_pale():
     idx = APP_CSS.index(".link-glyph-tb {")
-    rule = APP_CSS[idx:idx + 260]
+    rule = APP_CSS[idx:APP_CSS.index("\n}", idx)]  # v0.51.343: the whole rule — a 260-char window rotted when the tracking moved to --track
     assert "color: var(--green-pale)" in rule
     assert "rgba(var(--green-pale-rgb), 0.5)" in rule
 

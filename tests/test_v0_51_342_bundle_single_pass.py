@@ -23,6 +23,7 @@ import sqlite3
 import stat
 import tarfile
 import zlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -98,8 +99,13 @@ def test_each_flow_reads_the_archive_once_and_checks_the_database_once(tmp_path,
     assert tar <= seen["inflated"] < 1.5 * tar, f"{seen['inflated']} bytes inflated for a {tar}-byte tar — a rewind re-inflates it"
 
 
+def _upload_names() -> list[str]:
+    base = datetime.now(timezone.utc)  # v0.51.343: an upload is named by its upload second — every second it can land in
+    return [f"motif-bundle-upload-{(base + timedelta(seconds=s)).strftime('%Y%m%d-%H%M%S')}.tar.gz" for s in range(-1, 30)]
+
+
 def test_upload_then_stage_by_name_is_two_passes_and_two_checks(api, tmp_path, seen, monkeypatch):
-    client, _ = api
+    client, cd = api
     data = _bundle(tmp_path / "mk").read_bytes()
     hashed: list = []
     real_sha = bundle._sha256_file
@@ -108,10 +114,12 @@ def test_upload_then_stage_by_name_is_two_passes_and_two_checks(api, tmp_path, s
     r = client.post("/api/admin/database-restore/upload", headers=_H, files={"file": (NAME, data, "application/gzip")})
     assert r.status_code == 200 and r.json()["preview"]["config_in_bundle"] is True, r.text
     assert (seen["opens"], seen["checks"]) == (1, 1) and seen["inflated"] > 0, seen
-    r = client.post("/api/admin/database-restore", json={"name": NAME, "confirm": True, "keep_config": False}, headers=_H)
+    r = client.post("/api/admin/database-restore", json={"name": r.json()["preview"]["name"], "confirm": True, "keep_config": False}, headers=_H)  # v0.51.343: the upload's own name
     assert r.status_code == 200 and r.json()["members"] == ["database", "config", "cookies"], r.text
     assert (seen["opens"], seen["checks"]) == (2, 2), seen
     seen.update(opens=0, checks=0)
+    for n in _upload_names():  # v0.51.343: the re-upload meets its bytes under its name, so the byte compare runs
+        (cd / "backups" / n).write_bytes(data)
     r = client.post("/api/admin/database-restore/upload", headers=_H, files={"file": (NAME, data, "application/gzip")})
     assert r.status_code == 200 and (seen["opens"], seen["checks"]) == (1, 1), (r.text, seen)
     assert hashed == [], "the same-stamp check compares the upload's bytes — no sha256 pass over either file"
@@ -121,10 +129,12 @@ def test_a_different_bundle_under_the_same_name_is_refused_even_at_the_same_size
     client, cd = api
     data = _bundle(tmp_path / "mk").read_bytes()
     squatter = bytes(len(data))
-    (cd / "backups" / NAME).write_bytes(squatter)
+    names = _upload_names()  # v0.51.343: retargeted from NAME — the upload is filed under its upload second
+    for n in names:
+        (cd / "backups" / n).write_bytes(squatter)
     r = client.post("/api/admin/database-restore/upload", headers=_H, files={"file": (NAME, data, "application/gzip")})
     assert r.status_code == 409, r.text
-    assert (cd / "backups" / NAME).read_bytes() == squatter
+    assert all((cd / "backups" / n).read_bytes() == squatter for n in names)
 
 
 # ── 2. the member gate, on the stream ────────────────────────────────

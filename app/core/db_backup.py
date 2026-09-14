@@ -41,18 +41,21 @@ RESTORE_PENDING_SUFFIX = ".restore-pending"
 # deleted through the API: is_backup_name() is the gate every
 # name-addressed operation (download, delete) runs first, blocking
 # path traversal + arbitrary-file access.
-_BACKUP_RE = re.compile(r"^motif-(\d{8}-\d{6})\.db$")
+_BACKUP_RE = re.compile(r"motif-([0-9]{8}-[0-9]{6})\.db")
 # v1.23.18: pre-restore safety copies carry a distinct prefix. Two
 # reasons (code review): (1) a routine same-second backup can't make
 # the safety copy collide (different name shape), and (2) prune_backups
 # leaves them alone — the restore undo must survive retention. They're
 # still listed/downloadable/restorable (is_backup_name accepts both).
-_PRERESTORE_RE = re.compile(r"^motif-prerestore-(\d{8}-\d{6})\.db$")
+_PRERESTORE_RE = re.compile(r"motif-prerestore-([0-9]{8}-[0-9]{6})\.db")
 # v0.51.335: the backup bundle (bundle.py) — a tar.gz next to the snapshots,
 # sharing the list, the name gate, retention and the four endpoints.
-_BUNDLE_RE = re.compile(r"^motif-bundle-(\d{8}-\d{6})\.tar\.gz$")
+_BUNDLE_RE = re.compile(r"motif-bundle-([0-9]{8}-[0-9]{6})\.tar\.gz")
+# v0.51.343: an uploaded bundle, named by its upload's UTC time and kept outside retention like a pre-restore copy.
+_UPLOAD_RE = re.compile(r"motif-bundle-upload-([0-9]{8}-[0-9]{6})\.tar\.gz")
 # v0.51.343: the one name table — (kind, name shape, counts toward retention), read only through _classify.
 _KINDS = (
+    ("bundle", _UPLOAD_RE, False),
     ("bundle", _BUNDLE_RE, True),
     ("prerestore", _PRERESTORE_RE, False),
     ("snapshot", _BACKUP_RE, True),
@@ -65,6 +68,7 @@ class BackupFile:
     size: int
     created_at: str  # ISO-8601 derived from the embedded stamp (UTC)
     kind: str = "snapshot"  # v0.51.335: snapshot | prerestore | bundle
+    retained: bool = True  # v0.51.343: False = outside retention (a pre-restore copy or an uploaded bundle), for the list chip
 
 
 def backups_dir(config_dir: Path) -> Path:
@@ -76,7 +80,7 @@ def _classify(name: str) -> tuple[str, str, bool] | None:
     if "/" in name or "\\" in name or name in (".", ".."):
         return None
     for kind, shape, retained in _KINDS:
-        m = shape.match(name)
+        m = shape.fullmatch(name)  # v0.51.343: with ASCII [0-9] — `\d` admitted full-width digits (newest forever) and `$` a trailing newline
         if m:
             return kind, m.group(1), retained
     return None
@@ -87,7 +91,7 @@ def is_backup_name(name: str) -> bool:
     v1.23.18) filename with no path separators. The download/delete
     endpoints call this before touching any file by name — without it a
     crafted name could traverse out of the backups dir or address an
-    arbitrary file. Both regexes are fully anchored (^…$)."""
+    arbitrary file. Every shape must match the whole name (fullmatch)."""
     return _classify(name) is not None
 
 
@@ -139,7 +143,7 @@ def create_backup(db_path: Path, config_dir: Path, *,
     log.info("database backup written: %s (%d bytes)", name, st.st_size)
     return BackupFile(name=name, size=st.st_size,
                       created_at=_iso_from_stamp(now_stamp),
-                      kind="prerestore" if prerestore else "snapshot")
+                      kind="prerestore" if prerestore else "snapshot", retained=not prerestore)
 
 
 def vacuum_into(db_path: Path, dest: Path) -> None:
@@ -185,7 +189,7 @@ def list_backups(config_dir: Path) -> list[BackupFile]:
         c = _classify(p.name)
         if c is None:
             continue
-        kind, stamp, _retained = c
+        kind, stamp, retained = c
         try:
             size = p.stat().st_size
         except OSError as e:
@@ -193,7 +197,7 @@ def list_backups(config_dir: Path) -> list[BackupFile]:
             continue
         rows.append((stamp, BackupFile(name=p.name, size=size,
                                        created_at=_iso_from_stamp(stamp),
-                                       kind=kind)))
+                                       kind=kind, retained=retained)))
     # Sort by embedded stamp (true chronological across both name
     # shapes), newest first.
     rows.sort(key=lambda r: (r[0], r[1].name), reverse=True)

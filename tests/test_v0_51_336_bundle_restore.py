@@ -247,19 +247,17 @@ def test_upload_saves_the_bundle_and_returns_the_preview_without_staging(app_cli
                     files={"file": (b.name, b.read_bytes(), "application/gzip")})
     assert r.status_code == 200, r.text
     j = r.json()
-    assert j["ok"] and j["preview"]["name"] == b.name and j["staged"] is False
+    # v0.51.343: reversed name == b.name — filed by its upload's time, never the manifest's stamp
+    name = j["preview"]["name"]
+    assert j["ok"] and name != b.name and db_backup.kind_of(name) == "bundle" and j["staged"] is False
     assert {x["key"] for x in j["preview"]["config_diff"]} >= {"plex.url", "plex.token"}
     assert "LIVE-TOKEN" not in r.text and "OLD-TOKEN" not in r.text
-    assert (cd / "backups" / b.name).exists(), "an uploaded bundle joins the list"
+    assert (cd / "backups" / name).exists(), "an uploaded bundle joins the list"
     assert client.get("/api/admin/database-restore/pending", headers=_H).json()["pending"] is False
-    # the same bytes again: fine (already there); different bytes under the same stamp: refused
+    # v0.51.343: the same bytes again are fine; the same-second 409 lives in test_v0_51_343_backup_upload_retention
     r = client.post("/api/admin/database-restore/upload", headers=_H,
                     files={"file": (b.name, b.read_bytes(), "application/gzip")})
     assert r.status_code == 200
-    other = _make_bundle(tmp_path / "mk2", token="ANOTHER")
-    r = client.post("/api/admin/database-restore/upload", headers=_H,
-                    files={"file": (other.name, other.read_bytes(), "application/gzip")})
-    assert r.status_code == 409
 
 
 def test_restore_by_name_previews_then_confirms_then_cancels(app_client, tmp_path):

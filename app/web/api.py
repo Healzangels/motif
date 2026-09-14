@@ -26767,7 +26767,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "dir": str(db_backup.backups_dir(settings.config_dir)),
             "backups": [
                 {"name": b.name, "size": b.size, "created_at": b.created_at,
-                 "kind": b.kind}  # v0.51.335
+                 "kind": b.kind,  # v0.51.335
+                 "retained": b.retained}  # v0.51.343: False = kept outside retention (a pre-restore copy or an uploaded bundle)
                 for b in backups
             ],
         }
@@ -27375,13 +27376,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="empty file")
 
         # v0.51.336: an uploaded BUNDLE is not staged — it joins the list
-        # under its manifest's stamp and comes back as a preview; the
+        # under its upload's UTC time and comes back as a preview; the
         # operator then confirms by name (the same path as a listed bundle).
         _fname = str(getattr(upload, "filename", "") or "")
         if data[:2] == b"\x1f\x8b" or _fname.endswith((".tar.gz", ".tgz")):
             def _import_bundle() -> dict:
                 import os
                 import tempfile as _tf
+                from datetime import datetime, timezone
                 bdir = db_backup.backups_dir(settings.config_dir)
                 bdir.mkdir(parents=True, exist_ok=True)
                 fd, tmp = _tf.mkstemp(prefix=".restore-upload.", suffix=".tar.gz", dir=str(bdir))
@@ -27392,11 +27394,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     chk = bundle_mod.inspect_bundle(tmp_p)
                     if not chk.ok:
                         raise ValueError(chk.error or "invalid bundle")
-                    created = str((chk.manifest or {}).get("created_at") or "")
-                    stamp = created[:19].replace("-", "").replace(":", "").replace("T", "-")
-                    name = bundle_mod.bundle_name(stamp)
-                    if not db_backup.is_backup_name(name):
-                        raise ValueError("bundle manifest has no usable created_at stamp")
+                    # v0.51.343: the upload's own UTC time, never the manifest's created_at — a future stamp pruned every nightly, an old one the upload
+                    name = bundle_mod.uploaded_bundle_name(datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))
                     dest = bdir / name
                     if dest.exists():
                         # v0.51.342: compared with the upload already in memory — two whole-file sha256 passes were pure cost
