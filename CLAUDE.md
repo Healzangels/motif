@@ -89,14 +89,14 @@ this list grows, audit every existing site.
 
 | Site | File:line | Purpose |
 |---|---|---|
-| `computeSrcLetter` | `app.js:~11158` | SRC pill T/U/A vs P/– classification |
-| `renderLibraryRow` inline-SRC | `app.js:~11415` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
-| row quick-play | `lib/quick-play.js` (the rule, loaded by base.html + required by `tests/js/test_quick_play.js`) · `app.js` `quickPlayToggle` / `bindQuickPlay` / the slot in `renderLibraryRow` | the row's leading ▶ plays what the INFO card headline says plays (v0.51.333) |
+| `computeSrcLetter` | `app.js:~11160` | SRC pill T/U/A vs P/– classification |
+| `renderLibraryRow` inline-SRC | `app.js:~11417` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
+| row quick-play | `lib/quick-play.js` (the rule, plus the `fileSrc` / `plexSrc` URL builders the INFO card's four players share since v0.51.343; loaded by base.html + required by `tests/js/test_quick_play.js`) · `app.js` `quickPlayToggle` / `bindQuickPlay` / the slot in `renderLibraryRow` | the row's leading ▶ plays what the INFO card headline says plays (v0.51.333) |
 | SRC filter prune | `lib/src-filter.js` `keepOfferedLetters` (loaded by base.html + required by `tests/js/test_src_filter.js`) · `app.js` `_pruneSrcFilterToOfferedChips` in `loadLibrary` + the SRC ALL branch | the filter holds only letters whose chip this page offers — AT off /anime, A/M on /collections; no server gate on purpose (at- ids come from URL shape) (v0.51.338) |
-| `updateLibrarySelectionUi` selection bucket | `app.js:~13679` | themed-vs-not counts for bulk-bar (v1.18.24) |
-| `isPlexAgentRow` | `app.js:~17578` | "Plex already supplying" confirm prompt gate (v1.18.75) |
-| Bulk PUSH predicates (3 sites) | `app.js:~13836` / `~13993` / `~16132` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
-| Bulk LPS M-sidecar gate | `app.js:~13867` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
+| `updateLibrarySelectionUi` selection bucket | `app.js:~13681` | themed-vs-not counts for bulk-bar (v1.18.24) |
+| `isPlexAgentRow` | `app.js:~17585` | "Plex already supplying" confirm prompt gate (v1.18.75) |
+| Bulk PUSH predicates (3 sites) | `app.js:~13838` / `~13995` / `~16134` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
+| Bulk LPS M-sidecar gate | `app.js:~13869` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
 | SRC SQL | `api.py:_SRC_LETTER_SQL` | DB-side equivalent — must agree with JS |
 
 The forgetting cost is **silent UX wrong-classification**:
@@ -688,7 +688,7 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
   `APPRISE_URL_LIST_KEYS` / `USERINFO_URL_KEYS`, applied by
   `mask_config_value`). GET `/api/config` and the bundle restore preview both
   mask through it (v0.51.339). A USERINFO_URL_KEYS field (plex.url since
-  v0.51.341) round-trips its mask through PATCH via `unmask_url_credentials`.
+  v0.51.341) round-trips its mask through PATCH via `unmask_url_credentials` (the userinfo plus the query's and the fragment's secret params, names matched case-blind — v0.51.343).
 - Commit secrets (Plex token, GitHub PATs, cookies.txt). The events
   log scrubber (`app/core/events.py`) redacts: (a) `detail` dict VALUES
   whose KEY contains `token|secret|password|cookie|auth|api_key|bearer`

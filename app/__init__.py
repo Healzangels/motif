@@ -6447,7 +6447,59 @@
 #   since mid-July — none of those saves landed, and the tab now says whether
 #   a save did. A hand-edited quoted number in a number field now loads as a
 #   number.
-__version__ = "0.51.342"
+# 0.51.343: cleanup — one builder, one track, one mask boundary, one name
+#   table. The tag-3 cleanup findings of the .328–.337 review; no visible
+#   change beyond what each item names, each proven equivalent where it
+#   claims to be.
+#   (1) INFO card / row quick-play: the four card players (the motif-file
+#   player, the loudness preview, both Plex players) build their URLs with
+#   lib/quick-play.js's fileSrc / plexSrc — the row ▶ and the card share one
+#   builder (331,776 edge values, 0 mismatches against the hand-built ones).
+#   computeQuickPlay collapses to two branches (equivalent over 1.97M rows)
+#   and its state drops the unread src. A deep-linked card's Plex player
+#   follows the payload, and the backup strip keys on what Plex does with the
+#   item: "✓ BACKUP READY — DEFERRING TO PLEX" only while Plex serves it,
+#   "— PLEX NO LONGER SERVES" when it stopped, "— NOT IN PLEX" when the item
+#   left; the STANDING BY tooltip and the PROMOTE caption follow the same
+#   three cases.
+#   (2) Pills: one --track per tracked family, read by both its letter-spacing
+#   and the right padding that gives the tracking back (retune a family by its
+#   --track, never the calc); --t-micro (9px) replaces every hand-typed 9px.
+#   Rendered before/after over 2,422 elements: 0 differences.
+#   (3) Secrets: the URL mask looks for userinfo's "@" only before the first
+#   "?" or "#", so https://host/x?email=a@b.com keeps its host on GET
+#   /api/config, in the restore preview and the boot banner; a secret
+#   parameter in a fragment (#access_token=) is masked like a query one and
+#   round-trips through PATCH; a masked parameter's name matches case-blind
+#   (?TOKEN=*** over a stored ?token= is no longer a 400). Trade-off: a raw,
+#   unencoded "?" or "#" inside a password now reads as the query/fragment
+#   start and is shown — no HTTP client could use such a URL; percent-encoded
+#   passwords are unaffected.
+#   (4) Backups: db_backup reads one _KINDS table (_classify(name) → kind,
+#   stamp, retained) in is_backup_name, kind_of, _stamp_of, list_backups and
+#   prune_backups instead of four hand-kept encodings; equivalent to the
+#   pre-.343 functions over ~195k fuzzed names, apart from what (5) changes.
+#   (5) From the integration review of the merged tag. A settings tab left
+#   open across the upgrade no longer moves a stored credential when saved: a
+#   sync or Plex URL with an "@" in its query or fragment keeps its host and
+#   credentials byte for byte, where the old mask's text after that "@" became
+#   the host (or the whole tab was refused with a 400) — still, reload such a
+#   tab before editing a URL. A bundle uploaded through // RESTORE is filed as
+#   motif-bundle-upload-<upload time>.tar.gz and kept outside retention like a
+#   pre-restore copy: a nightly no longer deletes it before you confirm, and a
+#   bundle stamped in the future no longer makes every nightly delete the
+#   backup it just wrote. Delete uploads by hand when done — each re-upload is
+#   another copy. Uploads kept by .336–.342 under their manifest's stamp still
+#   count toward retention; delete any dated in the future. After a rollback
+#   past this tag, motif-bundle-upload-* files drop out of the list. Backup
+#   names take ASCII digits only, so a file stamped with other digits is no
+#   longer listed (remove it by hand). The BUNDLE chip no longer promises
+#   cookies.txt, which is left out when over its cap. The library's // RESTORE
+#   FROM PLEX reports rows whose download is still queued or running as
+#   "· N WAITING ON DOWNLOAD", not FAILED. The nine per-kind LINK glyphs
+#   (HL C M PU RP UB PB TB AB) read --track too; their right padding grows
+#   0.1px, which centres their letters exactly.
+__version__ = "0.51.343"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
