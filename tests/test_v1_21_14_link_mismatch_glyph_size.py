@@ -16,7 +16,10 @@ after the base.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from _slice_helpers import slice_between
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -39,13 +42,19 @@ def test_mismatch_defined_once():
     assert CSS.count("\n.link-glyph-mismatch {") == 1
 
 
+def _size(selector: str) -> dict[str, str | None]:
+    block = slice_between(CSS, f"\n{selector} {{", "\n}")
+    found = {p: re.search(rf"^\s*{p}:\s*([^;]+);", block, re.M) for p in ("font-size", "padding")}
+    return {p: m.group(1).strip() if m else None for p, m in found.items()}
+
+
 def test_mismatch_sized_like_the_other_link_variants():
-    """9px / same padding as -hardlink and -copy so all row LINK badges
-    are a uniform size."""
-    idx = CSS.index("\n.link-glyph-mismatch {")
-    block = CSS[idx:idx + 400]
-    assert "font-size: 9px;" in block
-    assert "padding: 1px 4px 1px 5px;" in block
+    """Same font-size / padding as -hardlink and -copy so all row LINK
+    badges are a uniform size."""
+    # v0.51.343: compared with its siblings, not a retyped 9px, so the family moves together with --t-micro
+    mismatch = _size(".link-glyph-mismatch")
+    assert mismatch["font-size"] and mismatch["padding"], mismatch
+    assert mismatch == _size(".link-glyph-hardlink") == _size(".link-glyph-copy"), mismatch
 
 
 def test_version_bumped():

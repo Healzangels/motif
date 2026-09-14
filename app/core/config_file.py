@@ -902,6 +902,7 @@ def _is_masked_apprise_url(url: str) -> bool:
 
 
 _URL_SCHEME_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://")
+_URL_PARAM_SECRET_RE = re.compile(_URL_QUERY_SECRET_RE.pattern.replace("([?&]", "([?&#]", 1))  # v0.51.343: the same names after "#" — #access_token= was shown in clear
 
 
 def _split_userinfo(url: str) -> tuple[str, str | None, str]:
@@ -909,7 +910,7 @@ def _split_userinfo(url: str) -> tuple[str, str | None, str]:
     m = _URL_SCHEME_PREFIX_RE.match(url)
     prefix = m.group(0) if m else ""
     body = url[len(prefix):]
-    at = body.rfind("@")
+    at = re.split(r"[?#]", body, maxsplit=1)[0].rfind("@")  # v0.51.343: never past the query/fragment — ?email=a@b.com hid the host
     return (prefix, None, body) if at < 0 else (prefix, body[:at], body[at + 1:])
 
 
@@ -927,7 +928,7 @@ def mask_url_credentials(url: str) -> str:
     if not url:
         return url or ""
     prefix, userinfo, rest = _split_userinfo(url)
-    rest = _URL_QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}{_APPRISE_MASK}", rest)  # v0.51.341: ?token= / ?api_key= values too
+    rest = _URL_PARAM_SECRET_RE.sub(lambda m: f"{m.group(1)}{_APPRISE_MASK}", rest)  # v0.51.341: ?token= / ?api_key= values too
     return f"{prefix}{_APPRISE_MASK}@{rest}" if userinfo is not None else f"{prefix}{rest}"
 
 
@@ -941,7 +942,7 @@ def _is_masked_url_credentials(url: str) -> bool:
     body = url[m.end():] if m else url
     # v0.51.341: every shape mask_url_credentials emits — `***@` with or without a scheme, and a `name=***` secret param
     return body.startswith(_APPRISE_MASK + "@") or any(
-        _query_secret_value(q) == _APPRISE_MASK for q in _URL_QUERY_SECRET_RE.finditer(body))
+        _query_secret_value(q) == _APPRISE_MASK for q in _URL_PARAM_SECRET_RE.finditer(body))
 
 
 def unmask_url_credentials(submitted: str, stored: str) -> str:
@@ -951,13 +952,13 @@ def unmask_url_credentials(submitted: str, stored: str) -> str:
     body = submitted[len(prefix):]
     _, stored_userinfo, stored_rest = _split_userinfo(stored or "")
     kept: dict[str, list[str]] = {}
-    for q in _URL_QUERY_SECRET_RE.finditer(stored_rest):
-        kept.setdefault(q.group(1)[1:], []).append(_query_secret_value(q))
+    for q in _URL_PARAM_SECRET_RE.finditer(stored_rest):
+        kept.setdefault(q.group(1)[1:].lower(), []).append(_query_secret_value(q))  # v0.51.343: names match as the mask does, case-blind — ?TOKEN=*** over ?token= was a 400
 
     def keep(q: "re.Match[str]") -> str:
         if _query_secret_value(q) != _APPRISE_MASK:
             return q.group(0)
-        stored_vals = kept.get(q.group(1)[1:])
+        stored_vals = kept.get(q.group(1)[1:].lower())
         if not stored_vals:
             raise ValueError(f"the masked {q.group(1)[1:-1]} has no stored value to keep — type it in full")
         return q.group(1) + stored_vals.pop(0)
@@ -965,8 +966,8 @@ def unmask_url_credentials(submitted: str, stored: str) -> str:
     if body.startswith(_APPRISE_MASK + "@"):
         if stored_userinfo is None:
             raise ValueError("the masked credentials (***@) have no stored credentials to keep — type them in full")
-        return f"{prefix}{stored_userinfo}@{_URL_QUERY_SECRET_RE.sub(keep, body[len(_APPRISE_MASK) + 1:])}"
-    return prefix + _URL_QUERY_SECRET_RE.sub(keep, body)
+        return f"{prefix}{stored_userinfo}@{_URL_PARAM_SECRET_RE.sub(keep, body[len(_APPRISE_MASK) + 1:])}"
+    return prefix + _URL_PARAM_SECRET_RE.sub(keep, body)
 
 
 # v0.51.339: the ONE secret-mask rule, keyed by flattened motif.yaml key — GET /api/config and the bundle restore preview both apply it.

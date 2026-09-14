@@ -36,13 +36,16 @@ def _decl(block: str, prop: str) -> str:
 
 def _padding_lr(block: str) -> tuple[str, str]:
     """(right, left) of a 4-value padding shorthand."""
-    parts = re.split(r"\s+(?![^()]*\))", _decl(block, "padding"))
+    parts = re.split(r"\s+(?![^()]*(?:\([^()]*\)[^()]*)*\))", _decl(block, "padding"))  # v0.51.343: the calc nests var(--track)
     assert len(parts) == 4, f"expected a 4-value padding, got {parts}"
     return parts[1], parts[3]
 
 
-def test_badge_letter_spacing_is_the_shared_value():
-    assert _decl(_block(".link-badge"), "letter-spacing") == "0.15em"
+def test_badge_letter_spacing_reads_its_track():
+    # v0.51.343: the tracking lives once, in --track, which the right padding below reads too
+    block = _block(".link-badge")
+    assert re.fullmatch(r"\d*\.?\d+em", _decl(block, "--track")), block
+    assert _decl(block, "letter-spacing") == "var(--track)"
 
 
 def test_link_badge_right_padding_gives_the_trailing_spacing_back():

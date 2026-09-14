@@ -31,13 +31,15 @@ AUTH = {"X-Authentik-Username": "testadmin"}
 # ── source guards ────────────────────────────────────────────
 
 def test_js_playback_label_has_plex_serving_branch():
-    assert "data.plex_has_theme === 1" in APP_JS
-    assert "Plex is serving a theme motif no longer manages" in APP_JS
+    # v0.51.343: read the order inside the headline — the shared _plexBackupState helper above it also tests has_theme
+    fn = APP_JS[APP_JS.index("function _derivePlaybackSourceLabel() {"):APP_JS.index("function _humanSourceKind(")]
+    assert "data.plex_has_theme === 1" in fn
+    assert "Plex is serving a theme motif no longer manages" in fn
     # the new branch must sit AFTER the plex_independent_theme branch and BEFORE
     # the "(none)" fallback.
-    indep = APP_JS.index("data.plex_independent_theme === 1")
-    has = APP_JS.index("data.plex_has_theme === 1")
-    none = APP_JS.index("'nothing on disk · no theme staged'")  # v0.51.323 wording
+    indep = fn.index("data.plex_independent_theme === 1")
+    has = fn.index("data.plex_has_theme === 1")
+    none = fn.index("'nothing on disk · no theme staged'")  # v0.51.323 wording
     assert indep < has < none
 
 

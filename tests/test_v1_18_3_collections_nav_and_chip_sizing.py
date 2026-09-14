@@ -113,5 +113,5 @@ def test_chip_sizing_rule_keeps_existing_values():
     )
     body = css[idx:css.index("}", idx)]  # v0.51.332: the whole rule, not a 200-char window
     # v0.51.332: the right pad gives the trailing letter-spacing back; 10/18 stay.
-    assert re.search(r"padding: 10px calc\(18px - [\d.]+em\) 10px 18px;", body)
+    assert re.search(r"padding: 10px calc\(18px - var\(--track\)\) 10px 18px;", body)  # v0.51.343: reads the .chip family's --track
     assert "font-size: var(--t-small);" in body

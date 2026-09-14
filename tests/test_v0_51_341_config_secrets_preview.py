@@ -136,9 +136,10 @@ def test_test_plex_after_a_masked_save_connects_with_the_stored_credentials(tmp_
     assert seen == [PLEX_CRED]
 
 
-@pytest.mark.parametrize("dotted", USERINFO_URL_KEYS)
+@pytest.mark.parametrize("dotted", ["sync.git_url", "sync.database_url", "sync.db_url", "plex.url"])  # v0.51.343: pinned, not the live tuple — a key dropped from it keeps its case, and fails
 def test_every_userinfo_masked_key_round_trips_through_patch(dotted):
     from app.web.api import _apply_partial_config
+    assert dotted in USERINFO_URL_KEYS, f"{dotted} can carry credentials — it belongs to the userinfo mask"
     sec, leaf = dotted.split(".", 1)
     stored = "https://ci:PAT-77z@host-one.example/path/x"
     cfg = MotifConfig()

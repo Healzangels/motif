@@ -35,6 +35,7 @@ if os.environ.get("MOTIF_REQUIRE_NODE") and not _NODE:
 needs_node = pytest.mark.skipif(not _NODE, reason="node not installed")
 
 _BARE = ("function renderBareInfoCard(", "\n  function _bindPlexThemePlayer(body) {")
+_HELPER = ("  function _plexBackupState(data) {", "\n  }\n")  # v0.51.343: the Plex block and the badge read it
 _PLEX_BLOCK = ("const _plexRk = ", "const _onDiskRows = ")
 _AUDIO_BLOCK = ("const audioBlock = lf", "      : '';")
 _AUDIO_ROWS = ("const _audioRows = ", "`;")
@@ -85,12 +86,12 @@ function parse(html) {
 
 _EDIT_AUDIO_HARNESS = _DOM + r"""
 const vm = require('vm');
-const { src, handler, cases } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const { src, handler, cases, qp } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const htmlEscape = (s) => String(s === undefined || s === null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const out = cases.map((c) => {
   const rows = vm.runInNewContext(src + '\n_audioRows;', {
-    htmlEscape, _ambiguousCut: false, ratingKey: c.rk, sectionId: '3', lfIsBackupOnly: true,
+    htmlEscape, window: { motifQuickPlay: require(qp) }, _ambiguousCut: false, ratingKey: c.rk, sectionId: '3', lfIsBackupOnly: true,
     lf: { section_id: '3', edition_key: '', file_sha256: 'sha-motif', source_kind: 'themerrdb',
           last_place_attempt_reason: 'backup_only' },
     t: { media_type: 'tv', tmdb_id: 777 }, placements: [],
@@ -127,13 +128,15 @@ def _cut(anchors: tuple[str, str], keep_end: bool = False) -> str:
 
 @needs_node
 def test_edit_audio_reads_the_duration_of_its_own_rows_player():
-    src = "\n".join((_cut(_PLEX_BLOCK), _cut(_AUDIO_BLOCK, keep_end=True), _cut(_AUDIO_ROWS, keep_end=True)))
+    src = "\n".join((_cut(_HELPER, keep_end=True), _cut(_PLEX_BLOCK), _cut(_AUDIO_BLOCK, keep_end=True),
+                     _cut(_AUDIO_ROWS, keep_end=True)))
     handler = _cut(_EDIT_HANDLER, keep_end=True)
     cases = [
         {"rk": "1001", "plexHasTheme": 1, "plexSeconds": 31.5, "motifSeconds": 95.25},
         {"rk": "1001", "plexHasTheme": 0, "plexSeconds": 31.5, "motifSeconds": 88.0},
     ]
-    both, motif_only = _node(_EDIT_AUDIO_HARNESS, {"src": src, "handler": handler, "cases": cases})
+    both, motif_only = _node(_EDIT_AUDIO_HARNESS, {"src": src, "handler": handler, "cases": cases,
+                                                   "qp": str(QUICK_PLAY)})
     assert both["players"] == ["plex", "motif"], (
         f"the case under test: Plex's player renders first in the AUDIO group — {both['players']}")
     assert both["opened"]["sha"] == "sha-motif" and both["opened"]["id"] == "777", both["opened"]
@@ -149,12 +152,13 @@ _PLEX_HARNESS = r"""
 const vm = require('vm');
 const { bare, block, qp, cases } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const { computeQuickPlay } = require(qp);
+const window = { motifQuickPlay: require(qp) };  // v0.51.343: the card's builders route through lib/quick-play.js
 const htmlEscape = (s) => String(s === undefined || s === null ? '' : s);
 const out = cases.map((rk) => {
   const bareHtml = vm.runInNewContext(bare + '\nrenderBareInfoCard(row);', {
-    htmlEscape, row: { plex_title: 'X', plex_media_type: 'show', rating_key: rk, plex_has_theme: 1 } });
+    htmlEscape, window, row: { plex_title: 'X', plex_media_type: 'show', rating_key: rk, plex_has_theme: 1 } });
   const full = (ratingKey, plexRk) => vm.runInNewContext(block + '\nplexThemeBlock;', {
-    htmlEscape, ratingKey, lf: null, data: { plex_has_theme: 1, plex_rating_key: plexRk },
+    htmlEscape, window, lfIsBackupOnly: false, ratingKey, lf: null, data: { plex_has_theme: 1, plex_rating_key: plexRk },
     libraryState: { items: [] }, computeSrcLetter: () => 'P' });
   const quick = computeQuickPlay({ plex_has_theme: 1, plex_theme_verified_ok: 1, rating_key: rk });
   return { rk, bare: bareHtml, fullArg: full(rk, ''), fullPayload: full(undefined, rk),
@@ -173,7 +177,8 @@ def _plex_players(html: str) -> list[str]:
 
 @needs_node
 def test_every_plex_theme_builder_renders_a_player_only_for_a_digits_key():
-    runs = _node(_PLEX_HARNESS, {"bare": _cut(_BARE), "block": _cut(_PLEX_BLOCK), "qp": str(QUICK_PLAY),
+    runs = _node(_PLEX_HARNESS, {"bare": _cut(_BARE), "block": _cut(_HELPER, keep_end=True) + _cut(_PLEX_BLOCK),
+                                 "qp": str(QUICK_PLAY),
                                  "cases": _BAD_KEYS + _GOOD_KEYS})
     for run in runs:
         rk = run["rk"]
@@ -192,17 +197,21 @@ def test_every_plex_theme_builder_renders_a_player_only_for_a_digits_key():
 
 
 def test_the_matrix_covers_every_plex_theme_builder():
-    """A new /api/plex/theme/ builder must join the matrix above: every code mention sits
-    inside a builder it renders, and no other page file builds one."""
+    """A new Plex player must join the matrix above: every plexSrc call sits inside a builder
+    it renders, app.js spells no /api/plex/theme/ URL by hand, and only the lib builds one."""
     spans = []
     for anchors in (_BARE, _PLEX_BLOCK):
         start = APP_JS.index(anchors[0])
         spans.append((start, APP_JS.index(anchors[1], start)))
-    code = [m.start() for m in re.finditer(r"/api/plex/theme/", APP_JS)
-            if not APP_JS[APP_JS.rindex("\n", 0, m.start()) + 1:m.start()].lstrip().startswith("//")]
-    assert len(code) >= 2 and all(any(a <= i < b for a, b in spans) for i in code), (
-        "an /api/plex/theme/ builder outside the bare card and the full card's plexThemeBlock — "
+    # v0.51.343: the URL is lib/quick-play.js plexSrc's now, so the matrix follows the calls, not the literal
+    calls = [m.start() for m in re.finditer(r"motifQuickPlay\.plexSrc\(", APP_JS)]
+    assert calls and all(any(a <= i < b for a, b in spans) for i in calls), (
+        "a plexSrc call outside the bare card and the full card's plexThemeBlock — "
         "gate it on a digits-only rating key and add it to the matrix")
+    assert all(any(a <= i < b for i in calls) for a, b in spans), "each rendered builder routes through plexSrc"
+    hand = [m.start() for m in re.finditer(r"/api/plex/theme/", APP_JS)
+            if not APP_JS[APP_JS.rindex("\n", 0, m.start()) + 1:m.start()].lstrip().startswith("//")]
+    assert hand == [], "an /api/plex/theme/ URL spelled by hand in app.js — build it with motifQuickPlay.plexSrc"
     web = REPO / "app" / "web"
     others = sorted(p.relative_to(web).as_posix() for p in web.rglob("*")
                     if p.suffix in (".js", ".html") and p.name != "app.js" and "/api/plex/theme/" in p.read_text())

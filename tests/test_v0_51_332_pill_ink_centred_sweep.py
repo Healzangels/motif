@@ -6,9 +6,11 @@ every page plus the INFO card and the glossary): every TRACKED family
 carried the v0.51.331 defect — letter-spacing is laid after the last
 glyph too, so a centred text box sits its ink half a tracking unit left
 of centre. The fix is one rule per family: right padding = left padding
-− letter-spacing. This test parses each rule and asserts that INVARIANT
-(left is read from the rule, not pinned), so a retuned tracking that
-forgets the padding, or a padding put back symmetric, fails here.
+− letter-spacing. Since v0.51.343 each family declares one --track that
+its letter-spacing and its right-padding calc both read, and this test
+asserts that MECHANISM (left is read from the rule, not pinned), so a
+tracking or padding retyped as a literal, or a padding put back
+symmetric, fails here.
 """
 from __future__ import annotations
 
@@ -20,9 +22,14 @@ import pytest
 from _slice_helpers import slice_between
 
 REPO = Path(__file__).resolve().parent.parent
-APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
-OPS_CSS = (REPO / "app" / "web" / "static" / "ops.css").read_text()
-APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
+STATIC = REPO / "app" / "web" / "static"
+APP_CSS = (STATIC / "app.css").read_text()
+OPS_CSS = (STATIC / "ops.css").read_text()
+APP_JS = (STATIC / "app.js").read_text()
+
+TRACK = "var(--track)"
+# v0.51.343: split a shorthand on top-level spaces only; calc(12px - var(--track)) keeps its own
+_TOP_SPACE = re.compile(r"\s+(?![^()]*(?:\([^()]*\)[^()]*)*\))")
 
 
 def _block(css: str, selector: str) -> str:
@@ -37,37 +44,42 @@ def _decl(block: str, prop: str) -> str | None:
 def _padding4(block: str) -> list[str]:
     val = _decl(block, "padding")
     assert val, "padding not declared"
-    parts = re.split(r"\s+(?![^()]*\))", val)
+    parts = _TOP_SPACE.split(val)
     assert len(parts) == 4, f"expected a 4-value padding, got {val!r}"
     return parts
 
 
-# (selector, letter-spacing the rule relies on when it does not declare one)
+# families that declare their own --track
 TRACKED = [
-    (".btn", None),
-    (".btn-tiny", "0.15em"),          # inherits .btn's tracking
-    (".row-info-btn", "0.15em"),      # a .btn.btn-tiny
-    (".chip", None),
-    ('.chips[aria-label="section"] .chip', "0.15em"),  # a .chip
-    (".tab", None),
-    (".tdb-pill", None),
-    (".loudness-pill", None),
-    (".attn-pill", None),
-    (".pill-filter-clear", None),
-    (".pill-filter-row .link-glyph", None),
-    (".ed-pill-btn", None),
-    (".info-scope-chip", None),
-    (".library-clear-all-btn", None),
-    (".tier-badge", None),
-    (".pill", None),
-    (".lib-flag-pill", None),
-    (".edition-pill", None),
-    (".form-env-badge", None),
-    (".sync-hist-status", None),
-    (".dash-section-toggle", None),
-    (".dash-card-toggle", None),
-    (".library-filter-toggle", None),
+    ".btn",
+    ".chip",
+    ".tab",
+    ".tdb-pill",
+    ".loudness-pill",
+    ".attn-pill",
+    ".pill-filter-clear",
+    ".pill-filter-row .link-glyph",
+    ".ed-pill-btn",
+    ".info-scope-chip",
+    ".library-clear-all-btn",
+    ".tier-badge",
+    ".pill",
+    ".lib-flag-pill",
+    ".edition-pill",
+    ".form-env-badge",
+    ".sync-hist-status",
+    ".dash-section-toggle",
+    ".dash-card-toggle",
+    ".library-filter-toggle",
+    ".link-badge",
 ]
+
+# families whose every element also matches the owner rule, whose --track they read
+INHERITED = {
+    ".btn-tiny": ".btn",
+    ".row-info-btn": ".btn",               # a .btn.btn-tiny
+    '.chips[aria-label="section"] .chip': ".chip",
+}
 
 
 # glyph-only labels whose glyph sits off the box centre: vertical padding
@@ -76,33 +88,73 @@ TRACKED = [
 GLYPH_NUDGED = {".row-info-btn": ("5px", "3px")}
 
 
-@pytest.mark.parametrize("selector,inherited", TRACKED, ids=[t[0] for t in TRACKED])
-def test_right_padding_gives_the_trailing_tracking_back(selector, inherited):
-    block = _block(APP_CSS, selector)
-    ls = _decl(block, "letter-spacing")
-    if inherited is None:
-        assert ls, f"{selector} must declare the letter-spacing its padding compensates"
-    else:
-        assert ls is None, f"{selector} now declares its own tracking — retune the table"
-        ls = inherited
+def _assert_right_gives_the_track_back(selector: str, block: str) -> None:
     top, right, bottom, left = _padding4(block)
     if selector in GLYPH_NUDGED:
         assert (top, bottom) == GLYPH_NUDGED[selector], (selector, top, bottom)
     else:
         assert top == bottom, (selector, top, bottom)
-    assert right == f"calc({left} - {ls})", (selector, right, left, ls)
+    assert right == f"calc({left} - {TRACK})", (selector, right, left)
+
+
+@pytest.mark.parametrize("selector", TRACKED)
+def test_tracking_and_right_padding_read_one_track(selector):
+    block = _block(APP_CSS, selector)
+    assert re.fullmatch(r"\d*\.?\d+(em|px)", _decl(block, "--track") or ""), f"{selector} must declare its --track"
+    assert _decl(block, "letter-spacing") == TRACK, f"{selector}'s letter-spacing must read --track, not a retyped value"
+    _assert_right_gives_the_track_back(selector, block)
+
+
+@pytest.mark.parametrize("selector,owner", INHERITED.items(), ids=list(INHERITED))
+def test_inherited_tracking_reads_the_owner_track(selector, owner):
+    block = _block(APP_CSS, selector)
+    assert _decl(block, "letter-spacing") is None and _decl(block, "--track") is None, f"{selector} now tracks on its own — move it to TRACKED"
+    owner_block = _block(APP_CSS, owner)
+    assert _decl(owner_block, "--track") and _decl(owner_block, "letter-spacing") == TRACK, owner
+    _assert_right_gives_the_track_back(selector, block)
+
+
+def _rules(css: str):
+    body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", body):
+        yield m.group(1), m.group(2)
+
+
+def test_every_compensated_padding_is_a_listed_family():
+    # v0.51.343: a new pill that subtracts its tracking from its padding lands in the tables above, and so under the mechanism
+    found = set()
+    for selectors, body in _rules(APP_CSS):
+        for prop in ("padding", "padding-right"):
+            val = _decl(body, prop)
+            if val and re.search(r"calc\([^;]* - ", val):
+                found.add(selectors.split(",")[-1].strip())
+    expected = set(TRACKED) | set(INHERITED)
+    assert found == expected, sorted(found ^ expected)
+
+
+def test_inheriting_elements_carry_the_owner_class():
+    # v0.51.343: a .btn-tiny without .btn would read no --track, and its right padding would fall to 0
+    files = sorted((REPO / "app" / "web" / "templates").glob("*.html")) + sorted(STATIC.glob("*.js")) + sorted(STATIC.glob("lib/*.js"))
+    seen = 0
+    for f in files:
+        for m in re.finditer(r"\bclass=(\"|')(.*?)\1", f.read_text()):
+            tokens = set(re.sub(r"\$\{[^}]*\}|\{\{.*?\}\}|\{%.*?%\}", " ", m.group(2)).split())
+            if tokens & {"btn-tiny", "row-info-btn"}:
+                seen += 1
+                assert "btn" in tokens, (f.name, m.group(0))
+    assert seen >= 20, seen
 
 
 def test_topbar_inbox_label_compensates_on_itself():
     block = _block(OPS_CSS, ".op-pill .op-pill-label")
-    ls = _decl(block, "letter-spacing")
-    assert ls and _decl(block, "margin-right") == f"-{ls}", block
+    assert _decl(block, "--track") and _decl(block, "letter-spacing") == TRACK, block
+    assert _decl(block, "margin-right") == f"calc(-1 * {TRACK})", block
 
 
 def _side_paddings(block: str) -> tuple[str | None, str | None]:
     left, right = _decl(block, "padding-left"), _decl(block, "padding-right")
     if left is None and right is None:
-        parts = re.split(r"\s+(?![^()]*\))", _decl(block, "padding") or "")
+        parts = _TOP_SPACE.split(_decl(block, "padding") or "")
         right = parts[1] if len(parts) > 1 else parts[0]
         left = parts[3] if len(parts) == 4 else right
     return left, right
@@ -124,7 +176,8 @@ def test_lone_glyph_buttons_have_no_tracking(selector):
 
 def test_loud_stepper_labels_are_lone_glyphs():
     labels = re.findall(r'data-act="loud-step"[^>]*>([^<]*)</button>', APP_JS)
-    assert len(labels) == 2 and all(len(label.strip()) == 1 for label in labels), labels
+    # v0.51.343: the invariant is one glyph per label, however many steps there are (was len == 2)
+    assert labels and all(len(label.strip()) == 1 for label in labels), labels
 
 
 def test_state_dot_buttons_are_lifted_without_growing():

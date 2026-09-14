@@ -51,6 +51,12 @@ _PRERESTORE_RE = re.compile(r"^motif-prerestore-(\d{8}-\d{6})\.db$")
 # v0.51.335: the backup bundle (bundle.py) — a tar.gz next to the snapshots,
 # sharing the list, the name gate, retention and the four endpoints.
 _BUNDLE_RE = re.compile(r"^motif-bundle-(\d{8}-\d{6})\.tar\.gz$")
+# v0.51.343: the one name table — (kind, name shape, counts toward retention), read only through _classify.
+_KINDS = (
+    ("bundle", _BUNDLE_RE, True),
+    ("prerestore", _PRERESTORE_RE, False),
+    ("snapshot", _BACKUP_RE, True),
+)
 
 
 @dataclass
@@ -65,35 +71,37 @@ def backups_dir(config_dir: Path) -> Path:
     return config_dir / BACKUP_SUBDIR
 
 
+def _classify(name: str) -> tuple[str, str, bool] | None:
+    # v0.51.343: separators refused once, then (kind, stamp, retained) from the first _KINDS row that matches.
+    if "/" in name or "\\" in name or name in (".", ".."):
+        return None
+    for kind, shape, retained in _KINDS:
+        m = shape.match(name)
+        if m:
+            return kind, m.group(1), retained
+    return None
+
+
 def is_backup_name(name: str) -> bool:
     """True iff `name` is a motif-<ts>.db (or motif-prerestore-<ts>.db,
     v1.23.18) filename with no path separators. The download/delete
     endpoints call this before touching any file by name — without it a
     crafted name could traverse out of the backups dir or address an
     arbitrary file. Both regexes are fully anchored (^…$)."""
-    if "/" in name or "\\" in name or name in (".", ".."):
-        return False
-    return bool(_BACKUP_RE.match(name) or _PRERESTORE_RE.match(name)
-                or _BUNDLE_RE.match(name))
+    return _classify(name) is not None
 
 
 def kind_of(name: str) -> str | None:
     """v0.51.335: 'snapshot' / 'prerestore' / 'bundle' for a valid backup
     name, None otherwise (the same gate as is_backup_name)."""
-    if not is_backup_name(name):
-        return None
-    if _BUNDLE_RE.match(name):
-        return "bundle"
-    if _PRERESTORE_RE.match(name):
-        return "prerestore"
-    return "snapshot"
+    c = _classify(name)
+    return c[0] if c else None
 
 
 def _stamp_of(name: str) -> str | None:
-    """The embedded YYYYMMDD-HHMMSS for a routine OR prerestore backup
-    name, else None."""
-    m = _BACKUP_RE.match(name) or _PRERESTORE_RE.match(name) or _BUNDLE_RE.match(name)
-    return m.group(1) if m else None
+    """The embedded YYYYMMDD-HHMMSS for any backup name, else None."""
+    c = _classify(name)
+    return c[1] if c else None
 
 
 def _iso_from_stamp(stamp: str) -> str:
@@ -169,25 +177,27 @@ def list_backups(config_dir: Path) -> list[BackupFile]:
     bdir = backups_dir(config_dir)
     if not bdir.exists():
         return []
-    out: list[BackupFile] = []
+    # v0.51.343: each file classified once; the stamp rides along for the sort.
+    rows: list[tuple[str, BackupFile]] = []
     for p in bdir.iterdir():
         if not p.is_file():
             continue
-        stamp = _stamp_of(p.name)
-        if stamp is None:
+        c = _classify(p.name)
+        if c is None:
             continue
+        kind, stamp, _retained = c
         try:
             size = p.stat().st_size
         except OSError as e:
             log.warning("backup stat failed (%s): %s — skipping", p.name, e)
             continue
-        out.append(BackupFile(name=p.name, size=size,
-                              created_at=_iso_from_stamp(stamp),
-                              kind=kind_of(p.name) or "snapshot"))
+        rows.append((stamp, BackupFile(name=p.name, size=size,
+                                       created_at=_iso_from_stamp(stamp),
+                                       kind=kind)))
     # Sort by embedded stamp (true chronological across both name
     # shapes), newest first.
-    out.sort(key=lambda b: (_stamp_of(b.name) or "", b.name), reverse=True)
-    return out
+    rows.sort(key=lambda r: (r[0], r[1].name), reverse=True)
+    return [b for _stamp, b in rows]
 
 
 def resolve_backup(config_dir: Path, name: str) -> Path | None:
@@ -229,8 +239,8 @@ def prune_backups(config_dir: Path, retention: int) -> list[str]:
         return []
     # v0.51.335: bundles count with the snapshots — one retention window
     # over both kinds; pre-restore copies stay exempt.
-    routine = [b for b in list_backups(config_dir)
-               if _BACKUP_RE.match(b.name) or _BUNDLE_RE.match(b.name)]
+    # v0.51.343: the retained flag comes from the _KINDS table, not a re-encoded regex pair.
+    routine = [b for b in list_backups(config_dir) if _classify(b.name)[2]]
     doomed = routine[retention:]  # newest-first → tail is oldest
     removed: list[str] = []
     bdir = backups_dir(config_dir)

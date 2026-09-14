@@ -145,9 +145,9 @@ def _blk(anchor: str, end: str) -> str:
 def test_full_card_plex_theme_row_gate_and_placement():
     # v0.51.341: the rk gate is digits-only now — tests/test_v0_51_341_ui_residuals_2.py renders it per key.
     b = _blk("const plexThemeBlock = (data.plex_has_theme === 1 && ", "      : '';")
-    assert "(!lf || _plexSrc === 'P'))" in b, "Plex's row shows with no motif file, or beside a P row's standing-by file"
+    # v0.51.343: when the row shows and the URL it plays are rendered per payload — test_v0_51_343_infocard_builders.py, test_v0_51_341_ui_residuals_2.py
     assert 'preload="none"' in b, "nothing is fetched until play (IDS-friendly)"
-    assert "/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" in b and 'data-plex-theme="1"' in b
+    assert 'data-plex-theme="1"' in b
     assert '<dt class="info-ctl-label info-ctl-label-play">plex serves' in b and '<dd class="info-play-row"><audio' in b, (
         "the existing play-row primitive (v0.51.340: the badge rides the <dt>)")
     assert "const _onDiskRows = _ambiguousCut ? '' : `" in APP_JS, "the v0.51.223 ambiguous-cut contract is untouched"

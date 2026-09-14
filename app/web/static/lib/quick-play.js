@@ -33,9 +33,8 @@
   var TIP_PLEX = "Play — what Plex serves";
 
   function hasThemeIds(it) {
-    return it.theme_media_type !== undefined && it.theme_media_type !== null
-      && it.theme_media_type !== ""
-      && it.theme_tmdb !== undefined && it.theme_tmdb !== null && it.theme_tmdb !== "";
+    return it.theme_media_type != null && it.theme_media_type !== ""
+      && it.theme_tmdb != null && it.theme_tmdb !== "";
   }
 
   // The items endpoint the INFO card's "motif file" player uses (v1.12.90 /
@@ -50,7 +49,7 @@
       + (q.length ? "?" + q.join("&") : "");
   }
 
-  // The v0.51.322 proxy of what Plex serves; digits-only rating keys only.
+  // The v0.51.322 proxy of what Plex serves; callers gate on a digits-only rating key (the proxy 400s the rest).
   function plexSrc(it) {
     return "/api/plex/theme/" + encodeURIComponent(String(it.rating_key)) + ".mp3";
   }
@@ -62,23 +61,18 @@
     var dlBroken = !!it.canonical_missing && !!it.file_path;
     var verified = it.plex_theme_verified_ok;
     var verifiedOk = verified === null || verified === undefined || verified === 1;
-    var rkOk = /^\d+$/.test(String(it.rating_key === undefined || it.rating_key === null ? "" : it.rating_key));
+    var rkOk = /^\d+$/.test(String(it.rating_key));
     var plexServes = !!it.plex_has_theme && verifiedOk && rkOk;
     var isBackupOnly = !placed && downloaded && it.last_place_attempt_reason === "backup_only";
     var fileOk = downloaded && hasThemeIds(it);
 
     if (dlBroken) return null;
-    if (fileOk && !isBackupOnly) {
+    // v0.51.343: a backup defers only while Plex serves; a backup is never placed, so its tip reads "not placed yet".
+    if (fileOk && !(isBackupOnly && plexServes)) {
       return { kind: "file", src: fileSrc(it), tip: placed ? TIP_FILE_PLACED : TIP_FILE_UNPLACED };
     }
-    if (isBackupOnly && plexServes) {
-      return { kind: "plex", src: plexSrc(it), tip: TIP_PLEX_STANDBY };
-    }
-    if (isBackupOnly && fileOk) {
-      return { kind: "file", src: fileSrc(it), tip: TIP_FILE_UNPLACED };
-    }
     if (plexServes) {
-      return { kind: "plex", src: plexSrc(it), tip: TIP_PLEX };
+      return { kind: "plex", src: plexSrc(it), tip: isBackupOnly ? TIP_PLEX_STANDBY : TIP_PLEX };
     }
     return null;
   }
@@ -95,6 +89,9 @@
 
   return {
     computeQuickPlay: computeQuickPlay,
+    // v0.51.343: the INFO card's players build their URLs here too, so the row and the card cannot drift.
+    fileSrc: fileSrc,
+    plexSrc: plexSrc,
     formatClock: formatClock,
     TIPS: {
       FILE_PLACED: TIP_FILE_PLACED,

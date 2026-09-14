@@ -108,6 +108,9 @@ def _render_bare(row_js: str) -> str:
     quickjs = pytest.importorskip("quickjs")
     src = slice_between(APP_JS, "function renderBareInfoCard(", "\n  function _bindPlexThemePlayer(body) {")
     harness = (
+        # v0.51.343: the bare card's Plex player URL comes from lib/quick-play.js, which base.html loads first
+        (REPO / "app" / "web" / "static" / "lib" / "quick-play.js").read_text()
+        + "\nvar window = {motifQuickPlay: motifQuickPlay};\n"
         "var htmlEscape = function(s){return String(s===undefined||s===null?'':s)"
         ".replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')"
         ".replace(/\"/g,'&quot;').replace(/'/g,'&#39;');};\n"
@@ -277,7 +280,7 @@ def test_button_line_token_is_composed_from_the_btn_tiny_primitive():
         assert part in h, f"--btn-tiny-h must read {part}"
     tiny = _block(".btn-tiny")
     assert _decl(tiny, "line-height") == "var(--btn-tiny-lh)"
-    pad = re.split(r"\s+(?![^()]*\))", _decl(tiny, "padding"))
+    pad = re.split(r"\s+(?![^()]*(?:\([^()]*\)[^()]*)*\))", _decl(tiny, "padding"))  # v0.51.343: the right calc nests var(--track)
     assert pad[0] == pad[2] == "var(--btn-tiny-pad-y)", pad
     border = re.search(r"^\s*border:\s*(\d+)px solid", _block(".btn"), re.M)
     assert border and f"+ {2 * int(border.group(1))}px" in h, "the .btn border, both edges"
@@ -287,7 +290,7 @@ def test_label_and_badge_stack_fits_inside_the_player_line():
     line = _px(_decl(_rule(".dlg-grid"), "font-size")) * float(_decl(_block("body"), "line-height"))
     gap = _px(_decl(_rule(".dlg-grid dt.info-ctl-label-play"), "gap"))
     badge_rule = _block(".tier-badge")
-    pad_top = _px(re.split(r"\s+(?![^()]*\))", _decl(badge_rule, "padding"))[0])
+    pad_top = _px(re.split(r"\s+(?![^()]*(?:\([^()]*\)[^()]*)*\))", _decl(badge_rule, "padding"))[0])
     border = max(_px(re.search(r"border:\s*(\d+px) solid", _rule(f".tier-badge-{s}")).group(1))
                  for s in ("serving", "standing", "placed", "unplaced"))
     badge = _px(_decl(badge_rule, "font-size")) * float(_decl(badge_rule, "line-height")) + 2 * pad_top + 2 * border

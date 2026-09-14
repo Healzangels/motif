@@ -154,6 +154,8 @@
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
   --font-display: 'VT323', 'Share Tech Mono', var(--font-mono);
 
+  /* v0.51.343: the 9px step had no name, so a scale change would have left its pills and captions behind. */
+  --t-micro: 9px;
   --t-tiny: 11px;
   --t-small: 12px;
   --t-base: 13px;
@@ -862,11 +864,13 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
      applied family-wide: right padding = left padding − letter-spacing.
      DESIGN_SYSTEM.md § Pills, badges, chips carries the rule; a new tracked
      label must do the same. Guard: test_v0_51_332_pill_ink_centred_sweep. */
-  padding: 10px calc(20px - 0.15em) 10px 20px;
+  padding: 10px calc(20px - var(--track)) 10px 20px;
   font-family: var(--font-mono);
   font-size: var(--t-small);
   font-weight: 600;
-  letter-spacing: 0.15em;
+  /* v0.51.343: one --track feeds the letter-spacing and the right-padding calc, so the two cannot desync. */
+  --track: 0.15em;
+  letter-spacing: var(--track);
   cursor: pointer;
   transition: all var(--motion-normal) ease;
   text-transform: uppercase;
@@ -893,7 +897,7 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
 }
 .btn:active { transform: translateY(1px); }
 .btn-tiny {
-  padding: var(--btn-tiny-pad-y) calc(10px - 0.15em) var(--btn-tiny-pad-y) 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: var(--btn-tiny-pad-y) calc(10px - var(--track)) var(--btn-tiny-pad-y) 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: var(--t-tiny);
   font-weight: 600;
   line-height: var(--btn-tiny-lh);  /* v0.51.340: tokens, so --btn-tiny-h (the control-label line) can't drift */
@@ -1637,7 +1641,7 @@ body.help-mode .help-mode-bar { display: flex; }
 .library-legend-pill.open:hover { color: var(--green); border-color: var(--green-deep); }
 }
 .library-legend-caret {
-  font-size: 9px;
+  font-size: var(--t-micro);
   /* v0.50.21: the gap lives here (one consistent margin) instead of a literal
      HTML space on LEGEND + an extra 2px on GLOSSARY, which read as uneven. */
   margin-left: 5px;
@@ -1935,9 +1939,10 @@ body.help-mode .settings-help-about { display: block; }
   color: var(--fg-mute);
   font-family: inherit;
   font-size: var(--t-tiny);
-  letter-spacing: 0.06em;
+  --track: 0.06em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
-  padding: 4px calc(10px - 0.06em) 4px 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 4px calc(10px - var(--track)) 4px 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border-radius: var(--radius);
   cursor: pointer;
   transition: color var(--motion-normal) ease, border-color var(--motion-normal) ease;
@@ -2013,13 +2018,14 @@ body.help-mode .settings-help-about { display: block; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px calc(8px - 0.1em) 2px 8px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 2px calc(8px - var(--track)) 2px 8px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border: 1px solid var(--line-bright);
   border-radius: var(--radius);
   color: var(--fg-dim);
   font-family: var(--font-mono);
   font-size: var(--t-tiny);
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   line-height: 1;
   text-transform: uppercase;
   white-space: nowrap;
@@ -2176,10 +2182,11 @@ body.help-mode .settings-help-about { display: block; }
   background: transparent;
   color: var(--fg-dim);
   border: 1px solid var(--line-bright);
-  padding: 6px calc(12px - 0.15em) 6px 12px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 6px calc(12px - var(--track)) 6px 12px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-family: var(--font-mono);
   font-size: var(--t-tiny);
-  letter-spacing: 0.15em;
+  --track: 0.15em;
+  letter-spacing: var(--track);
   line-height: 1;
   cursor: pointer;
   text-transform: uppercase;
@@ -2200,7 +2207,7 @@ body.help-mode .settings-help-about { display: block; }
    visual weight. */
 .chips[aria-label="resolution"] .chip,
 .chips[aria-label="section"] .chip {
-  padding: 10px calc(18px - 0.15em) 10px 18px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 10px calc(18px - var(--track)) 10px 18px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: var(--t-small);
 }
 @media (hover: hover) {
@@ -2524,7 +2531,7 @@ body.help-mode .settings-help-about { display: block; }
   /* v0.51.332: right = left − the trailing letter-spacing (ink centred); and
      the Ⓘ glyph sat 0.8px above centre in this block-flow button, so 1px of
      bottom padding moves to the top — same 23px height, glyph down 1px. */
-  padding: 5px calc(6px - 0.15em) 3px 6px;
+  padding: 5px calc(6px - var(--track)) 3px 6px;
   text-align: center;
 }
 /* v1.10.24 Option C: per-row menu buttons (SOURCE / PLACE / REMOVE).
@@ -2733,11 +2740,12 @@ body.help-mode .settings-help-about { display: block; }
   font-family: var(--font-mono);
   font-size: var(--t-tiny);
   font-weight: 700;
-  letter-spacing: 0.5px;
+  --track: 0.5px;
+  letter-spacing: var(--track);
   border: 1px solid var(--fg-mute);
   background: transparent;
   color: var(--fg-mute);
-  padding: 3px calc(8px - 0.5px) 3px 8px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 3px calc(8px - var(--track)) 3px 8px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border-radius: 3px;
   cursor: pointer;
   text-transform: uppercase;
@@ -3021,8 +3029,9 @@ body.help-mode .settings-help-about { display: block; }
   color: var(--fg-dim);
   font-family: var(--font-mono);
   font-size: var(--t-tiny);
-  letter-spacing: 0.12em;
-  padding: 4px calc(10px - 0.12em) 4px 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  --track: 0.12em;
+  letter-spacing: var(--track);
+  padding: 4px calc(10px - var(--track)) 4px 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border-radius: var(--radius);
   display: inline-flex;
   align-items: center;
@@ -3041,7 +3050,7 @@ body.help-mode .settings-help-about { display: block; }
 }
 /* v0.50.30: caret rests ► (closed) and rotates 90°→▾ (open), matching the
    LEGEND/GLOSSARY carets — was ▾→▴ (180°), which read as the wrong direction. */
-.library-filter-caret { font-size: 9px; line-height: 1; transition: transform var(--motion-fast) ease; }
+.library-filter-caret { font-size: var(--t-micro); line-height: 1; transition: transform var(--motion-fast) ease; }
 .library-filter-count {
   color: var(--green-bright);
   background: rgba(var(--green-rgb), 0.12);
@@ -3053,12 +3062,13 @@ body.help-mode .settings-help-about { display: block; }
   cursor: pointer;
   background: transparent;
   border: 1px solid var(--line);
-  padding: 2px calc(8px - 0.1em) 2px 8px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 2px calc(8px - var(--track)) 2px 8px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border-radius: 3px;
   color: var(--fg-mute);
   font-size: var(--t-tiny);
   font-family: var(--font-mono);
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
 }
 @media (hover: hover) {
 .pill-filter-clear:hover { color: var(--fg); border-color: var(--cyan); }
@@ -3125,14 +3135,15 @@ body.help-mode .settings-help-about { display: block; }
   justify-content: center;
   box-sizing: border-box;
   height: 22px;
-  padding: 0 calc(var(--gap-2) - 0.1em) 0 var(--gap-2); /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 0 calc(var(--gap-2) - var(--track)) 0 var(--gap-2); /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border-radius: 3px;
   background: transparent;
   border: 1px solid var(--line);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  --track: 0.1em;
+  letter-spacing: var(--track);
   line-height: 1;
   color: var(--fg-mute);
   user-select: none;
@@ -3176,8 +3187,9 @@ body.help-mode .settings-help-about { display: block; }
      20px group governs and all six rows scan as one grid. */
   font-family: var(--font-mono);
   font-size: 10px;
-  letter-spacing: 0.1em;
-  padding: 0 calc(var(--gap-2) - 0.1em) 0 var(--gap-2); /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  --track: 0.1em;
+  letter-spacing: var(--track);
+  padding: 0 calc(var(--gap-2) - var(--track)) 0 var(--gap-2); /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   width: auto;
 }
 .pill-filter-row .link-glyph:hover { filter: brightness(1.25); }
@@ -3443,7 +3455,7 @@ body.help-mode .settings-help-about { display: block; }
 }
 /* v0.51.338: inline-flex outranks the UA [hidden] rule; without this the strip showed on every load. */
 .now-playing[hidden] { display: none; }
-.now-playing-label { color: var(--fg-dim); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; white-space: nowrap; }
+.now-playing-label { color: var(--fg-dim); font-size: var(--t-micro); letter-spacing: 0.15em; text-transform: uppercase; white-space: nowrap; }
 .now-playing-title {
   background: transparent; border: 0; padding: 0; cursor: pointer;
   font-family: inherit; font-size: inherit; letter-spacing: inherit; color: var(--fg);
@@ -4452,18 +4464,19 @@ body.auth-page .auth-card { margin: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 600;
-  letter-spacing: 0.15em;
+  --track: 0.15em;
+  letter-spacing: var(--track);
   line-height: 1;
   /* v0.51.331: the operator saw AT / A sit left of centre. Letter-spacing
      trails the LAST glyph too, so the centred text box carries 0.15em of
      dead space on its right and the ink lands ~half of that left of
      centre. The v1.12.30 .link-glyph idiom: give the trailing spacing back
      through the right padding. The SRC key buttons take this same
-     padding (.src-key-btn declares none) — keep the calc in step with
-     the letter-spacing above. */
-  padding: 2px calc(6px - 0.15em) 2px 6px;
+     padding (.src-key-btn declares none); since v0.51.343 the calc and
+     the letter-spacing read the same --track. */
+  padding: 2px calc(6px - var(--track)) 2px 6px;
   border: 1px solid;
   border-radius: 0;
   /* v1.11.25: explicit default cursor so SRC column badges don't pick
@@ -4527,7 +4540,7 @@ body.auth-page .auth-card { margin: 0; }
      the right". Asymmetric padding cancels the trailing space
      so the visible glyphs sit centered inside the pill border. */
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4554,7 +4567,7 @@ body.auth-page .auth-card { margin: 0; }
 .link-glyph-copy {
   display: inline-block;
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4577,7 +4590,7 @@ body.auth-page .auth-card { margin: 0; }
 .link-glyph-mismatch {
   display: inline-block;
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4603,7 +4616,7 @@ body.auth-page .auth-card { margin: 0; }
 .link-glyph-pu {
   display: inline-block;
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4618,7 +4631,7 @@ body.auth-page .auth-card { margin: 0; }
 .link-glyph-repush {
   display: inline-block;
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4647,7 +4660,7 @@ body.auth-page .auth-card { margin: 0; }
 .link-glyph-bk {
   display: inline-block;
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4674,7 +4687,7 @@ body.auth-page .auth-card { margin: 0; }
 .link-glyph-b {
   display: inline-block;
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4691,7 +4704,7 @@ body.auth-page .auth-card { margin: 0; }
 .link-glyph-tb {
   display: inline-block;
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4709,7 +4722,7 @@ body.auth-page .auth-card { margin: 0; }
 .link-glyph-ab {
   display: inline-block;
   padding: 1px 4px 1px 5px;
-  font-size: 9px;
+  font-size: var(--t-micro);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -4808,9 +4821,10 @@ body.auth-page .auth-card { margin: 0; }
 .edition-pill {
   display: inline-block;
   margin-left: 6px;
-  padding: 1px calc(5px - 0.08em) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 1px calc(5px - var(--track)) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: 10px;
-  letter-spacing: 0.08em;
+  --track: 0.08em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--fg-dim);
   border: 1px solid var(--line-bright);
@@ -4836,9 +4850,10 @@ body.auth-page .auth-card { margin: 0; }
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  --track: 0.5px;
+  letter-spacing: var(--track);
   line-height: 1;
-  padding: 1px calc(5px - 0.5px) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 1px calc(5px - var(--track)) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border-radius: 3px;
   text-transform: uppercase;
   vertical-align: middle;
@@ -4978,9 +4993,10 @@ body.auth-page .auth-card { margin: 0; }
   align-items: center;
   justify-content: center;
   margin-left: 6px;
-  padding: 1px calc(5px - 0.12em) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
-  font-size: 9px;
-  letter-spacing: 0.12em;
+  padding: 1px calc(5px - var(--track)) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  font-size: var(--t-micro);
+  --track: 0.12em;
+  letter-spacing: var(--track);
   line-height: 1;
   text-transform: uppercase;
   vertical-align: middle;
@@ -5078,9 +5094,10 @@ body.auth-page .auth-card { margin: 0; }
   align-items: center;
   justify-content: center;
   margin-left: 6px;
-  padding: 1px calc(5px - 0.12em) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
-  font-size: 9px;
-  letter-spacing: 0.12em;
+  padding: 1px calc(5px - var(--track)) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  font-size: var(--t-micro);
+  --track: 0.12em;
+  letter-spacing: var(--track);
   line-height: 1;
   text-transform: uppercase;
   vertical-align: middle;
@@ -5130,9 +5147,10 @@ body.auth-page .auth-card { margin: 0; }
   align-items: center;
   justify-content: center;
   margin-left: 6px;
-  padding: 1px calc(6px - 0.10em) 1px 6px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 1px calc(6px - var(--track)) 1px 6px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: var(--t-tiny);
-  letter-spacing: 0.10em;
+  --track: 0.10em;
+  letter-spacing: var(--track);
   line-height: 1;
   text-transform: uppercase;
   vertical-align: middle;
@@ -5658,8 +5676,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   font-family: var(--font-mono);
   font-size: var(--t-small);
   font-weight: 500;
-  letter-spacing: 0.12em;
-  padding: 12px calc(12px - 0.12em) 12px 12px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  --track: 0.12em;
+  letter-spacing: var(--track);
+  padding: 12px calc(12px - var(--track)) 12px 12px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   cursor: pointer;
   transition: color var(--motion-fast), border-color var(--motion-fast);
 }
@@ -6679,7 +6698,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 }
 .section-type-sub {
   display: block;
-  font-size: 9px;
+  font-size: var(--t-micro);
   letter-spacing: 0.1em;
   margin-top: 1px;
   opacity: 0.7;
@@ -6769,8 +6788,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 
 .sync-hist-status {
   font-weight: 600;
-  letter-spacing: 0.1em;
-  padding: 1px calc(6px - 0.1em) 1px 6px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  --track: 0.1em;
+  letter-spacing: var(--track);
+  padding: 1px calc(6px - var(--track)) 1px 6px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border-radius: var(--radius);
   font-size: 10px;
 }
@@ -7083,8 +7103,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 }
 .info-scope-chip {
   font-size: var(--t-tiny);
-  letter-spacing: 0.1em;
-  padding: 2px calc(8px - 0.1em) 2px 8px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  --track: 0.1em;
+  letter-spacing: var(--track);
+  padding: 2px calc(8px - var(--track)) 2px 8px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border-radius: 3px;
   font-weight: 600;
   white-space: nowrap;
@@ -7117,8 +7138,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 
 .form-env-badge {
   font-size: var(--t-tiny);
-  letter-spacing: 0.15em;
-  padding: 2px calc(7px - 0.15em) 2px 7px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  --track: 0.15em;
+  letter-spacing: var(--track);
+  padding: 2px calc(7px - var(--track)) 2px 7px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   border: 1px solid var(--magenta);
   color: var(--magenta);
   background: rgba(var(--magenta-rgb), 0.08);
@@ -7462,10 +7484,11 @@ body.dash-customize-mode [data-dash-section][draggable="true"]:hover
   background: transparent;
   border: 1px solid var(--line-bright);
   color: var(--fg-dim);
-  padding: 4px calc(10px - 0.12em) 4px 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 4px calc(10px - var(--track)) 4px 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-family: var(--font-mono);
   font-size: var(--t-tiny);
-  letter-spacing: 0.12em;
+  --track: 0.12em;
+  letter-spacing: var(--track);
   cursor: pointer;
   text-transform: none;
 }
@@ -7528,7 +7551,7 @@ body.dash-customize-mode [data-dash-section].dash-drag-over {
   background: var(--bg-elev);
   border: 1px dashed var(--line);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--t-micro);
   letter-spacing: 0.08em;
   color: var(--fg-dim);
 }
@@ -7563,10 +7586,11 @@ body.dash-customize-mode [data-dash-card].dash-user-hidden-card {
   background: transparent;
   border: 1px solid var(--line);
   color: var(--fg-dim);
-  padding: 2px calc(6px - 0.1em) 2px 6px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: 2px calc(6px - var(--track)) 2px 6px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.1em;
+  font-size: var(--t-micro);
+  --track: 0.1em;
+  letter-spacing: var(--track);
   cursor: pointer;
 }
 .dash-card-toggle:hover {

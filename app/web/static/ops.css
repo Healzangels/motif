@@ -122,11 +122,12 @@
 
 .op-pill .op-pill-label {
   font-size: 10px;
-  letter-spacing: 0.16em;
+  --track: 0.16em;
+  letter-spacing: var(--track);
   /* v0.51.332: the label is the pill's last run, so its trailing tracking
      sat the pair 0.8px left of centre — give it back on the label itself
      (its own em) rather than converting units into the pill's padding. */
-  margin-right: -0.16em;
+  margin-right: calc(-1 * var(--track)); /* v0.51.343: the same --track as the letter-spacing, so the give-back cannot drift */
   opacity: 0.75;
 }
 
@@ -543,7 +544,7 @@ body[data-ops-running="1"] #topbar-status-text {
    the // KIND label and rotates 90deg when the card is expanded. Only rendered
    on real (non-synthetic) cards — synthetic queue rows don't expand. */
 .op-card-caret {
-  font-size: 9px;
+  font-size: var(--t-micro);
   color: var(--green);
   opacity: 0.55;
   transition: transform var(--motion-fast) ease;
@@ -668,7 +669,7 @@ body[data-ops-running="1"] #topbar-status-text {
 }
 
 .op-card-meta-label {
-  font-size: 9px;
+  font-size: var(--t-micro);
   letter-spacing: 0.18em;
   opacity: 0.6;
   text-transform: uppercase;
@@ -841,7 +842,7 @@ body[data-ops-running="1"] #topbar-status-text {
   min-width: 62px;
   flex-shrink: 0;
   text-transform: uppercase;
-  font-size: 9px;
+  font-size: var(--t-micro);
   letter-spacing: 0.06em;
 }
 .op-card-runlog-msg { flex: 1; min-width: 0; word-break: break-word; }
@@ -854,7 +855,7 @@ body[data-ops-running="1"] #topbar-status-text {
 .op-insight-section { margin-bottom: var(--gap-4); }
 .op-insight-section:last-child { margin-bottom: 0; }
 .op-insight-head {
-  font-size: 9px;
+  font-size: var(--t-micro);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--fg-dim);
@@ -871,7 +872,7 @@ body[data-ops-running="1"] #topbar-status-text {
 .op-wf-label {
   width: 64px;
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--t-micro);
   letter-spacing: 0.06em;
   opacity: 0.8;
   text-align: right;

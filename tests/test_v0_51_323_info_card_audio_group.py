@@ -24,6 +24,7 @@ matrix is evaluated with quickjs from the card's own helper.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -127,6 +128,7 @@ def test_probe_and_anime_themes_share_one_actions_row():
 
 def _label(lf, data, placements, ambiguous=False) -> str:
     quickjs = pytest.importorskip("quickjs")
+    helper = slice_between(APP_JS, "  function _plexBackupState(data) {", "\n  }\n") + "\n  }\n"  # v0.51.343: shared reading
     held = slice_between(APP_JS, "    function _heldWord(sk) {", "\n    }") + "\n    }"
     fn = slice_between(APP_JS, "    function _derivePlaybackSourceLabel() {", "\n    }") + "\n    }"
     src = f"""
@@ -134,6 +136,7 @@ def _label(lf, data, placements, ambiguous=False) -> str:
       const lf = {json.dumps(lf)};
       const data = {json.dumps(data)};
       const placements = {json.dumps(placements)};
+      {helper}
       {held}
       {fn}
       _derivePlaybackSourceLabel();
@@ -206,7 +209,8 @@ def test_strip_header_holds_the_flip_button_and_one_note_line():
     assert "deploy the backup over Plex's theme" not in APP_JS, "the caption is the note line"
     fn = slice_between(APP_JS, "let intentFlipCaption = '';", "const _noteParts = [];")
     assert fn.count('<span class="recovery-section-flip">') == 2, "PROMOTE and MARK AS BACKUP"
-    assert fn.count('intentFlipCaption = "') == 2, "each flip sets its caption"
+    # v0.51.343: PROMOTE's caption is a ternary on the Plex reading, so count assignments, not string openings
+    assert len(re.findall(r"(?<!let )intentFlipCaption = ", fn)) == 2, "each flip sets its caption"
     note = slice_between(APP_JS, "const _noteParts = [];", "section.innerHTML")
     assert "if (data.acked) _noteParts.push(" in note
     assert "if (intentFlipCaption) _noteParts.push(" in note

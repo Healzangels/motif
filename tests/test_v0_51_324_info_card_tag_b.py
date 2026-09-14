@@ -101,6 +101,9 @@ def _render_bare(row_js: str) -> str:
     start = APP_JS.index("function renderBareInfoCard(")
     src = APP_JS[start:APP_JS.index("function openBareInfoDialog(", start)]
     harness = (
+        # v0.51.343: the bare card's Plex player URL comes from lib/quick-play.js, which base.html loads first
+        (REPO / "app" / "web" / "static" / "lib" / "quick-play.js").read_text()
+        + "\nvar window = {motifQuickPlay: motifQuickPlay};\n"
         "var htmlEscape = function(s){return String(s===undefined||s===null?'':s)"
         ".replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')"
         ".replace(/\"/g,'&quot;').replace(/'/g,'&#39;');};\n"

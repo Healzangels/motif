@@ -153,7 +153,7 @@ def _chips_for(tab):
     return [{"letter": c["letter"], "tabOnly": c["tabOnly"]} for c in _src_row_chips(tab)]
 
 
-def test_the_driven_block_is_binds_drawer_decision_after_hydration():
+def test_the_driven_block_is_the_drawer_decision_after_hydration():
     assert APP_JS.count(DRAWER_BLOCK_START) == 1
     bind = APP_JS.index("function bindLibrary() {")
     assert (APP_JS.index("if (!hasFilterParam) _hydrateLibraryFromStorage();", bind)
@@ -212,9 +212,11 @@ process.stdout.write(JSON.stringify(out));
 
 
 def _headline_fns():
+    # v0.51.343: the backup branch reads the shared _plexBackupState helper
+    helper = slice_between(APP_JS, "  function _plexBackupState(data) {", "\n  }\n") + "\n  }\n"
     held = slice_between(APP_JS, "    function _heldWord(sk) {", "\n    }") + "\n    }"
     fn = slice_between(APP_JS, "    function _derivePlaybackSourceLabel() {", "\n    }") + "\n    }"
-    return f"{held}\n{fn}"
+    return f"{helper}\n{held}\n{fn}"
 
 
 @needs_node

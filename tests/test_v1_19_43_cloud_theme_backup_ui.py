@@ -38,6 +38,7 @@ only the surface presentation diverges.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -101,13 +102,17 @@ def test_link_glyph_b_mirrors_bk_shape():
     b_rule = APP_CSS[b_idx:APP_CSS.index("}", b_idx)]
     # Shape properties pinned to confirm structural parity.
     for prop in ("display: inline-block",
-                 "font-size: 9px", "font-weight: 700",
+                 "font-weight: 700",
                  "letter-spacing: 0.1em", "text-transform: uppercase"):
         assert prop in bk_rule
         assert prop in b_rule, (
             f"v1.19.43: .link-glyph-b missing {prop!r} — mirror "
             f"drift from .link-glyph-bk"
         )
+    # v0.51.343: the size is compared, not retyped as 9px, so both badges move with --t-micro
+    size = re.compile(r"font-size:\s*([^;]+);")
+    assert size.search(bk_rule) and size.search(b_rule), (bk_rule, b_rule)
+    assert size.search(b_rule).group(1) == size.search(bk_rule).group(1)
 
 
 # ── JS render (linkCell B branch) ────────────────────────────

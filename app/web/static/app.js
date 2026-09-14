@@ -11270,7 +11270,7 @@
       return;
     }
     _pauseOtherAudio(audio);
-    libraryState.quickPlay = { key, src: btn.dataset.src, kind: btn.dataset.kind, title: btn.dataset.title || '' };
+    libraryState.quickPlay = { key, kind: btn.dataset.kind, title: btn.dataset.title || '' };  // v0.51.343: no src — audio.src reads the button
     _quickPlayNote('');
     // Setting src on a playing element queues a stale 'pause'; play() below
     // flips paused=false synchronously, so the listener's `audio.paused`
@@ -18357,9 +18357,10 @@
       </div>
       ${it.plex_has_theme && /^\d+$/.test(posterRk)  // v0.51.341: digits-only rk, the proxy's own rule — an empty key built a keyless player URL
         // v0.51.340: the badge rides the label column, so the player starts at the value edge.
+        // v0.51.343: lib/quick-play.js builds the URL, the same builder as the row's ▶.
         ? `<div class="dlg-section info-group"><h4>// audio</h4><dl class="dlg-grid"><dt class="info-ctl-label info-ctl-label-play">plex serves `
           + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span></dt>`
-          + `<dd class="info-play-row"><audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(it.rating_key || '')}.mp3" class="info-audio" data-plex-theme="1">`
+          + `<dd class="info-play-row"><audio controls preload="none" src="${window.motifQuickPlay.plexSrc(it)}" class="info-audio" data-plex-theme="1">`
           + `your browser doesn't support inline audio playback</audio>`
           + `<span class="muted small info-probe-meta"></span></dd></dl></div>`
         : ''}
@@ -18437,6 +18438,14 @@
       _bindPlexThemePlayer(body);  // v0.51.322
     }
     showModalNoFocusRing(dlg);
+  }
+
+  // v0.51.343: does Plex serve beside motif's backup? One reading for the headline, the STANDING BY tooltip, the Plex player and the backup strip.
+  function _plexBackupState(data) {
+    // v0.51.341: has_theme is NOT NULL, so null means no plex_items row — the item left Plex and PROMOTE has no folder to deploy into.
+    if (data.plex_has_theme === null || data.plex_has_theme === undefined) return 'absent';
+    // v0.51.339: "Plex serves" is the card player's and computeQuickPlay's test, not the backup stamp alone.
+    return data.plex_has_theme === 1 && data.plex_theme_verified_ok !== 0 ? 'serves' : 'silent';
   }
 
   // v0.51.191: ONE AudioContext for the whole page. Browsers cap concurrent contexts
@@ -18578,13 +18587,11 @@
       const held = String(lf.source_video_id || '').startsWith('at-')
         ? 'AnimeThemes theme' : _heldWord(lf.source_kind || '');
       if ((lf.last_place_attempt_reason || '') === 'backup_only') {
-        // v0.51.339: "Plex serves" is the card player's and computeQuickPlay's test, not the backup stamp alone.
-        const plexServes = data.plex_has_theme === 1 && data.plex_theme_verified_ok !== 0;
-        // v0.51.341: has_theme is NOT NULL, so null means no plex_items row — the item left Plex and PROMOTE has no folder to deploy into.
-        if (data.plex_has_theme === null || data.plex_has_theme === undefined) {
+        const plexState = _plexBackupState(data);  // v0.51.343: the reading the tooltip and the strip share
+        if (plexState === 'absent') {
           return `${held} on disk as backup · this item is not in Plex`;
         }
-        return plexServes
+        return plexState === 'serves'
           ? `${held} on disk as backup · Plex serves its own theme`
           : `${held} on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)`;
       }
@@ -19022,11 +19029,8 @@
       ? (() => {
           // v1.21.90: include rating_key so the player serves THIS
           // edition's canonical, not an arbitrary sibling edition's file.
-          const _ap = [];
-          if (sectionId) _ap.push(`section_id=${encodeURIComponent(sectionId)}`);
-          if (ratingKey) _ap.push(`rating_key=${encodeURIComponent(ratingKey)}`);
-          const sec = _ap.length ? `?${_ap.join('&')}` : '';
-          const src = `/api/items/${encodeURIComponent(t.media_type)}/${encodeURIComponent(t.tmdb_id)}/theme.mp3${sec}`;
+          // v0.51.343: lib/quick-play.js builds it — the row ▶'s builder, same section_id + rating_key query.
+          const src = window.motifQuickPlay.fileSrc({ theme_media_type: t.media_type, theme_tmdb: t.tmdb_id, section_id: sectionId, rating_key: ratingKey });
           // v0.51.29: dropped the sibling ↓ download link — the native
           // <audio> controls' ⋮ overflow menu already has "Download" (the
           // user), so the extra arrow was redundant. The player now owns the
@@ -19041,9 +19045,14 @@
           // file) and badged by its state, so it reads apart from the "plex
           // serves" row above it without the reader parsing the dt.
           const _placedKinds = placements.map((p) => p.placement_kind).filter(Boolean);
+          const _backupPlex = _plexBackupState(data);  // v0.51.343: the headline's three cases, not "Plex keeps serving" regardless
           const _fileBadge = lfIsBackupOnly
             ? ['tier-badge-standing', 'STANDING BY',
-               "motif's copy waits on disk as a backup — Plex keeps serving its own theme until PROMOTE TO ACTIVE deploys this."]
+               _backupPlex === 'serves'
+                 ? "motif's copy waits on disk as a backup — Plex keeps serving its own theme until PROMOTE TO ACTIVE deploys this."
+                 : _backupPlex === 'absent'
+                   ? "motif's copy waits on disk as a backup — this item is not in Plex, so there is nowhere to deploy it."
+                   : "motif's copy waits on disk as a backup — Plex no longer serves a theme; PROMOTE TO ACTIVE deploys this."]
             : _placedKinds.length
               ? ['tier-badge-placed', 'PLACED',
                  `motif's file is placed where Plex reads it (${_placedKinds.join(', ')}).`]
@@ -19110,8 +19119,9 @@
     const recoverySectionId = (t.media_type && t.tmdb_id !== undefined)
       ? 'recovery-section'
       : null;
+    // v0.51.343: data-plex-state carries the headline's Plex reading to the backup strip (recovery-options has no plex_has_theme).
     const recoveryPlaceholder = recoverySectionId
-      ? `<section id="${recoverySectionId}" class="recovery-section" hidden>
+      ? `<section id="${recoverySectionId}" class="recovery-section" data-plex-state="${_plexBackupState(data)}" hidden>
            <header class="recovery-section-head">
              <span class="recovery-section-title">// TRY THIS NEXT</span>
              <span class="muted small">loading recovery options…</span>
@@ -19365,12 +19375,8 @@
       // FILE & PLACEMENT `play` bar) so the preview no longer HIJACKS that shared player
       // — it appears in the LOUDNESS section beside the +/- stepper. rating_key scopes
       // the edition, like audioBlock.
-      const _pqp = [];
-      if (sectionId) _pqp.push(`section_id=${encodeURIComponent(sectionId)}`);
-      if (ratingKey) _pqp.push(`rating_key=${encodeURIComponent(ratingKey)}`);
-      const _previewSrc = `/api/items/${encodeURIComponent(lf.media_type)}/`
-        + `${encodeURIComponent(lf.tmdb_id)}/theme.mp3`
-        + (_pqp.length ? `?${_pqp.join('&')}` : '');
+      // v0.51.343: lib/quick-play.js builds it, with audioBlock's section_id + rating_key query.
+      const _previewSrc = window.motifQuickPlay.fileSrc({ theme_media_type: lf.media_type, theme_tmdb: lf.tmdb_id, section_id: sectionId, rating_key: ratingKey });
 
       const lvl = `<dt>plays at</dt><dd class="muted small">${measured.toFixed(1)} LUFS${
         tp !== null ? ` · peak ${tp.toFixed(1)} dBTP${tp > 0 ? ' <span class="accent-red loud-clip" title="The loudest moments peak above 0 dBTP, so they distort (clip) on playback. Leveling this theme quieter — set a target below and // LEVEL THIS THEME — pulls the peak back under 0 and clears the clipping.">(clipping)</span>' : ''}` : ''
@@ -19577,13 +19583,16 @@
     // an ambiguous cut (the v0.51.223 contract: the LOUDNESS picker is the CTA).
     const _plexRk = ratingKey || data.plex_rating_key || '';
     const _plexRowItem = (libraryState.items || []).find((it) => String(it.rating_key) === String(_plexRk));
-    const _plexSrc = _plexRowItem ? computeSrcLetter(_plexRowItem) : '';
+    // v0.51.343: no row loaded (a deep link, a row off this page) — the payload decides, by computeQuickPlay's Plex-beside-a-standing-by-backup rule.
+    const _plexBesideFile = _plexRowItem
+      ? computeSrcLetter(_plexRowItem) === 'P'
+      : lfIsBackupOnly && _plexBackupState(data) === 'serves';
     // v0.51.340: the badge rides the label column, so this player and the motif file's share one left edge.
     // v0.51.341: digits-only rk (quick-play's rkOk, the proxy's 400 rule) — no player for a keyless or non-numeric key.
-    const plexThemeBlock = (data.plex_has_theme === 1 && /^\d+$/.test(String(_plexRk)) && (!lf || _plexSrc === 'P'))
+    const plexThemeBlock = (data.plex_has_theme === 1 && /^\d+$/.test(String(_plexRk)) && (!lf || _plexBesideFile))
       ? `<dt class="info-ctl-label info-ctl-label-play">plex serves `
         + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span></dt>`
-        + `<dd class="info-play-row"><audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" class="info-audio" data-plex-theme="1">`
+        + `<dd class="info-play-row"><audio controls preload="none" src="${window.motifQuickPlay.plexSrc({ rating_key: _plexRk })}" class="info-audio" data-plex-theme="1">`
         + `your browser doesn't support inline audio playback</audio>`
         + `<span class="muted small info-probe-meta"></span></dd>`
       : '';
@@ -20573,9 +20582,12 @@
     // intent, that wins — regardless of whether motif's file is
     // on disk (it will be — that's the whole point of backup).
     const overrideIntent = (data.override && data.override.intent) || null;
+    const plexState = section.dataset.plexState;  // v0.51.343: the card's _plexBackupState — the strip defers to Plex only while Plex serves
     let sectionTitleText;
     if (overrideIntent === 'backup') {
-      sectionTitleText = '✓ BACKUP READY — DEFERRING TO PLEX';
+      sectionTitleText = plexState === 'serves'
+        ? '✓ BACKUP READY — DEFERRING TO PLEX'
+        : plexState === 'absent' ? '✓ BACKUP READY — NOT IN PLEX' : '✓ BACKUP READY — PLEX NO LONGER SERVES';
     } else if (data.resolved) {
       sectionTitleText = '✓ RESOLVED — TDB UNAVAILABLE';
     } else if (data.plex_resolved) {
@@ -20682,7 +20694,11 @@
                     data-id="${htmlEscape(tid)}"
                     title="${htmlEscape(promoteTip)}">// PROMOTE TO ACTIVE</button>
           </span>`;
-        intentFlipCaption = "motif keeps its copy as a safety net; PROMOTE deploys it over Plex's theme";
+        intentFlipCaption = plexState === 'serves'  // v0.51.343: "over Plex's theme" only while there is one
+          ? "motif keeps its copy as a safety net; PROMOTE deploys it over Plex's theme"
+          : plexState === 'absent'
+            ? "motif keeps its copy as a safety net; this item is not in Plex, so there is nowhere to deploy it"
+            : "Plex no longer serves a theme; PROMOTE deploys motif's copy";
       } else if (overrideIntent === 'replace' && data.plex_resolved) {
         // v1.18.78: MARK AS BACKUP only meaningful when Plex has
         // its own theme to fall back to. Demoting a RESOLVED

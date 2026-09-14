@@ -242,17 +242,7 @@ def _apply_partial_config(cfg, body: dict) -> None:
                 if v is None:
                     setattr(section, k, "")
                     continue
-            # v1.21.17 (security audit): sync.git_url / database_url are
-            # masked-userinfo in GET (https://***@host/...). A round-tripped
-            # value still carrying the `://***@` marker means "keep the
-            # stored credential" — writing it back literally would corrupt
-            # the PAT. Mirrors the plex.token '***' = keep contract.
-            # v1.23.69 (audit): db_url is the 3rd credential-capable sync URL —
-            # v1.23.62 added it to the GET mask but NOT here, so a standard SAVE
-            # round-trip wrote the masked `https://***@host` back over a real
-            # db_url credential (the GET masked it, the PATCH didn't keep-on-marker
-            # it). Added so the keep-on-mask contract is symmetric across all three.
-            # v0.51.341: keyed by config_file.USERINFO_URL_KEYS (plex.url joined) — the mask takes the stored credentials back, a host edit is kept.
+            # v0.51.343: a USERINFO_URL_KEYS value (sync URLs v1.21.17/v1.23.69, plex.url v0.51.341) still masked takes its stored secrets back; host/path edits kept.
             from ..core.config_file import USERINFO_URL_KEYS, _is_masked_url_credentials, unmask_url_credentials
             if f"{section_name}.{k}" in USERINFO_URL_KEYS and isinstance(v, str) and _is_masked_url_credentials(v):
                 v = unmask_url_credentials(v, getattr(section, k))
