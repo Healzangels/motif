@@ -237,5 +237,6 @@ Mirrors the four snapshot endpoints under one list:
   `read()`, so only a raw-byte budget on the file stops a flood of them.
 - **Bind mounts.** Docker refuses a rename over a single-file bind mount
   (EBUSY/EXDEV/EPERM), so the boot writes those files in place after a
-  `.prerestore-<stamp>` copy — and never chmods a file whose mode the host
-  owns (the cookies file can be shared with other containers).
+  `.prerestore-<stamp>` copy. The cookies file keeps the mode the host gave
+  it (it can be shared with other containers); `motif.yaml` is set to 0600
+  because it holds the Plex token.

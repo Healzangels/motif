@@ -463,6 +463,7 @@ def test_v80_migration_adds_the_columns_and_clears_the_old_check_stamps(tmp_path
         _lf(c, 1, size=3, sha="a" * 64, present=1)
         _lf(c, 2, size=4, sha="b" * 64, present=0)
         c.execute("UPDATE local_files SET canonical_health_checked_at = ?", (NOW,))
+        _lf(c, 3, size=5, sha="c" * 64, present=1)  # v0.51.342: never checked — a row, not a stamp
     with _conn(db) as c:  # the v79 shape
         c.execute("ALTER TABLE local_files DROP COLUMN canonical_changed_candidate")
         c.execute("ALTER TABLE local_files DROP COLUMN canonical_hash_miss_sig")
@@ -475,10 +476,11 @@ def test_v80_migration_adds_the_columns_and_clears_the_old_check_stamps(tmp_path
         assert {"canonical_changed_candidate", "canonical_hash_miss_sig"} <= cols
         assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == dbm.CURRENT_SCHEMA_VERSION
         assert c.execute("SELECT tmdb_id, canonical_health_checked_at, canonical_present FROM local_files "
-                         "ORDER BY tmdb_id").fetchall() == [(1, None, 1), (2, None, 0)], "BROKEN keeps its stamps"
+                         "ORDER BY tmdb_id").fetchall() == [(1, None, 1), (2, None, 0), (3, None, 1)], \
+            "BROKEN keeps its stamps"
     with get_conn(db) as conn:
         ck = ch.broken_canonical_report(conn)["checked"]
-    assert ck["never"] == ck["tracked"] == 2
+    assert ck["never"] == ck["tracked"] == 3
     assert sum("cleared 2 check stamp(s)" in r.getMessage() for r in caplog.records) == 1, "the cold path says what it did"
     c = sqlite3.connect(db)
     try:

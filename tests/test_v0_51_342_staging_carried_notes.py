@@ -178,7 +178,7 @@ def _no_space_for(monkeypatch, pending_name: str) -> None:
 
     def open_(path, flags, *a, **k):
         if Path(path).name == pending_name + ".tmp":
-            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(path))  # v0.51.342: with its filename, as a real fault carries it
         return real(path, flags, *a, **k)
     monkeypatch.setattr(os, "open", open_)
 
@@ -200,7 +200,9 @@ def test_a_member_that_fails_after_the_database_swap_unstages_the_whole_bundle(t
     assert ("were already dropped" in msg) is earlier, msg
     assert ("the database it staged was already replaced" in msg) is earlier, msg
     assert "BUNDLE-TOKEN" not in msg and not list(cd.glob("*.tmp")) and not list(db.parent.glob("*.tmp"))
-    assert any("unstaging this bundle" in r.getMessage() for r in caplog.records)
+    assert f"({'OSError: No space left on device'})" in msg and str(tmp_path) not in msg, "errno words, never the config_dir path"
+    assert any("unstaging this bundle" in r.getMessage() and str(cd) in r.getMessage() for r in caplog.records), \
+        "the log keeps the full error"
 
 
 def test_keep_config_never_reaches_the_member_staging(tmp_path, monkeypatch):
@@ -231,15 +233,26 @@ def test_the_endpoint_answers_a_post_swap_failure_in_words_with_nothing_pending(
     r = client.post("/api/admin/database-restore", json={"name": b.name, "confirm": True, "keep_config": False}, headers=_H)
     assert r.status_code == 500, r.text
     assert r.json()["detail"].startswith("not staged: cookies.txt could not be staged"), r.text
+    assert str(tmp_path) not in r.text, "v0.51.342: the detail reaches the settings alert — no absolute config_dir path"
     assert client.get("/api/admin/database-restore/pending", headers=_H).json()["members"] == []
 
 
 # ── 4. wrong-typed leaves ────────────────────────────────────────────
 
+# v0.51.342: an unquoted number in a text leaf is no longer here — the loader hydrates it to text (test_v0_51_342_config_bundle_integration)
 _WRONG_LEAVES = [
-    ("plex:\n  url: 53172\n", "plex.url", "53172"),
-    ("paths:\n  cookies_file: 53172\n", "paths.cookies_file", "53172"),
+    ("plex:\n  url:\n    host: PLEX-VALUE\n", "plex.url", "PLEX-VALUE"),
+    ("plex:\n  url: [PLEX-VALUE]\n", "plex.url", "PLEX-VALUE"),
+    ("paths:\n  cookies_file:\n    at: COOKIE-VALUE\n", "paths.cookies_file", "COOKIE-VALUE"),
+    ("paths:\n  cookies_file: [COOKIE-VALUE]\n", "paths.cookies_file", "COOKIE-VALUE"),
     ("paths:\n  cookies_file: null\n", "paths.cookies_file", None),
+    ("plex:\n  movie_section: null\n", "plex.movie_section", None),
+    ("plex:\n  token: true\n", "plex.token", None),
+    ("downloads:\n  concurrency: '3'\n", "downloads.concurrency", None),
+    ("web:\n  port: 8080.5\n", "web.port", None),
+    ("loudness:\n  target_lufs: '-inf'\n", "loudness.target_lufs", "-inf"),
+    ("loudness:\n  target_lufs: 'nan'\n", "loudness.target_lufs", None),
+    ("plex:\n  enabled: 'true'\n", "plex.enabled", None),
     ("notifications:\n  apprise_urls: discord://HOOK-VALUE\n", "notifications.apprise_urls", "HOOK-VALUE"),
     ("plex:\n  enabled: 1\n", "plex.enabled", None),
     ("database_backup:\n  retention: true\n", "database_backup.retention", None),
@@ -270,16 +283,20 @@ def test_a_wrong_typed_leaf_is_refused_by_its_dotted_key_never_its_value(tmp_pat
 def test_the_probed_leaves_load_without_raising_then_break_the_reads_boot_makes(tmp_path, no_env):
     from app.config import Settings
     from app.core.plex import PlexClient, PlexConfig
-    (tmp_path / "motif.yaml").write_text("paths:\n  cookies_file: 5\n")
+    # v0.51.342: reversed for an unquoted number (it now hydrates to text); a list, a mapping and a null still break these reads
+    (tmp_path / "motif.yaml").write_text("paths:\n  cookies_file: [5]\n")
     with pytest.raises(TypeError):
         Settings(config_dir=tmp_path, data_dir=tmp_path / "data").cookies_file  # the boot's apply_pending_cookies argument
     (tmp_path / "motif.yaml").write_text("paths:\n  cookies_file: null\n")
     with pytest.raises(TypeError):
         Settings(config_dir=tmp_path, data_dir=tmp_path / "data").cookies_file
-    (tmp_path / "motif.yaml").write_text("plex:\n  url: 5\n")
+    (tmp_path / "motif.yaml").write_text("plex:\n  url:\n    host: 5\n")
     s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
     with pytest.raises(AttributeError):
         PlexClient(PlexConfig(url=s.plex_url, token="t", movie_section="1", tv_section="2"))
+    (tmp_path / "motif.yaml").write_text("paths:\n  cookies_file: 5\nplex:\n  url: 5\n")
+    s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
+    assert s.cookies_file == Path("5") and PlexClient(PlexConfig(url=s.plex_url, token="t", movie_section="1", tv_section="2"))
     (tmp_path / "motif.yaml").write_text("notifications:\n  apprise_urls: discord://x\n")
     assert Settings(config_dir=tmp_path, data_dir=tmp_path / "data").cfg.notifications.apprise_urls == "discord://x", \
         "hydrated as a string — every reader that iterates it walks characters"

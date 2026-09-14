@@ -356,6 +356,8 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
         c.execute(
             "UPDATE local_files SET file_size = ?, file_sha256 = ?, downloaded_at = ?, "
             "canonical_present = 1"
+            # v0.51.342: the kept size may not be these bytes' — make it a candidate so CHANGED re-reads it
+            + (", canonical_changed_candidate = 1" if rehash_failed else "")
             + (", loudness_i=?, loudness_tp=?, loudness_lra=?, loudness_measured_at=?, "
                "loudness_measured_sha256=?, norm_state=?, norm_gain_db=?, norm_target=?, "
                "norm_at=?, norm_orig_sha256=?, norm_orig_pcm_sha256=?, norm_plex_entry_uri = NULL"

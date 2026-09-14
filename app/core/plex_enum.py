@@ -1120,7 +1120,7 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     with get_conn(db_path) as conn:
         rows = conn.execute(
             "SELECT media_type, tmdb_id, section_id, edition_key, file_path, "
-            "       file_size, file_sha256, canonical_hash_miss_sig "
+            "       file_size, file_sha256, canonical_hash_miss_sig, canonical_present, downloaded_at "
             "FROM local_files WHERE file_path IS NOT NULL AND file_path != ''"
             + _scope_sql, _scope_params
         ).fetchall()
@@ -1213,7 +1213,7 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
         # v0.51.342: a present file at another size than recorded is a CHANGED candidate — the page re-stats only these.
         changed = 1 if present and (r["file_size"] or 0) > 0 and st_size != r["file_size"] else None
         row = (1 if present else 0, now, changed, miss_sig, r["media_type"], r["tmdb_id"],
-               r["section_id"], r["edition_key"])
+               r["section_id"], r["edition_key"], r["canonical_present"], r["downloaded_at"])
         (present_updates if present else missing_updates).append(row)
         if heal_size is not None:
             size_heals.append((heal_size, r["media_type"], r["tmdb_id"], r["section_id"],
@@ -1238,17 +1238,21 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
             len(missing_updates), skipped, cap, len(present_updates))
         missing_updates = []
     updates = present_updates + missing_updates
-    missing = len(missing_updates)
+    checked = missing = 0
     healed = 0
     if updates:
+        # v0.51.342: compare-and-set — a restore / download that stamped the row after its stat keeps its answer.
+        stamp = ("UPDATE local_files SET canonical_present = ?, "
+                 "    canonical_health_checked_at = ?, canonical_changed_candidate = ?, "
+                 "    canonical_hash_miss_sig = ? "
+                 "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
+                 "  AND edition_key = ? AND canonical_present IS ? AND downloaded_at IS ?")
         with get_conn(db_path) as conn, transaction(conn):
-            conn.executemany(
-                "UPDATE local_files SET canonical_present = ?, "
-                "    canonical_health_checked_at = ?, canonical_changed_candidate = ?, "
-                "    canonical_hash_miss_sig = ? "
-                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
-                "  AND edition_key = ?",
-                updates)
+            if present_updates:
+                checked = conn.executemany(stamp, present_updates).rowcount
+            if missing_updates:
+                missing = conn.executemany(stamp, missing_updates).rowcount
+            checked += missing
             if size_heals:
                 # v0.51.338: compare-and-set so a writer that re-stamped the row meanwhile wins.
                 healed = conn.executemany(
@@ -1259,7 +1263,10 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     if healed:
         log.info("verify_canonical_health: healed %d stale file_size stamp(s) on "
                  "canonicals whose bytes still match file_sha256", healed)
-    return {"checked": len(updates), "missing": missing, "skipped": skipped}
+    if checked < len(updates):
+        log.info("verify_canonical_health: %d row(s) were re-stamped by a restore or download after their stat "
+                 "— their stamp is kept and they are not counted", len(updates) - checked)
+    return {"checked": checked, "missing": missing, "skipped": skipped}
 
 
 def reconcile_placement_paths(db_path: Path, *,

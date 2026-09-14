@@ -2991,7 +2991,8 @@ def _migrate_v79_to_v80(conn: sqlite3.Connection) -> None:
     _add_column(conn, "local_files", "canonical_changed_candidate", "INTEGER")
     _add_column(conn, "local_files", "canonical_hash_miss_sig", "TEXT")
     # v0.51.342: a check time with no candidates behind it would read as an all-clear.
-    n = conn.execute("UPDATE local_files SET canonical_health_checked_at = NULL").rowcount
+    n = conn.execute("UPDATE local_files SET canonical_health_checked_at = NULL "
+                     "WHERE canonical_health_checked_at IS NOT NULL").rowcount  # v0.51.342: stamps, not every row
     log.info("v80: cleared %d check stamp(s) that predate size candidates — CANONICAL HEALTH reads "
              "'Not checked yet' until the next check", n)
 

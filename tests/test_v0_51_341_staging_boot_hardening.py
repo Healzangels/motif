@@ -90,16 +90,18 @@ def test_a_chmod_refusing_share_stages_a_bundle_then_a_snapshot(tmp_path, monkey
     assert any("could not copy the mode" in r.getMessage() for r in caplog.records), "the refusal is named, not silent"
 
 
-def test_the_staged_database_keeps_its_sources_mode_where_the_share_allows(tmp_path):
+def test_the_staged_database_is_owner_only_whatever_its_sources_mode(tmp_path):
     db, _ = _live(tmp_path)
     snap = _snapshot(tmp_path / "src")
-    snap.chmod(0o600)  # an uploaded snapshot's mkstemp file
+    snap.chmod(0o644)  # a listed snapshot VACUUM INTO wrote under UMASK=022
     old = os.umask(0o022)
     try:
         db_backup.stage_restore(db, snap)
     finally:
         os.umask(old)
-    assert stat.S_IMODE(db_backup.restore_pending_path(db).stat().st_mode) == 0o600, "copy2's mode still rides the pending"
+    # v0.51.342: reversed — copystat's mode rode the pending (0644), and the database holds the admin and token hashes
+    assert stat.S_IMODE(db_backup.restore_pending_path(db).stat().st_mode) == 0o600, "copystat must not re-widen it"
+    assert stat.S_IMODE(snap.stat().st_mode) == 0o644, "the source is left as it was"
 
 
 def test_a_chmod_refusing_share_still_swaps_the_config_in_at_boot(tmp_path, monkeypatch):

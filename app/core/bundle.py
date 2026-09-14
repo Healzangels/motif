@@ -43,6 +43,9 @@ MEMBER_MANIFEST = "manifest.json"
 # Every member a bundle can carry — the restore side (tag 2) extracts these
 # names only, never the archived paths.
 MEMBERS = (MEMBER_DB, MEMBER_CONFIG, MEMBER_COOKIES, MEMBER_MANIFEST)
+# v0.51.342: the spec's "size-capped", judged on each header before a byte is written — nothing capped a member
+# v0.51.342: ONE table — create_bundle writes no member over it, and _inspect_into judges every header by it
+_MEMBER_CAP = {MEMBER_DB: 4 << 30, MEMBER_MANIFEST: 64 << 20, MEMBER_CONFIG: 1 << 20, MEMBER_COOKIES: 16 << 20}
 CENSUS_TABLES = ("plex_items", "themes", "local_files", "placements",
                  "user_overrides", "saved_filters", "previous_urls")
 
@@ -121,8 +124,8 @@ def themes_census(db_path: Path) -> list[dict]:
 def build_manifest(*, created_at: str, motif_version: str, schema_version: int,
                    members: dict[str, dict], config_dir: Path,
                    themes_dir: Path | None, counts: dict[str, int],
-                   census: list[dict]) -> dict:
-    return {
+                   census: list[dict], left_out: dict[str, dict] | None = None) -> dict:
+    out = {
         "kind": "motif-bundle",
         "format": BUNDLE_FORMAT,
         "created_at": created_at,
@@ -134,6 +137,9 @@ def build_manifest(*, created_at: str, motif_version: str, schema_version: int,
         "counts": counts,
         "themes_census": census,
     }
+    if left_out:
+        out["left_out"] = left_out  # v0.51.342: the note a member over its cap leaves in place of the member
+    return out
 
 
 def create_bundle(db_path: Path, config_dir: Path, *,
@@ -160,26 +166,37 @@ def create_bundle(db_path: Path, config_dir: Path, *,
     try:
         db_member = tmp / MEMBER_DB
         db_backup.vacuum_into(db_path, db_member)
+        db_size = db_member.stat().st_size
+        if db_size > _MEMBER_CAP[MEMBER_DB]:  # v0.51.342: written without complaint, then every restore refused it
+            raise ValueError(f"the database snapshot is {db_size} bytes, over the {_MEMBER_CAP[MEMBER_DB]}-byte cap a "
+                             "bundle's database may be — no bundle was written; take a plain snapshot instead")
         members: dict[str, dict] = {
-            MEMBER_DB: {"size": db_member.stat().st_size, "sha256": _sha256_file(db_member)},
+            MEMBER_DB: {"size": db_size, "sha256": _sha256_file(db_member)},
         }
         parts: list[tuple[str, Path]] = [(MEMBER_DB, db_member)]
-        if config_file is not None and config_file.is_file():
-            members[MEMBER_CONFIG] = {"size": config_file.stat().st_size,
-                                      "sha256": _sha256_file(config_file),
-                                      "secrets": "as-is"}
-            parts.append((MEMBER_CONFIG, config_file))
-        if cookies_file is not None and cookies_file.is_file():
-            members[MEMBER_COOKIES] = {"size": cookies_file.stat().st_size,
-                                       "sha256": _sha256_file(cookies_file)}
-            parts.append((MEMBER_COOKIES, cookies_file))
+        left_out: dict[str, dict] = {}
+        for arcname, src in ((MEMBER_CONFIG, config_file), (MEMBER_COOKIES, cookies_file)):
+            if src is None or not src.is_file():
+                continue
+            size = src.stat().st_size
+            if size > _MEMBER_CAP[arcname]:  # v0.51.342: a 17 MiB cookies.txt made every restore refuse the bundle, KEEP MY CURRENT CONFIG too
+                left_out[arcname] = {"size": size, "cap": _MEMBER_CAP[arcname]}
+                continue
+            members[arcname] = {"size": size, "sha256": _sha256_file(src)}
+            if arcname == MEMBER_CONFIG:
+                members[arcname]["secrets"] = "as-is"
+            parts.append((arcname, src))
         manifest = build_manifest(
             created_at=created_at, motif_version=motif_version,
             schema_version=schema_version, members=members,
             config_dir=config_dir, themes_dir=themes_dir,
             counts=table_counts(db_member), census=themes_census(db_member),
+            left_out=left_out,
         )
         payload = json.dumps(manifest, indent=1, sort_keys=True).encode("utf-8")
+        if len(payload) > _MEMBER_CAP[MEMBER_MANIFEST]:  # v0.51.342: the census grows with the library, and inspect refuses a manifest over its cap
+            raise ValueError(f"the bundle manifest is {len(payload)} bytes, over the {_MEMBER_CAP[MEMBER_MANIFEST]}-byte "
+                             "cap a manifest may be — no bundle was written; take a plain snapshot instead")
         part = tmp / (name + ".part")
         # v0.51.339: dereference — a symlinked motif.yaml/cookies.txt was archived as a 0-byte SYMTYPE (its target path leaked) and every restore refused it.
         with tarfile.open(part, "w:gz", dereference=True) as tar:
@@ -195,6 +212,14 @@ def create_bundle(db_path: Path, config_dir: Path, *,
     st = dest.stat()
     log.info("backup bundle written: %s (%d bytes, %d census rows)",
              name, st.st_size, len(manifest["themes_census"]))
+    if left_out:
+        from .events import log_event
+        said = "; ".join(f"{n} ({m['size']} bytes, over its {m['cap']}-byte cap)" for n, m in left_out.items())
+        msg = (f"Backup bundle {name} left out {said} — a restore from it leaves that file as it is; "
+               "shrink it, then take a new bundle")
+        log.warning("backup bundle: %s", msg)  # v0.51.342: the scheduled job's other misses are WARNING events too
+        log_event(db_path, level="WARNING", component="backup", message=msg,  # v0.51.342: no member name as a key — the scrubber redacts a "cookies.txt" key's value
+                  detail={"name": name, "left_out": [{"member": n, **m} for n, m in left_out.items()]})
     return db_backup.BackupFile(name=name, size=st.st_size, created_at=created_at,
                                 kind="bundle")
 
@@ -247,6 +272,7 @@ class BundleCheck:
     config_bytes: bytes | None = _field(default=None, repr=False)
     cookies_bytes: bytes | None = _field(default=None, repr=False)
     db_source: db_backup.VerifiedSource | None = _field(default=None, repr=False)
+    oversize: dict[str, int] = _field(default_factory=dict)  # v0.51.342: config/cookies over their cap — hashed, never held
 
 
 def _parse_error_summary(e: Exception) -> str:
@@ -274,31 +300,37 @@ def flatten_config(text: str | bytes, *, side: str) -> tuple[dict[str, object], 
     if err:  # v0.51.341: "plex: 5" hydrated without raising, then the boot that swapped it in died reading cfg.plex.url
         log.warning("bundle restore: the %s motif.yaml does not parse (%s) — no config diff", side, err)
         return {}, err
+    import dataclasses
+    from . import config_file as cf
     flat: dict[str, object] = {}
 
-    def walk(node, path):
+    def walk(node, path, declared):
         if isinstance(node, dict):
             if not node:
                 if path:          # an empty section is a leaf; an empty root is nothing
                     flat[path] = {}
                 return
+            names = {f.name for f in dataclasses.fields(declared)} if dataclasses.is_dataclass(declared) else set()
             for k, v in node.items():
-                walk(v, f"{path}.{k}" if path else str(k))
+                walk(v, f"{path}.{k}" if path else str(k), getattr(declared, k) if k in names else None)
         else:
-            flat[path] = node
-    walk(raw, "")
+            # v0.51.342: the value the loader hydrates — a live `movie_section: 1` and a bundle's '1' are one setting
+            flat[path] = node if declared is None else cf._coerce_leaf(declared, node)
+    walk(raw, "", cf.MotifConfig())
     return flat, None
 
 
-_LEAF_KINDS = ((bool, (bool,), "true or false"), (int, (int,), "an integer"), (float, (int, float), "a number"),
-               (str, (str,), "a string"), (list, (list,), "a list"), (dict, (dict,), "a mapping"))
+_LEAF_KINDS = ((bool, "true or false"), (int, "an integer"), (float, "a number"),
+               (str, "a string"), (list, "a list"), (dict, "a mapping"))
 
 
 def _leaf_type_error(default, value) -> str | None:
-    """Why `value` cannot stand in for a leaf whose dataclass default is `default` — by YAML type, never the value — or None."""
-    for kind, accepted, word in _LEAF_KINDS:  # bool first: a bool is an int to isinstance
+    """Why `value` cannot stand in for a leaf whose dataclass default is `default` — by the type the loader hydrates it to, never the value — or None."""
+    from . import config_file as cf
+    loaded = cf._coerce_leaf(default, value)  # v0.51.342: the loader's own coercion — stricter than it, the rule refused a `movie_section: 1` that loaded and ran
+    for kind, word in _LEAF_KINDS:  # bool first: a bool is an int to isinstance
         if isinstance(default, kind):
-            if isinstance(value, accepted) and (kind is bool or not isinstance(value, bool)):
+            if isinstance(loaded, kind) and (kind is bool or not isinstance(loaded, bool)):
                 return None
             return f"must be {word}, not {type(value).__name__}"
     return None  # a None default takes null or anything; a type this rule does not know is the loader's
@@ -377,8 +409,6 @@ def config_diff(live_text: str, bundle_text: str) -> list[dict]:
 
 
 _STREAM_BUF = 1 << 20
-# v0.51.342: the spec's "size-capped", judged on each header before a byte is written — nothing capped a member
-_MEMBER_CAP = {MEMBER_DB: 4 << 30, MEMBER_MANIFEST: 64 << 20, MEMBER_CONFIG: 1 << 20, MEMBER_COOKIES: 16 << 20}
 # v0.51.342: one gz.read past end-of-archive scans empty gzip members / zero padding unbounded (seconds under STAGING_LOCK); both sit above a 1 MiB fetch + gzip's 128 KiB readahead
 _TAIL_RAW_BUDGET = 2 << 20
 _TAIL_INFLATE_BUDGET = 4 << 20
@@ -431,6 +461,45 @@ class _HashingReader:
         return data
 
 
+class _DiskRefused(Exception):
+    """v0.51.342: an OSError writing the extracted database — the disk's, kept apart from the archive's read faults."""
+    def __init__(self, err: OSError):
+        super().__init__(str(err))
+        self.err = err
+
+
+class ExtractionWriteError(Exception):
+    """The disk refused the extraction of a bundle's database — never a verdict on the bundle; `out_of_space` for ENOSPC / EDQUOT."""
+    def __init__(self, message: str, *, out_of_space: bool):
+        super().__init__(message)
+        self.out_of_space = out_of_space
+
+
+def _extract_database(src, dest: Path) -> None:
+    try:
+        # v0.51.342: born owner-only — the database holds the admin bcrypt hash and the session / API-token hashes, and took the umask's 0644 / 0664
+        fd = _os.open(dest, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
+    except OSError as e:
+        raise _DiskRefused(e) from e
+    try:
+        while chunk := src.read(_STREAM_BUF):  # v0.51.342: a fault reading the archive raises as itself — still a refusal
+            view = memoryview(chunk)
+            while view:
+                try:
+                    view = view[_os.write(fd, view):]
+                except OSError as e:
+                    raise _DiskRefused(e) from e
+    finally:
+        try:
+            _os.close(fd)
+        except OSError as e:
+            raise _DiskRefused(e) from e
+
+
+def _over_cap(name: str, size: int) -> str:
+    return f"{name} is {size} bytes, over its {_MEMBER_CAP[name]}-byte cap"
+
+
 def _member_refusal(m: tarfile.TarInfo, seen: dict) -> str | None:
     """Why this header is refused — judged as the stream meets it, before any of its bytes are read — or None."""
     if m.name not in MEMBERS:
@@ -441,16 +510,19 @@ def _member_refusal(m: tarfile.TarInfo, seen: dict) -> str | None:
         return f"not a motif bundle: {m.name} is not a plain file"
     if m.sparse is not None or any(k.startswith("GNU.sparse.") for k in m.pax_headers):  # v0.51.342: a pax sparse member rides a REGTYPE header, and its realsize replaces the size capped below
         return f"not a motif bundle: {m.name} is not a plain file"
-    if not 0 <= m.size <= _MEMBER_CAP[m.name]:
-        return f"not a motif bundle: {m.name} is {m.size} bytes, over its {_MEMBER_CAP[m.name]}-byte cap"
+    # v0.51.342: a config/cookies over its own cap is hashed, not held, and refused only by a staging that writes it — never read past a database's cap
+    hard = _MEMBER_CAP[m.name] if m.name in (MEMBER_DB, MEMBER_MANIFEST) else _MEMBER_CAP[MEMBER_DB]
+    if not 0 <= m.size <= hard:
+        return f"not a motif bundle: {m.name} is {m.size} bytes, over its {hard}-byte cap"
     return None
 
 
-def _inspect_into(path: Path, workdir: Path) -> BundleCheck:
-    """inspect_bundle's one pass, into an empty directory the caller owns and removes. Never raises; an ok check's db_source lives only as long as workdir."""
+def _inspect_into(path: Path, workdir: Path, *, beside: str = "the bundle") -> BundleCheck:
+    """inspect_bundle's one pass, into an empty directory the caller owns and removes. Raises only ExtractionWriteError; an ok check's db_source lives only as long as workdir."""
     shas: dict[str, str] = {}
     sizes: dict[str, int] = {}
     small: dict[str, bytes] = {}
+    oversize: dict[str, int] = {}
     try:
         # v0.51.342: ONE forward pass — getmembers() then extractfile() inflated the archive twice per open, and a flow opened it 2-5 times
         with open(path, "rb") as raw, gzip.GzipFile(fileobj=(guard := _TailGuard(raw)), mode="rb") as gz:
@@ -464,8 +536,11 @@ def _inspect_into(path: Path, workdir: Path) -> BundleCheck:
                     h = hashlib.sha256()
                     src = _HashingReader(tar.extractfile(m), h)
                     if m.name == MEMBER_DB:
-                        with open(workdir / MEMBER_DB, "xb") as out:
-                            shutil.copyfileobj(src, out, _STREAM_BUF)
+                        _extract_database(src, workdir / MEMBER_DB)
+                    elif m.size > _MEMBER_CAP[m.name]:
+                        while src.read(_STREAM_BUF):  # v0.51.342: the whole-bundle refusal left even KEEP MY CURRENT CONFIG no way to its database
+                            pass
+                        oversize[m.name] = m.size
                     else:
                         small[m.name] = src.read()  # capped above; never on disk before it is staged
                     shas[m.name], sizes[m.name] = h.hexdigest(), m.size
@@ -474,6 +549,13 @@ def _inspect_into(path: Path, workdir: Path) -> BundleCheck:
                 drained += len(chunk)
                 if drained > _TAIL_INFLATE_BUDGET:
                     return BundleCheck(False, f"not a motif bundle: over {_TAIL_INFLATE_BUDGET} bytes of data after the archive's end")
+    except _DiskRefused as refused:  # v0.51.342: was caught below — a 422 "not a motif bundle: [Errno 28] No space left on device" for a good bundle
+        e = refused.err
+        log.error("bundle check: could not write the extracted database into %s (%s) — the disk refused it; %s was not judged",
+                  workdir, e, path.name)
+        raise ExtractionWriteError(f"could not write the extraction beside {beside} ({e.strerror or type(e).__name__}) — "
+                                   f"{path.name} was not judged; free space or fix permissions there, then try again",
+                                   out_of_space=e.errno in (errno.ENOSPC, errno.EDQUOT)) from e
     except (tarfile.TarError, OSError, ValueError, EOFError, zlib.error, IndexError, RecursionError, _BundleTail) as e:  # v0.51.342: zlib.error — a deflate fault past the first 1 MiB is read through extractfile, where tarfile does not wrap it; IndexError (a GNU sparse 'S' extended header at end of stream) + RecursionError (a ~400-deep chain of 'g'/'x'/'L' headers) crash tarfile's parser before any gate; _BundleTail bounds the archive's tail
         msg = str(e)  # v0.51.339: refusals carry the prefix once — never "not a motif bundle: not a motif bundle:"
         log.warning("bundle check: %s refused while reading the archive (%s: %s)", path.name, type(e).__name__, msg)
@@ -508,10 +590,14 @@ def _inspect_into(path: Path, workdir: Path) -> BundleCheck:
     dbc = db_backup.inspect_restore_source(workdir / MEMBER_DB)
     if not dbc.ok:
         return BundleCheck(False, dbc.error, manifest=manifest, db=dbc)
+    if oversize:
+        log.warning("bundle check: %s carries %s — only its database can be restored (KEEP MY CURRENT CONFIG)",
+                    path.name, "; ".join(_over_cap(n, s) for n, s in oversize.items()))
     return BundleCheck(True, None, manifest=manifest, db=dbc,
                        has_config=MEMBER_CONFIG in shas, has_cookies=MEMBER_COOKIES in shas,
                        config_bytes=small.get(MEMBER_CONFIG), cookies_bytes=small.get(MEMBER_COOKIES),
-                       db_source=db_backup.VerifiedSource(workdir / MEMBER_DB, sizes[MEMBER_DB], shas[MEMBER_DB], dbc))
+                       db_source=db_backup.VerifiedSource(workdir / MEMBER_DB, sizes[MEMBER_DB], shas[MEMBER_DB], dbc),
+                       oversize=oversize)
 
 
 def _remove_tree(p: Path) -> None:
@@ -524,7 +610,8 @@ def inspect_bundle(path: Path) -> BundleCheck:
     """Validate a bundle before anything is staged: a gzip tar whose members
     are only the known names, a manifest of a format this build reads, every
     member's sha256 matching the manifest, and a DB member that passes the
-    snapshot restore checks. Never raises."""
+    snapshot restore checks. Raises only ExtractionWriteError (the disk
+    refused the extraction)."""
     tmp = Path(tempfile.mkdtemp(prefix=".bundle-inspect-", dir=path.parent))
     try:
         return _replace(_inspect_into(path, tmp), db_source=None)  # v0.51.342: the extraction dies with tmp — never hand out a token to a deleted file
@@ -551,7 +638,10 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
     if check.has_config:
         live, parse_error["live"] = flatten_config(live_bytes, side="live")
         bundle_bytes = check.config_bytes or b""  # v0.51.342: from the one pass — bundle_config_bytes re-opened the archive and inflated it twice for a few hundred bytes
-        other, parse_error["bundle"] = flatten_config(bundle_bytes, side="bundle")
+        if MEMBER_CONFIG in check.oversize:  # v0.51.342: never read in — its database alone restores, and the page keeps the config
+            other, parse_error["bundle"] = {}, _over_cap(MEMBER_CONFIG, check.oversize[MEMBER_CONFIG])
+        else:
+            other, parse_error["bundle"] = flatten_config(bundle_bytes, side="bundle")
         if not (parse_error["live"] or parse_error["bundle"]):
             diff = _diff_rows(live, other)
         # v0.51.341: boot reads settings.cookies_file from the config this bundle swaps in — the live path only when it carries none
@@ -570,7 +660,9 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
         "config_in_bundle": check.has_config,
         "config_diff": diff,
         "config_parse_error": parse_error,
-        "cookies": "in bundle" if check.has_cookies else "not in bundle",
+        "cookies": ("not in bundle" if not check.has_cookies else "in bundle" if MEMBER_COOKIES not in check.oversize
+                    else f"in bundle, but {_over_cap(MEMBER_COOKIES, check.oversize[MEMBER_COOKIES])} — "
+                         "restore with KEEP MY CURRENT CONFIG"),  # v0.51.342: staged, it is refused in these words
         "cookies_target": cookies_at,  # v0.51.341: restored cookies land on the boot's settings.cookies_file
     }
 
@@ -623,6 +715,12 @@ def _stage_file(data: bytes, pending: Path) -> None:
         raise
 
 
+def _cause(err: BaseException) -> str:
+    # v0.51.342: a StagingError reaches the browser — str(err) names absolute config_dir paths, which stay in log.error
+    words = getattr(err, "strerror", None)
+    return f"{type(err).__name__}: {words}" if words else type(err).__name__
+
+
 def _named_failures(failed: dict[str, str]) -> str:
     return "; ".join(f"{name}: {err}" for name, err in failed.items())
 
@@ -668,7 +766,7 @@ def _unstage_after_swap(db_path: Path, config_dir: Path, staged: list[str], memb
             pass
         except OSError as e:
             log.error("bundle restore: could not unstage %s (%s) — it still applies at restart", paths[word].name, e)
-            stays[paths[word].name] = str(e)
+            stays[paths[word].name] = _cause(e)
     earlier = []
     if dropped:
         earlier.append(f"{' and '.join(dropped)} {'was' if len(dropped) == 1 else 'were'} already dropped")
@@ -677,10 +775,10 @@ def _unstage_after_swap(db_path: Path, config_dir: Path, staged: list[str], memb
     said = f"; from the earlier restore, {', and '.join(earlier)}" if earlier else ""
     if stays:
         return StagingError(
-            f"not staged: {member} could not be staged ({err}), and {', '.join(stays)} could not be removed "
+            f"not staged: {member} could not be staged ({_cause(err)}), and {', '.join(stays)} could not be removed "
             f"({_named_failures(stays)}) — {'it applies' if len(stays) == 1 else 'they apply'} at restart{said}; "
             f"remove {', '.join(stays)} by hand, then stage again")
-    return StagingError(f"not staged: {member} could not be staged ({err}) — nothing from this bundle is staged{said}; "
+    return StagingError(f"not staged: {member} could not be staged ({_cause(err)}) — nothing from this bundle is staged{said}; "
                         "stage again once the cause is fixed")
 
 
@@ -691,13 +789,17 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
     <name>.restore-pending in config_dir. Raises ValueError when the bundle
     fails inspection, StagingError when an earlier staging's config cannot
     be dropped or a member fails after the database swap (this bundle is
-    then unstaged whole). Nothing live changes until the next boot."""
+    then unstaged whole), ExtractionWriteError when the disk refuses the
+    extraction. Nothing live changes until the next boot."""
     with STAGING_LOCK:
         tmp = Path(tempfile.mkdtemp(prefix=".bundle-stage-", dir=db_path.parent))  # v0.51.342: beside the pending file, so the checked database MOVES into place
         try:
-            check = _inspect_into(bundle_path, tmp)  # v0.51.342: one pass + one integrity_check — was inspect_bundle, a second extraction, then stage_restore's own re-check
+            check = _inspect_into(bundle_path, tmp, beside=db_path.name)  # v0.51.342: one pass + one integrity_check — was inspect_bundle, a second extraction, then stage_restore's own re-check
             if not check.ok:
                 raise ValueError(check.error or "invalid bundle")
+            if not keep_config and check.oversize:  # v0.51.342: only a staging that writes the member refuses it — KEEP MY CURRENT CONFIG still restores the database
+                raise ValueError(f"the bundle's {'; '.join(_over_cap(n, s) for n, s in check.oversize.items())} — "
+                                 "restore with KEEP MY CURRENT CONFIG to restore its database")
             if not keep_config and check.has_config:
                 _, cfg_err = flatten_config(check.config_bytes, side="bundle")
                 if cfg_err:  # v0.51.339: staged, it swaps in at boot and ConfigFile.load() raises — the next boot would crash
@@ -762,7 +864,7 @@ def clear_pending_config(config_dir: Path) -> tuple[list[str], dict[str, str]]:
             p.unlink()
         except OSError as e:  # v0.51.341: raised, it 500'd a staging whose new database was already pending, and crashed boot before logging
             log.error("staged config restore: could not remove %s (%s) — it is still staged", name, e)
-            failed[name] = str(e)
+            failed[name] = _cause(e)  # v0.51.342: these words reach the browser
             continue
         removed.append(name)
     if removed:
@@ -788,7 +890,7 @@ def cancel_pending(db_path: Path, config_dir: Path) -> bool:
         except OSError as e:
             log.error("cancel_pending: the staged database could not be removed (%s)", e)
             raise StagingError(
-                f"not cancelled: the staged database could not be removed ({e}) — it still applies at restart, "
+                f"not cancelled: the staged database could not be removed ({_cause(e)}) — it still applies at restart, "
                 f"with the live config; remove {db_backup.restore_pending_path(db_path).name} beside motif.db, "
                 "then cancel again") from e
         return bool(removed) or db_cancelled

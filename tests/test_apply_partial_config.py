@@ -183,7 +183,7 @@ def test_float_field_refuses_a_non_number_naming_the_key_not_the_value(cfg, sent
 @pytest.mark.parametrize("loaded", [-16, "-16"], ids=["loaded-int", "loaded-str"])
 @pytest.mark.parametrize("sent, stored", [(-18.5, -18.5), (-16.5, -16.5), ("-16.5", -16.5), (-16, -16.0)])
 def test_float_field_saves_a_float_whatever_type_the_yaml_loaded(cfg, loaded, sent, stored):
-    # v0.51.342: _hydrate_dataclass keeps YAML's type, so a hand-edited `target_lufs: -16` is an int here.
+    # v0.51.342: a cfg built in code can still hold an int or a string where a float is declared.
     cfg.loudness.target_lufs = loaded
     _apply_partial_config(cfg, {"loudness": {"target_lufs": sent}})
     assert cfg.loudness.target_lufs == stored

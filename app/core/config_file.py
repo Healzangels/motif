@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import os
 import re
 import tempfile
@@ -1200,7 +1201,31 @@ def _hydrate_dataclass(target: Any, src: dict) -> None:
             merged.update(v)
             setattr(target, f.name, merged)
         else:
-            setattr(target, f.name, v)
+            # v0.51.342: a lossless hand-edited scalar takes its declared type — the bundle's leaf rule judges this same result
+            setattr(target, f.name, v if f.default is dataclasses.MISSING else _coerce_leaf(f.default, v))
+
+
+def _coerce_leaf(default: Any, value: Any) -> Any:
+    """`value` in the type of the scalar leaf whose declared default is `default`, where that spelling loses nothing; else `value` unchanged."""
+    if isinstance(default, bool) or isinstance(value, bool):
+        return value  # v0.51.342: bool leaves stay strict, and true/false never stands in for a number or a string
+    if isinstance(default, str):
+        if isinstance(value, (int, float)):
+            return str(value)  # v0.51.342: an unquoted `movie_section: 1` — every reader interpolates it
+        # v0.51.342: only where "" is the declared default (token, url, API keys, themes_dir) — every reader treats it as unset; a null cookies_file is Path("."), a directory
+        return "" if value is None and default == "" else value
+    if isinstance(default, int):
+        return int(value) if isinstance(value, float) and value.is_integer() else value
+    if isinstance(default, float):
+        if isinstance(value, int):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                num = float(value)
+            except ValueError:
+                return value
+            return num if math.isfinite(num) else value  # v0.51.342: a quoted '-16' made validate() and loudness_target_lufs raise
+    return value
 
 
 def _serialize(cfg: MotifConfig, *, updated_by: str) -> str:

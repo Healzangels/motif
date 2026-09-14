@@ -344,12 +344,18 @@ def stage_restore(db_path: Path, source_path: Path, *, before_swap=None,
     tmp = pending.with_name(pending.name + ".tmp")
     try:
         if verified is None:
+            os.close(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))  # v0.51.342: born owner-only — copyfile keeps an existing file's mode
             shutil.copyfile(source_path, tmp)  # v0.51.341: copy2's copystat raised PermissionError on a share that refuses chmod — the staging 500'd
             try:
                 shutil.copystat(source_path, tmp)  # v0.51.341: copy2's mode + times whenever the share allows them
             except OSError as e:
                 log.warning("restore staging: could not copy the mode/times of %s onto the pending file (%s) — "
                             "it keeps the share's defaults", source_path.name, e)
+            try:
+                os.chmod(tmp, 0o600)  # v0.51.342: after copystat, which re-widened it — the database holds the admin and token hashes
+            except OSError as e:
+                log.warning("restore staging: could not make the pending database owner-only (%s) — it keeps the "
+                            "mode it was created with", e)
         else:
             os.replace(source_path, tmp)  # v0.51.342: the checked file itself — a second integrity_check plus a full copy was half of an 11 s staging
             if os.lstat(tmp).st_size != verified.size or _sha256_of(tmp) != verified.sha256:  # v0.51.342: lstat — a link swapped in never carries the file's size

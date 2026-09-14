@@ -269,12 +269,12 @@ def test_the_walk_finds_a_float_leaf_to_seed():
 
 
 def _seeded_api(root: Path, mp, section: str, leaf: str, seeded):
-    # v0.51.342: _hydrate_dataclass keeps YAML's own type, so `target_lufs: -16` loads as an int.
     root.mkdir(parents=True, exist_ok=True)
     (root / "motif.yaml").write_text(yaml.safe_dump({section: {leaf: seeded}}))
     client, settings = _api(root, mp)
     loaded = getattr(getattr(settings.cfg, section), leaf)
-    assert loaded == seeded and type(loaded) is type(seeded), f"the seed loaded as {loaded!r}, not the hand-edited {seeded!r}"
+    # v0.51.342: reversed — _hydrate_dataclass now coerces a hand-edited `target_lufs: -16` or '-16' to the declared float
+    assert loaded == float(seeded) and type(loaded) is float, f"the hand-edited {seeded!r} loaded as {loaded!r}"
     return client, settings
 
 

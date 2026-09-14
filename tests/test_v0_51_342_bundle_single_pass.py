@@ -290,8 +290,9 @@ def test_a_legitimate_layout_still_restores(tmp_path, how):
     assert bundle.stage_bundle_restore(db, cd, ok, keep_config=False).staged == ["database", "config", "cookies"]
 
 
-@pytest.mark.parametrize("member", bundle.MEMBERS)
-def test_a_member_over_its_cap_is_refused_before_its_bytes_are_written(tmp_path, monkeypatch, member):
+# v0.51.342: narrowed — an over-cap motif.yaml / cookies.txt is hashed and refused only where it would stage (test_v0_51_342_config_bundle_integration)
+@pytest.mark.parametrize("member", [bundle.MEMBER_DB, bundle.MEMBER_MANIFEST])
+def test_a_database_or_manifest_over_its_cap_is_refused_before_its_bytes_are_written(tmp_path, monkeypatch, member):
     b = _bundle(tmp_path / "mk")
     monkeypatch.setattr(bundle, "_MEMBER_CAP", {**bundle._MEMBER_CAP, member: 8})
     wd = tmp_path / "wd"
@@ -532,11 +533,19 @@ def test_config_and_cookies_pendings_are_born_0600_even_where_chmod_is_refused(t
     old = os.umask(0o002)
     try:
         assert bundle.stage_bundle_restore(db, cd, b, keep_config=False).staged == ["database", "config", "cookies"]
+        for pending in (bundle.CONFIG_PENDING, bundle.COOKIES_PENDING):
+            assert stat.S_IMODE((cd / pending).stat().st_mode) == 0o600, pending
+        assert b"BUNDLE-TOKEN" in (cd / bundle.CONFIG_PENDING).read_bytes()
+        # v0.51.342: the staged database too, on both paths — it holds the admin bcrypt hash and the session / API-token hashes
+        assert stat.S_IMODE(db_backup.restore_pending_path(db).stat().st_mode) == 0o600, "the bundle path's extracted database"
+        fresh, snap = tmp_path / "fresh.db", tmp_path / "snap.db"
+        init_db(fresh)
+        db_backup.vacuum_into(fresh, snap)  # born 0664 under this umask
+        assert bundle.stage_snapshot_restore(db, cd, snap).ok
     finally:
         os.umask(old)
-    for pending in (bundle.CONFIG_PENDING, bundle.COOKIES_PENDING):
-        assert stat.S_IMODE((cd / pending).stat().st_mode) == 0o600, pending
-    assert b"BUNDLE-TOKEN" in (cd / bundle.CONFIG_PENDING).read_bytes()
+    assert stat.S_IMODE(db_backup.restore_pending_path(db).stat().st_mode) == 0o600, "the snapshot path's staged copy"
+    assert bundle.pending_members(db, cd) == ["database"]
 
 
 def test_a_config_staging_that_fails_leaves_no_tmp_behind(tmp_path, monkeypatch):

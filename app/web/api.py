@@ -269,12 +269,12 @@ def _apply_partial_config(cfg, body: dict) -> None:
                 if not math.isfinite(num):
                     raise ValueError(f"{section_name}.{k} must be a finite number")
                 setattr(section, k, num)
-            elif isinstance(current, bool):
+            elif isinstance(getattr(declared, k), bool):  # v0.51.342: declared, like the float branch — a hand-edited `enabled: 1` fell to int() and 400'd every save
                 if isinstance(v, str):
                     setattr(section, k, v.strip().lower() in ("1", "true", "yes", "on"))
                 else:
                     setattr(section, k, bool(v))
-            elif isinstance(current, int) and not isinstance(current, bool):
+            elif isinstance(getattr(declared, k), int):  # v0.51.342: declared — a hand-edited `rate_per_hour: '30'` was re-saved as a string
                 setattr(section, k, int(v))
             elif isinstance(current, list):
                 if not isinstance(v, list):
@@ -27288,6 +27288,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                                  cookies_target=settings.cookies_file)  # v0.51.341: the live path; a bundle config names its own
                 except ValueError as e:
                     raise HTTPException(status_code=422, detail=str(e))
+                except bundle_mod.ExtractionWriteError as e:  # v0.51.342: the disk's fault, never a 422 "not a motif bundle"
+                    raise HTTPException(status_code=507 if e.out_of_space else 500, detail=str(e))
                 return {"ok": True, "staged": False, "preview": pv}
             keep = bool((body or {}).get("keep_config"))
             try:
@@ -27296,6 +27298,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     settings.config_dir, src, keep_config=keep)
             except ValueError as e:
                 raise HTTPException(status_code=422, detail=str(e))
+            except bundle_mod.ExtractionWriteError as e:  # v0.51.342: ENOSPC writing the extraction beside motif.db
+                raise HTTPException(status_code=507 if e.out_of_space else 500, detail=str(e))
             except bundle_mod.StagingError as e:  # v0.51.341: an earlier staging's config could not be dropped — nothing new staged, and the answer says why
                 raise HTTPException(status_code=500, detail=str(e))
             log_event(
@@ -27403,6 +27407,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 pv = await run_in_threadpool(_import_bundle)
             except ValueError as e:
                 raise HTTPException(status_code=422, detail=str(e))
+            except bundle_mod.ExtractionWriteError as e:  # v0.51.342: the disk's fault, never a 422 "not a motif bundle"
+                raise HTTPException(status_code=507 if e.out_of_space else 500, detail=str(e))
             except FileExistsError as e:
                 raise HTTPException(status_code=409,
                                     detail=f"a different bundle already exists as {e} — delete it first")

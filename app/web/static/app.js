@@ -7748,6 +7748,8 @@
     let restoreTimer = null;
     let restoreGen = 0;
     let lastRestorable = 0;
+    // v0.51.342: a cancel the server never received — shown until a poll reports cancelling or the run ends.
+    let cancelNote = null;
     let checking = false;
     let repairing = false;
     const chgBlock = document.getElementById('canon-changed-block');
@@ -7931,9 +7933,13 @@
       restoreTimer = null;
       let st;
       try { st = await api('GET', '/api/admin/canonical-health/restore-from-plex/status'); }
-      catch (_) {
+      catch (e) {
         // v0.51.342: no ceiling (class 10) — a blip mid-run re-arms slower instead of dropping the run.
-        if (gen === restoreGen && restoreRunning) restoreTimer = setTimeout(() => pollRestore(gen), 5000);
+        if (gen === restoreGen && restoreRunning) {
+          restoreTimer = setTimeout(() => pollRestore(gen), 5000);
+        } else if (!restoreRunning) {
+          console.error('canonical health restore status failed:', e);  // v0.51.342: nothing retries an idle page's poll
+        }
         return;
       }
       if (!st || gen !== restoreGen) return;
@@ -7952,11 +7958,17 @@
             text += left < 60 ? ' · under a minute left' : ` · about ${fmt(Math.round(left / 60))} min left`;
           }
         }
-        restorePlexStatus.textContent = text + (st.cancelling ? ' — cancelling…' : '');
-        restorePlexStatus.className = 'form-status';
+        if (cancelNote && !st.cancelling) {
+          restorePlexStatus.textContent = cancelNote;
+          restorePlexStatus.className = 'form-status form-status-fail';
+        } else {
+          restorePlexStatus.textContent = text + (st.cancelling ? ' — cancelling…' : '');
+          restorePlexStatus.className = 'form-status';
+        }
         restoreTimer = setTimeout(() => pollRestore(gen), 1500);
         return;
       }
+      cancelNote = null;
       const watched = restoreWatching;
       setRestoreBusy(false);
       const lastRun = watched ? '' : `last run ${fmtRelativePast(st.finished_at) || st.finished_at}: `;
@@ -8056,7 +8068,16 @@
     }
     if (restoreCancelBtn) {
       restoreCancelBtn.addEventListener('click', async () => {
-        try { await api('POST', '/api/admin/canonical-health/restore-from-plex/cancel'); } catch (_) { /* the status poll reports */ }
+        try {
+          await api('POST', '/api/admin/canonical-health/restore-from-plex/cancel');
+        } catch (e) {
+          // v0.51.342: the server never saw this cancel, so no poll can report it — say so and leave // CANCEL live.
+          console.error('canonical health restore cancel failed:', e);
+          cancelNote = `✗ cancel not sent — ${gatewayTimeoutNote(e) || e.detail || e.message} — press // CANCEL again`;
+          restorePlexStatus.textContent = cancelNote;
+          restorePlexStatus.className = 'form-status form-status-fail';
+          return;
+        }
         restoreCancelBtn.disabled = true;
         setTimeout(() => { restoreCancelBtn.disabled = false; }, 3000);
       });

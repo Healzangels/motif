@@ -337,9 +337,16 @@ def main() -> int:
         # v0.51.342: a restored database's check results describe the disk when that backup was taken — a false ✓.
         try:
             n = forget_canonical_checks(settings.db_path)
-            log.warning("Canonical health: set aside %d check result(s) the restored database carried — they "
-                        "describe the disk when that backup was taken; CANONICAL HEALTH reads 'Not checked yet' "
-                        "until the next check", n)
+            if n:
+                log.warning("Canonical health: set aside %d check result(s) the restored database carried — they "
+                            "describe the disk when that backup was taken; CANONICAL HEALTH reads 'Not checked yet' "
+                            "until the next check", n)
+            elif (_restore.get("schema_version") or 0) < 80:
+                # v0.51.342: the v80 migration already cleared and counted these — "set aside 0" contradicted it.
+                log.info("Canonical health: the v80 migration already set aside the check results the restored "
+                         "database (schema v%s) carried — see its line above", _restore.get("schema_version"))
+            else:
+                log.info("Canonical health: the restored database carried no check results to set aside")
         except sqlite3.Error as e:
             log.error("Canonical health: could not clear the restored database's check results (%s) — CHANGED "
                       "shows the backup's results until the next check", e)

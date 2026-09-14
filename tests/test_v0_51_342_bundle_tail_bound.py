@@ -29,6 +29,8 @@ from tests.test_v0_51_339_bundle_staging_boot import NOW, _bundle, _live
 
 MiB = 1 << 20
 NAME = "motif-bundle-20260912-040000.tar.gz"
+# v0.51.342: a refusal parses one 2 MiB raw allowance of 20-byte empty gzip members — 2.4-3.4 s measured on an M1 Pro; 8 s left a slow CI runner a false red
+TAIL_BOUND = 30
 
 
 class _StillReading(BaseException):
@@ -81,7 +83,7 @@ def test_a_measured_tail_shape_is_refused_fast_by_the_raw_budget(tmp_path, how):
     b = _bundle(tmp_path / "mk")
     db, cd = _live(tmp_path)
     bad = _place(cd, NAME, _shapes(b)[how])
-    with _within(8):  # each budgeted refusal is well under a second; an unbounded read is seconds-to-minutes
+    with _within(TAIL_BOUND):  # a hang guard only — each refusal costs about 3 s; the refusal reasons below are the signal
         c = bundle.inspect_bundle(bad)
     # v0.51.342: removing _TAIL_RAW_BUDGET makes each of these a VALID gzip stream again → ok flips True (the mutation signal)
     assert c.ok is False and c.error.startswith("not a motif bundle:") and c.error.count("not a motif bundle:") == 1, c.error
@@ -93,7 +95,7 @@ def test_zeros_inflated_past_end_of_archive_are_refused_by_the_inflate_budget(tm
     db, cd = _live(tmp_path)
     over = bundle._TAIL_INFLATE_BUDGET + 4 * MiB  # compresses to a few KB of raw, so only the inflate budget can catch it
     bad = _place(cd, NAME, gzip.compress(_tar_bytes(b) + bytes(over)))
-    with _within(8):
+    with _within(TAIL_BOUND):
         c = bundle.inspect_bundle(bad)
     # v0.51.342: removing _TAIL_INFLATE_BUDGET makes this a VALID gzip stream again → ok flips True (the mutation signal)
     assert c.ok is False and c.error.startswith("not a motif bundle:") and c.error.count("not a motif bundle:") == 1, c.error
@@ -104,7 +106,7 @@ def test_a_refused_tail_shape_stages_nothing_and_frees_the_lock(tmp_path):
     b = _bundle(tmp_path / "mk")
     db, cd = _live(tmp_path)
     bad = _place(cd, NAME, _shapes(b)["400k empty gzip members"])
-    with _within(8):
+    with _within(TAIL_BOUND):
         with pytest.raises(ValueError):
             bundle.stage_bundle_restore(db, cd, bad, keep_config=False)
     assert bundle.pending_members(db, cd) == []
@@ -155,12 +157,12 @@ def test_a_tail_split_by_inflated_data_is_refused_by_the_raw_budget_and_stages_n
     b = _bundle(tmp_path / "mk")
     db, cd = _live(tmp_path)
     bad = _place(cd, NAME, _split_tails(b)[how])
-    with _within(8):
+    with _within(TAIL_BOUND):
         c = bundle.inspect_bundle(bad)
     # v0.51.342: a fresh raw allowance per drain read ran these to the inflate budget, or restored them, after seconds of parsing
     assert c.ok is False and c.error.count("not a motif bundle:") == 1, c.error
     assert "after the archive's end" in c.error and str(bundle._TAIL_RAW_BUDGET) in c.error, c.error
-    with _within(8), pytest.raises(ValueError) as refused:
+    with _within(TAIL_BOUND), pytest.raises(ValueError) as refused:
         bundle.stage_bundle_restore(db, cd, bad, keep_config=False)
     assert str(bundle._TAIL_RAW_BUDGET) in str(refused.value), refused.value
     assert bundle.pending_members(db, cd) == []
