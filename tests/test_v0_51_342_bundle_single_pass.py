@@ -118,23 +118,13 @@ def test_upload_then_stage_by_name_is_two_passes_and_two_checks(api, tmp_path, s
     assert r.status_code == 200 and r.json()["members"] == ["database", "config", "cookies"], r.text
     assert (seen["opens"], seen["checks"]) == (2, 2), seen
     seen.update(opens=0, checks=0)
-    for n in _upload_names():  # v0.51.343: the re-upload meets its bytes under its name, so the byte compare runs
+    held = _upload_names()  # v0.51.344: an occupied second — the re-upload takes its own -N name, and still reads the archive once
+    for n in held:
         (cd / "backups" / n).write_bytes(data)
     r = client.post("/api/admin/database-restore/upload", headers=_H, files={"file": (NAME, data, "application/gzip")})
     assert r.status_code == 200 and (seen["opens"], seen["checks"]) == (1, 1), (r.text, seen)
-    assert hashed == [], "the same-stamp check compares the upload's bytes — no sha256 pass over either file"
-
-
-def test_a_different_bundle_under_the_same_name_is_refused_even_at_the_same_size(api, tmp_path):
-    client, cd = api
-    data = _bundle(tmp_path / "mk").read_bytes()
-    squatter = bytes(len(data))
-    names = _upload_names()  # v0.51.343: retargeted from NAME — the upload is filed under its upload second
-    for n in names:
-        (cd / "backups" / n).write_bytes(squatter)
-    r = client.post("/api/admin/database-restore/upload", headers=_H, files={"file": (NAME, data, "application/gzip")})
-    assert r.status_code == 409, r.text
-    assert all((cd / "backups" / n).read_bytes() == squatter for n in names)
+    assert r.json()["preview"]["name"] not in held, r.text
+    assert hashed == [], "filing an upload hashes nothing — no sha256 pass over either file"
 
 
 # ── 2. the member gate, on the stream ────────────────────────────────
@@ -245,41 +235,49 @@ def _within(seconds: float):
         signal.signal(signal.SIGALRM, prev)
 
 
-HOSTILE = {
-    "a repeated config": lambda e, raw, out: _pack(out, [_named((None, b"plex: {}\n"), "motif.yaml")] + e),
-    "a flipped CRC after a long tail": lambda e, raw, out: out.write_bytes(_crc_flipped(_long_tail(raw))) and out,
-    "a path outside": lambda e, raw, out: _pack(out, e + [_named(e[0], "../motif.db")]),
-    "an absolute name": lambda e, raw, out: _pack(out, _swap(e, "motif.db", _named(e[0], "/motif.db"))),
-    "a ./ name": lambda e, raw, out: _pack(out, _swap(e, "motif.db", _named(e[0], "./motif.db"))),
-    "a symlink": lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _odd("motif.yaml", tarfile.SYMTYPE, linkname="/etc/passwd"))),
-    "a hardlink": lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _odd("motif.yaml", tarfile.LNKTYPE, linkname="motif.db"))),
-    "a directory": lambda e, raw, out: _pack(out, _swap(e, "motif.db", _odd("motif.db", tarfile.DIRTYPE))),
-    "a fifo": lambda e, raw, out: _pack(out, _swap(e, "cookies.txt", _odd("cookies.txt", tarfile.FIFOTYPE))),
-    "a contiguous file": lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _conttype(next(x for x in e if x[0].name == "motif.yaml")))),
-    "a pax path override": lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _pax_path(next(x for x in e if x[0].name == "motif.yaml")))),
-    "a repeated name": lambda e, raw, out: _pack(out, [_named((None, JUNK_DB), "motif.db")] + e),
-    "a flipped gzip CRC": lambda e, raw, out: out.write_bytes(_crc_flipped(raw)) and out,
-    "a flipped gzip length": lambda e, raw, out: out.write_bytes(raw[:-1] + bytes([raw[-1] ^ 0x01])) and out,
-    "trailing garbage": lambda e, raw, out: out.write_bytes(raw + b"trailing garbage") and out,
-    "a truncated archive": lambda e, raw, out: out.write_bytes(raw[: len(raw) * 6 // 10]) and out,
-    "a pax sparse realsize over a 2**62 skip": lambda e, raw, out: _skip_lie(e, out, key="GNU.sparse.realsize", scope="member"),
-    "a global pax size over a 2**62 skip": lambda e, raw, out: _skip_lie(e, out, key="size", scope="global"),
-    "a pax sparse map": lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _sparse_map(next(x for x in e if x[0].name == "motif.yaml")))),
+_PLAIN_YAML = "motif.yaml is not a plain file"
+
+HOSTILE = {  # v0.51.344: (builder, the refusal's own reason)
+    "a repeated config": (lambda e, raw, out: _pack(out, [_named((None, b"plex: {}\n"), "motif.yaml")] + e), "motif.yaml appears twice"),
+    "a flipped CRC after a long tail": (lambda e, raw, out: out.write_bytes(_crc_flipped(_long_tail(raw))) and out, "CRC check failed"),
+    "a path outside": (lambda e, raw, out: _pack(out, e + [_named(e[0], "../motif.db")]), "unexpected member '../motif.db'"),
+    "an absolute name": (lambda e, raw, out: _pack(out, _swap(e, "motif.db", _named(e[0], "/motif.db"))), "unexpected member '/motif.db'"),
+    "a ./ name": (lambda e, raw, out: _pack(out, _swap(e, "motif.db", _named(e[0], "./motif.db"))), "unexpected member './motif.db'"),
+    "a symlink": (lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _odd("motif.yaml", tarfile.SYMTYPE, linkname="/etc/passwd"))), _PLAIN_YAML),
+    "a hardlink": (lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _odd("motif.yaml", tarfile.LNKTYPE, linkname="motif.db"))), _PLAIN_YAML),
+    "a directory": (lambda e, raw, out: _pack(out, _swap(e, "motif.db", _odd("motif.db", tarfile.DIRTYPE))), "motif.db is not a plain file"),
+    "a fifo": (lambda e, raw, out: _pack(out, _swap(e, "cookies.txt", _odd("cookies.txt", tarfile.FIFOTYPE))), "cookies.txt is not a plain file"),
+    "a contiguous file": (lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _conttype(next(x for x in e if x[0].name == "motif.yaml")))), _PLAIN_YAML),
+    "a pax path override": (lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _pax_path(next(x for x in e if x[0].name == "motif.yaml")))),
+                            "unexpected member '../../motif.yaml'"),
+    "a repeated name": (lambda e, raw, out: _pack(out, [_named((None, JUNK_DB), "motif.db")] + e), "motif.db appears twice"),
+    "a flipped gzip CRC": (lambda e, raw, out: out.write_bytes(_crc_flipped(raw)) and out, "CRC check failed"),
+    "a flipped gzip length": (lambda e, raw, out: out.write_bytes(raw[:-1] + bytes([raw[-1] ^ 0x01])) and out, "Incorrect length of data produced"),
+    "trailing garbage": (lambda e, raw, out: out.write_bytes(raw + b"trailing garbage") and out, "Not a gzipped file"),
+    "a truncated archive": (lambda e, raw, out: out.write_bytes(raw[: len(raw) * 6 // 10]) and out,
+                            "Compressed file ended before the end-of-stream marker was reached"),
+    "a pax sparse realsize over a 2**62 skip": (lambda e, raw, out: _skip_lie(e, out, key="GNU.sparse.realsize", scope="member"), _PLAIN_YAML),
+    "a global pax size over a 2**62 skip": (lambda e, raw, out: _skip_lie(e, out, key="size", scope="global"),
+                                            "a global pax header, which motif never writes"),  # v0.51.344: refused at its 'g' header, before the size it lies with applies
+    "a pax sparse map": (lambda e, raw, out: _pack(out, _swap(e, "motif.yaml", _sparse_map(next(x for x in e if x[0].name == "motif.yaml")))), _PLAIN_YAML),
 }
 
 
 @pytest.mark.parametrize("how", list(HOSTILE))
 def test_a_hostile_bundle_is_refused_by_inspect_and_by_stage_and_leaves_nothing(tmp_path, how):
+    build, reason = HOSTILE[how]
     b = _bundle(tmp_path / "mk")
     db, cd = _live(tmp_path)
     bad = cd / "backups" / NAME
     bad.parent.mkdir()
-    HOSTILE[how](_entries(b), b.read_bytes(), bad)
+    build(_entries(b), b.read_bytes(), bad)
     with _within(10):  # a seek past the stream's end spins for months: a regression fails here instead of hanging the suite
         c = bundle.inspect_bundle(bad)
-        assert not c.ok and c.error and c.error.count("not a motif bundle:") <= 1, c.error
-        with pytest.raises(ValueError):
+        # v0.51.344: the reason, not just a refusal — a symlink refused by tarfile's StreamError passed with the type gate gone
+        assert c.ok is False and c.error.startswith("not a motif bundle: ") and c.error.count("not a motif bundle:") == 1 and reason in c.error, (how, c.error)
+        with pytest.raises(ValueError) as refused:
             bundle.stage_bundle_restore(db, cd, bad, keep_config=False)
+        assert reason in str(refused.value), (how, str(refused.value))
     assert bundle.pending_members(db, cd) == []
     assert not list(cd.glob(".bundle-*")) and not list(bad.parent.glob(".bundle-*")) and not list(cd.glob("*.tmp"))
 

@@ -508,7 +508,7 @@ def admin_client(tmp_path, monkeypatch):
 AUTH = {"X-Authentik-Username": "testadmin"}
 
 
-def test_run_endpoint_409_on_concurrent_request(admin_client, tmp_path):
+def test_run_endpoint_409_on_concurrent_request(admin_client, tmp_path, monkeypatch):
     """End-to-end: pre-seed a 'running' op_progress row → POST
     the endpoint → expect 409. Confirms the try_acquire gate."""
     from app.config import Settings
@@ -531,21 +531,17 @@ def test_run_endpoint_409_on_concurrent_request(admin_client, tmp_path):
     # BEFORE the themes_dir check... wait, actually it happens
     # AFTER. Let me set themes_dir via env (the admin_client
     # fixture didn't set it). Use settings dir.
-    import os
-    os.environ["MOTIF_THEMES_DIR"] = str(tmp_path / "themes")
-    try:
-        r = admin_client.post(
-            "/api/admin/cloud-themes-backup-run",
-            headers=AUTH, json={"rks": ["rk-test"]},
-        )
-        # 409 expected if themes_dir is set; the contract is
-        # "concurrent click → 409 not silent over-walk."
-        assert r.status_code in (409, 503), (
-            f"v1.19.45: concurrent run must 409 (or 503 if "
-            f"themes_dir blocks first); got {r.status_code}"
-        )
-    finally:
-        os.environ.pop("MOTIF_THEMES_DIR", None)
+    monkeypatch.setenv("MOTIF_THEMES_DIR", str(tmp_path / "themes"))  # v0.51.344: monkeypatch; the finally-pop deleted a prior value instead of restoring it
+    r = admin_client.post(
+        "/api/admin/cloud-themes-backup-run",
+        headers=AUTH, json={"rks": ["rk-test"]},
+    )
+    # 409 expected if themes_dir is set; the contract is
+    # "concurrent click → 409 not silent over-walk."
+    assert r.status_code in (409, 503), (
+        f"v1.19.45: concurrent run must 409 (or 503 if "
+        f"themes_dir blocks first); got {r.status_code}"
+    )
 
 
 # ── Version pin ──────────────────────────────────────────────

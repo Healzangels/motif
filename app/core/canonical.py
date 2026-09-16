@@ -76,6 +76,14 @@ def canonical_theme_subdir(
     return base
 
 
+def download_theme_rel(media_type: str, themes_subdir: str, title: str, year: str | None,
+                       edition_key: str = "") -> str:
+    """The folder a download writes theme.mp3 into, relative to themes_dir."""
+    # v0.51.344: the download worker and RESTORE FROM PLEX's in-flight check build this one path — they must not drift
+    prefix = "collections/" if media_type == "collection" else ""
+    return f"{prefix}{themes_subdir}/{canonical_theme_subdir(title, year, edition_key)}"
+
+
 def _legacy_sanitize_pre_v1_14_94(s: str) -> str:
     """v1.14.97: replicate the pre-v1.14.94 sanitizer exactly so the
     one-shot migration sweep can detect folders that match the legacy

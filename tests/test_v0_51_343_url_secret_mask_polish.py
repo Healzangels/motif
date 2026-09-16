@@ -125,8 +125,9 @@ def test_mask_config_value_masks_a_fragment_secret_on_every_userinfo_key():
     ("https://host.example/x?TOKEN=***", "https://host.example/x?token=T-c1", "https://host.example/x?TOKEN=T-c1"),
     ("http://plex.lan:32400/?x-plex-token=***", "http://plex.lan:32400/?X-Plex-Token=T-c2", "http://plex.lan:32400/?x-plex-token=T-c2"),
     ("https://host.example/#Access_Token=***", "https://host.example/#access_token=T-c3", "https://host.example/#Access_Token=T-c3"),
+    # v0.51.344: the exact spelling binds first — token= keeps token's A-c4, and TOKEN= takes the case-blind Token's B-c4
     ("https://host.example/x?TOKEN=***&token=***", "https://host.example/x?token=A-c4&Token=B-c4",
-     "https://host.example/x?TOKEN=A-c4&token=B-c4"),
+     "https://host.example/x?TOKEN=B-c4&token=A-c4"),
 ])
 def test_a_masked_name_takes_its_stored_value_case_blind_in_the_submitted_spelling(submitted, stored, expected):
     assert _is_masked_url_credentials(submitted)

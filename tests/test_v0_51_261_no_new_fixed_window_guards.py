@@ -76,7 +76,7 @@ _MIN_WIDTH = 100
 # gate's catch line).
 # v0.51.308: 1490 → 1489 (test_v1_17_20's 4000-char openInfoDialog window,
 # rotted by the 404 empty-state — anchored to the success path's first read).
-_BUDGET = 1474  # v0.51.343 (ui-small): v1.19.90's and v1.20.17's 260-char LINK-glyph colour windows converted to whole-rule slices; v0.51.343: v1.21.14's 400-char mismatch-badge window converted to sibling-rule slices; v0.51.342: v0.51.146's 500-char restore-catch window (2% headroom after the catch grew) converted to a showStaged-bounded slice; v0.51.338: v1.19.76's 1200-char SRC ALL window converted to an anchored slice; v0.51.332: v1.18.3's 200-char section-chip window converted to a whole-rule slice; v0.51.329: v1.20.65's 1600-char computeSrcLetter window converted; v0.51.318: v1.18.21 manual-url window converted (+1 banked by the ratchet); v0.51.317: v1.18.19; v0.51.316: two (v1.19.39); v0.51.315: three (v1.14.2, v1.14.3, v1.14.20)
+_BUDGET = 1473  # v0.51.344 (bulkbar): v1.20.31's 2200-char _layoutBulkBar window converted to a function slice; v0.51.343 (ui-small): v1.19.90's and v1.20.17's 260-char LINK-glyph colour windows converted to whole-rule slices; v0.51.343: v1.21.14's 400-char mismatch-badge window converted to sibling-rule slices; v0.51.342: v0.51.146's 500-char restore-catch window (2% headroom after the catch grew) converted to a showStaged-bounded slice; v0.51.338: v1.19.76's 1200-char SRC ALL window converted to an anchored slice; v0.51.332: v1.18.3's 200-char section-chip window converted to a whole-rule slice; v0.51.329: v1.20.65's 1600-char computeSrcLetter window converted; v0.51.318: v1.18.21 manual-url window converted (+1 banked by the ratchet); v0.51.317: v1.18.19; v0.51.316: two (v1.19.39); v0.51.315: three (v1.14.2, v1.14.3, v1.14.20)
 
 # v0.51.309 (audit r2): the BACKWARD shape `x[a - N:a + M]` was invisible to
 # the detector (its lower bound is a BinOp, not a bare Name) — and a new one
@@ -86,7 +86,7 @@ _BUDGET = 1474  # v0.51.343 (ui-small): v1.19.90's and v1.20.17's 260-char LINK-
 # shapes it was blind to (`max(0, a - N)` and Call bases — 135 windows, the
 # measured 214 − 79), so the census sees the whole population. Still equality,
 # still only DOWN.
-_BACKWARD_BUDGET = 211  # v0.51.339: v1.20.42's restore re-hash [anchor-120:anchor+80] window converted to a _stamp_restored slice; v0.51.336: v0.51.143's restore-upload [i-200:i+1500] window converted to an anchored slice; v0.51.322: v1.15.125 preload window converted to an anchor slice
+_BACKWARD_BUDGET = 210  # v0.51.344: v1.18.78's 2900-char PROMOTE window converted to a branch-to-button slice; v0.51.339: v1.20.42's restore re-hash [anchor-120:anchor+80] window converted to a _stamp_restored slice; v0.51.336: v0.51.143's restore-upload [i-200:i+1500] window converted to an anchored slice; v0.51.322: v1.15.125 preload window converted to an anchor slice
 
 
 def _backward_base(node):

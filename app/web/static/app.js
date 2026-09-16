@@ -390,6 +390,48 @@
       : null;
   }
 
+  // v0.51.344: one table of restore skip words — the canonical page and the library row's RESTORE FROM PLEX both read it.
+  function restoreSkipWord(reason) {
+    // v0.51.339: each skip reason in plain words — "had no Plex copy" also covered already-on-disk and Plex-off rows.
+    const SKIP_WORDS = [
+      ['canonical_already_present', 'already on disk'],
+      ['plex_unavailable', 'Plex not configured'],
+      ['placement_file_missing', 'Plex folder copy gone'],
+      ['link_failed:', 'copy failed'],
+      ['write_failed:', 'copy failed'],
+      ['plex_fetch:', 'Plex fetch failed'],
+      ['plex_themes:', 'Plex fetch failed'],
+      // v0.51.341: the three reasons that fell through to "no Plex copy".
+      ['no_theme_entry', 'no theme selected in Plex'],
+      ['no_rating_key', 'no Plex rating key'],
+      ['no_placement', 'no Plex placement'],
+      // v0.51.342: the run stopped asking a Plex that gave no answer.
+      ['plex_unreachable', 'Plex gave no answer — not tried'],
+      // v0.51.342: its download writes theme.mp3 in place — a restore under it would be truncated.
+      ['download_in_flight', 'download still in flight — not touched'],
+      // v0.51.344: Plex answered after motif's exit deadline closed its writes.
+      ['motif_exiting', 'motif was shutting down — not written'],
+      // v0.51.344: Plex answered but reading the answer raised — a failed fetch, not "no Plex copy".
+      ['plex_error:', 'Plex fetch failed'],
+    ];
+    const text = String(reason || '');
+    const hit = SKIP_WORDS.find(([prefix]) => text.startsWith(prefix));
+    return hit ? hit[1] : 'no Plex copy';
+  }
+
+  // v0.51.342: the settings page's error shape — motif's words or the proxy's status in words, never FastAPI's JSON.
+  function failWords(e) {
+    const gw = gatewayTimeoutNote(e);
+    if (gw) return gw;
+    if (e && (e.status === 401 || e.status === 403) && e.detail != null) {
+      return `${e.detail} — reload the page and sign in again`;
+    }
+    if (e && e.detail != null) return String(e.detail);
+    if (e && typeof e.status === 'number') return proxyStatusHint(e.status);
+    return 'could not reach motif — a reverse proxy / WAF may have returned a non-motif page (SSO login or a '
+      + 'size/security block), or the network dropped. Reload, sign in, then retry.';
+  }
+
   async function api(method, path, body) {
     const opts = { method, headers: {} };
     if (body) {
@@ -7263,7 +7305,9 @@
           // v0.51.343: a member absent or over its cap is left out of a bundle; an upload is dated by its upload and sits outside retention
           const holds = 'the database snapshot + a themes census, plus motif.yaml and cookies.txt unless one was absent or over its size cap — // RESTORE previews what it holds';
           const chipTip = kind === 'bundle'
-            ? (b.retained === false ? 'uploaded bundle, dated by its upload — kept outside retention until you delete it: ' + holds : 'bundle: ' + holds)
+            ? (b.retained === false ? 'uploaded bundle, dated by its upload — kept outside retention until you delete it: ' + holds
+              : b.partial ? 'partial bundle (motif-bundle-partial-…): the database snapshot + a themes census, but motif.yaml or cookies.txt was left out over its size cap when it was made — // RESTORE previews which'  // v0.51.344: its own name shape, so retention can keep a complete bundle beside it
+              : 'bundle: ' + holds)
             : kind === 'prerestore' ? 'pre-restore safety copy — kept outside retention'
             : 'database snapshot';
           const chip = `<span class="tier-badge tier-badge-${kind}" title="${chipTip}">`
@@ -7315,7 +7359,7 @@
       if (!previewEl || !pv) return;
       const m = pv.manifest || {};
       const line = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-      line('restore-preview-manifest', `✓ bundle ${pv.name} · motif v${m.motif_version || '?'} · schema v${m.schema_version || '?'} · ${m.created_at || ''} · ${m.census_rows || 0} themes in the census`);
+      line('restore-preview-manifest', `✓ bundle ${pv.name} · motif v${m.motif_version || '?'} · schema v${m.schema_version || '?'} · ${m.created_at || 'date unknown'} · ${m.census_rows || 0} themes in the census`);  // v0.51.344: a stamp the server could not read comes back null
       line('restore-preview-db', pv.db && pv.db.ok
         ? `✓ database: real SQLite, integrity ok, schema v${pv.db.schema_version}`
         : '✗ database: failed validation');
@@ -7339,10 +7383,11 @@
         diffEl.hidden = !diff.length || !!perr.bundle || !!perr.live;
       }
       // v0.51.341: restored cookies land on settings.cookies_file (v0.51.339) — name that path, not the member
-      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' && !perr.bundle ? ` — will replace ${pv.cookies_target || 'yours'} unless you keep your config` : ''}`);
+      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' && !perr.bundle ? ` — will replace ${pv.cookies_target || 'yours'} unless you keep your config` : pv.cookies_target ? ` (the cookies file at ${pv.cookies_target})` : ''}`);  // v0.51.344: the file left as it is gets its path too
       const keep = document.getElementById('database-restore-keep-config');
       if (keep) { keep.checked = !!perr.bundle; keep.disabled = !!perr.bundle; }
       previewEl.dataset.cookiesStay = pv.cookies === 'in bundle' ? '' : '1';  // v0.51.342: the confirm names cookies.txt only when the restore writes it
+      previewEl.dataset.configStay = pv.config_in_bundle ? '' : '1';  // v0.51.344: absent, or left out when made — the confirm said motif.yaml was replaced
       previewEl.dataset.name = pv.name;
       previewEl.hidden = false;
       previewEl.scrollIntoView({ block: 'nearest' });
@@ -7352,17 +7397,20 @@
       previewEl.hidden = true;
       delete previewEl.dataset.name;
       delete previewEl.dataset.cookiesStay;
+      delete previewEl.dataset.configStay;
     }
     document.getElementById('database-restore-preview-cancel-btn')?.addEventListener('click', hideBundlePreview);
     document.getElementById('database-restore-stage-btn')?.addEventListener('click', async () => {
       const name = previewEl && previewEl.dataset.name;
       if (!name) return;
       const keep = !!document.getElementById('database-restore-keep-config')?.checked;
+      const replaced = [previewEl.dataset.configStay ? '' : 'motif.yaml', previewEl.dataset.cookiesStay ? '' : 'cookies.txt'].filter(Boolean);
+      const stays = [previewEl.dataset.configStay ? 'your motif.yaml stays as it is' : '', previewEl.dataset.cookiesStay ? 'your cookies file stays as it is' : ''].filter(Boolean);  // v0.51.344: one clause per member the restore leaves live
       const ok = confirm(
         'Restore from bundle ' + name + '?\n\n'
         + 'This REPLACES the entire live database'
         + (keep ? ' (your motif.yaml and cookies.txt stay as they are)'
-          : previewEl.dataset.cookiesStay ? ' and motif.yaml (your cookies file stays as it is)' : ', motif.yaml and cookies.txt')
+          : (replaced.length === 2 ? ', ' : replaced.length ? ' and ' : '') + replaced.join(' and ') + (stays.length ? ' (' + stays.join('; ') + ')' : ''))
         + ' with the bundle\'s.\n\nmotif backs up what it replaces first, then applies the '
         + 'restore on the NEXT CONTAINER RESTART. Nothing changes until you restart.\n\nContinue?'
       );
@@ -7794,30 +7842,10 @@
       return `<a href="${tab}?${p.toString()}">${htmlEscape(r.title)}</a>${yr}`;
     }
     const src = (r) => htmlEscape((r.source_kind || '—').toUpperCase());
-    // v0.51.339: each skip reason in plain words — "had no Plex copy" also covered already-on-disk and Plex-off rows.
-    const SKIP_WORDS = [
-      ['canonical_already_present', 'already on disk'],
-      ['plex_unavailable', 'Plex not configured'],
-      ['placement_file_missing', 'Plex folder copy gone'],
-      ['link_failed:', 'copy failed'],
-      ['write_failed:', 'copy failed'],
-      ['plex_fetch:', 'Plex fetch failed'],
-      ['plex_themes:', 'Plex fetch failed'],
-      // v0.51.341: the three reasons that fell through to "no Plex copy".
-      ['no_theme_entry', 'no theme selected in Plex'],
-      ['no_rating_key', 'no Plex rating key'],
-      ['no_placement', 'no Plex placement'],
-      // v0.51.342: the run stopped asking a Plex that gave no answer.
-      ['plex_unreachable', 'Plex gave no answer — not tried'],
-      // v0.51.342: its download writes theme.mp3 in place — a restore under it would be truncated.
-      ['download_in_flight', 'download still in flight — not touched'],
-    ];
     function skipWords(skipped) {
       const groups = new Map();
       for (const s of skipped) {
-        const reason = String((s && s.reason) || '');
-        const hit = SKIP_WORDS.find(([prefix]) => reason.startsWith(prefix));
-        const words = hit ? hit[1] : 'no Plex copy';
+        const words = restoreSkipWord(s && s.reason);
         groups.set(words, (groups.get(words) || 0) + 1);
       }
       return Array.from(groups, ([words, n]) => `${fmt(n)} ${words}`).join(', ');
@@ -7947,19 +7975,6 @@
         + (st.not_attempted ? ` · ${fmt(st.not_attempted)} not tried` : '');
     }
 
-    // v0.51.342: the settings page's error shape — motif's words or the proxy's status in words, never FastAPI's JSON.
-    function failWords(e) {
-      const gw = gatewayTimeoutNote(e);
-      if (gw) return gw;
-      if (e && (e.status === 401 || e.status === 403) && e.detail != null) {
-        return `${e.detail} — reload the page and sign in again`;
-      }
-      if (e && e.detail != null) return String(e.detail);
-      if (e && typeof e.status === 'number') return proxyStatusHint(e.status);
-      return 'could not reach motif — a reverse proxy / WAF may have returned a non-motif page (SSO login or a '
-        + 'size/security block), or the network dropped. Reload, sign in, then retry.';
-    }
-
     // v0.51.342: a run is this 502 START's only if it started after what the page saw (none seen: the click, a minute's skew).
     function newerRun(st, since) {
       const t = Date.parse(st.started_at || '');
@@ -7999,6 +8014,7 @@
       liveText = null;
       const since = startUnconfirmed;
       startUnconfirmed = null;
+      const prevStartedAt = lastSeenStartedAt;  // v0.51.344: the run an idle answer lost is the one the last poll saw
       lastSeenStartedAt = st.started_at || null;
       if (st.status === 'running') {
         cutOffStartedAt = null;
@@ -8054,6 +8070,14 @@
       } else if (st.status === 'interrupted') {
         // v0.51.342: reported once already — now a last run like any other, not an alarm on every visit.
         text = `last run started ${fmtRelativePast(st.started_at) || st.started_at}: cut off by a motif restart`;
+      } else if (st.status === 'idle' && watched) {
+        // v0.51.344: the watched run left no record — motif restarted before it could write one.
+        restoreShown = true;
+        missBlock.style.display = '';
+        text = '✗ the run stopped without a result — motif restarted before it could record one; '
+          + 'RUN CHECK, then RESTORE FROM PLEX restores what is left';
+        cls = 'form-status form-status-fail';
+        cutOffStartedAt = prevStartedAt;
       }
       if (neverRan) {
         text = '✗ the start never reached motif — nothing ran; press RESTORE FROM PLEX again' + (text ? ` · ${text}` : '');
@@ -8067,6 +8091,16 @@
         restoreWatching = false;
         await load();
       }
+    }
+
+    // v0.51.344: a CHECK / REPAIR refused because a run is going (another tab started it) attaches to it, as START does.
+    function attachToRefusingRun(e) {
+      if (!e || e.status !== 409 || restoreRunning) return;
+      restoreGen += 1;
+      if (restoreTimer) clearTimeout(restoreTimer);
+      restoreTimer = null;
+      restoreWatching = true;
+      pollRestore();
     }
 
     checkBtn.addEventListener('click', async () => {
@@ -8110,6 +8144,7 @@
       } catch (e) {
         checkStatus.textContent = '✗ ' + failWords(e);
         checkStatus.className = 'form-status form-status-fail';
+        attachToRefusingRun(e);
       } finally {
         checking = false;
         checkBtn.disabled = restoreRunning;
@@ -8183,6 +8218,7 @@
         } catch (e) {
           repairStatus.textContent = '✗ ' + failWords(e);
           repairStatus.className = 'form-status form-status-fail';
+          attachToRefusingRun(e);
         } finally {
           repairing = false;
           repairBtn.disabled = restoreRunning;
@@ -14503,6 +14539,9 @@
     return maxRight > innerRight + 1;
   }
 
+  // v0.51.344: the bar's buttons in template order, captured before any pass moves one (PB-071).
+  let _bulkBarOrder = null;
+
   function _layoutBulkBar() {
     const bar = document.getElementById('library-bulk-bar');
     if (!bar || bar.style.display === 'none') return;
@@ -14515,10 +14554,16 @@
     // the overflow menu so DOM order is preserved). This way a
     // resize OR visibility change that frees space restores
     // buttons to the inline bar.
+    if (!_bulkBarOrder) _bulkBarOrder = Array.from(bar.querySelectorAll('button.btn-tiny'));
     while (panel.firstChild) {
-      bar.insertBefore(panel.firstChild, overflowMenu);
+      const btn = panel.firstChild;
+      // v0.51.344: back before its template successor — a kept running button means "before // MORE" reorders the bar.
+      const next = _bulkBarOrder.slice(_bulkBarOrder.indexOf(btn) + 1).find((b) => b.parentNode === bar);
+      bar.insertBefore(btn, next || overflowMenu);
     }
     overflowMenu.style.display = 'none';
+    // v0.51.344: every pass starts one row; the wrap below is re-decided from a fresh measurement.
+    bar.classList.remove('is-wrapped');
 
     // Measure post-reset. If no overflow, we're done.
     if (!_barHasOverflow(bar)) return;
@@ -14535,6 +14580,8 @@
     const candidates = Array.from(bar.querySelectorAll('button.btn-tiny'))
       .filter((btn) => {
         if (_BULK_BAR_PRIMARY_IDS.has(btn.id)) return false;
+        // v0.51.344: a running button (disabled = handler-owned, see setBulkLabel) stays put, so a re-layout never hides its result.
+        if (btn.disabled) return false;
         if (btn.style.display === 'none') return false;
         if (overflowMenu.contains(btn)) return false;
         return true;
@@ -14552,6 +14599,8 @@
     if (panel.children.length === 0) {
       overflowMenu.style.display = 'none';
     }
+    // v0.51.344: the primaries + // MORE still overflow one row (375px painted to 660px, PB-071) — wrap, never spill.
+    if (_barHasOverflow(bar)) bar.classList.add('is-wrapped');
   }
 
   // v1.17.18: re-run layout on container width changes.
@@ -14564,10 +14613,20 @@
     ? new ResizeObserver(() => _layoutBulkBar())
     : null;
 
+  // v0.51.344: a result label written after layout grows its button, not the bar — re-lay out on any button's text write (PB-071).
+  const _bulkBarLabelObserver = (typeof MutationObserver === 'function')
+    ? new MutationObserver((records) => {
+      // v0.51.344: layout's own moves target the bar / panel, never a button, so they cannot re-trigger it.
+      if (records.some((r) => r.target.nodeName === 'BUTTON')) _layoutBulkBar();
+    })
+    : null;
+
   function _installBulkBarObserver() {
-    if (!_bulkBarObserver) return;
     const bar = document.getElementById('library-bulk-bar');
-    if (bar) _bulkBarObserver.observe(bar);
+    if (!bar) return;
+    if (_bulkBarObserver) _bulkBarObserver.observe(bar);
+    // v0.51.344: subtree, so a button parked in the // MORE panel counts too.
+    if (_bulkBarLabelObserver) _bulkBarLabelObserver.observe(bar, { childList: true, subtree: true });
   }
 
   // v1.22.95: collapsible filter drawer. The seven pill axes hide
@@ -18044,12 +18103,18 @@
         try {
           const r = await api('POST', `/api/items/${btn.dataset.mt}/${btn.dataset.id}/restore-canonical`);
           if (r.skipped && r.skipped.length) {
-            const reasons = r.skipped.map((s) => `${s.section_id}: ${s.reason}`).join('\n');
-            alert(`Restored ${r.restored}; skipped:\n${reasons}`);
+            // v0.51.344: the canonical page's words — never a reason code or the 409's JSON.
+            const groups = new Map();
+            for (const s of r.skipped) {
+              const words = restoreSkipWord(s && s.reason);
+              groups.set(words, (groups.get(words) || 0) + 1);
+            }
+            const words = Array.from(groups, ([w, n]) => `${n} ${w}`).join(', ');
+            alert(`Restored ${r.restored}; skipped ${r.skipped.length} (${words})`);
           }
           await loadLibrary().catch(()=>{});
         } catch (e) {
-          alert('Restore failed: ' + e.message);
+          alert('Restore failed: ' + failWords(e));
         }
       } else if (act === 'purge') {
         await purgeTheme(btn.dataset.mt, btn.dataset.id,
@@ -18354,6 +18419,8 @@
         // v0.51.310: .jpg spelling — IDS static-classification is extension-based.
         + ` src="/api/plex/art/${encodeURIComponent(posterRk)}.jpg">`
       : '';
+    // v0.51.344: the row ▶'s rule (verified_ok too), guarded like it; an unthemed row never reads window (the v0.50.64 harness)
+    const _qpBare = it.plex_has_theme ? ((window.motifQuickPlay && window.motifQuickPlay.computeQuickPlay(it)) || null) : null;
     return `
       <div class="info-hero">
         ${posterImgHtml}
@@ -18362,7 +18429,7 @@
           <p class="info-hero-playback muted small">${it.plex_has_theme ? 'nothing on disk · Plex serves its own theme' : 'nothing on disk · no theme — Plex metadata only'}</p>
         </div>
       </div>
-      ${it.plex_has_theme && /^\d+$/.test(posterRk)  // v0.51.341: digits-only rk, the proxy's own rule — an empty key built a keyless player URL
+      ${_qpBare && _qpBare.kind === 'plex'  // v0.51.341: digits-only rk, the proxy's own rule — an empty key built a keyless player URL
         // v0.51.340: the badge rides the label column, so the player starts at the value edge.
         // v0.51.343: lib/quick-play.js builds the URL, the same builder as the row's ▶.
         ? `<div class="dlg-section info-group"><h4>// audio</h4><dl class="dlg-grid"><dt class="info-ctl-label info-ctl-label-play">plex serves `
@@ -18600,7 +18667,7 @@
         }
         return plexState === 'serves'
           ? `${held} on disk as backup · Plex serves its own theme`
-          : `${held} on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)`;
+          : `${held} on disk as backup · Plex serves no theme (PROMOTE TO ACTIVE deploys it)`;  // v0.51.344: has_theme 0 is not "stopped" — nothing records that Plex ever served
       }
       const placedKinds = placements
         .map((p) => p.placement_kind)
@@ -19037,7 +19104,8 @@
           // v1.21.90: include rating_key so the player serves THIS
           // edition's canonical, not an arbitrary sibling edition's file.
           // v0.51.343: lib/quick-play.js builds it — the row ▶'s builder, same section_id + rating_key query.
-          const src = window.motifQuickPlay.fileSrc({ theme_media_type: t.media_type, theme_tmdb: t.tmdb_id, section_id: sectionId, rating_key: ratingKey });
+          // v0.51.344: guarded like the row ▶ — a missing lib threw here and left the card on 'loading…'
+          const src = (window.motifQuickPlay && window.motifQuickPlay.fileSrc({ theme_media_type: t.media_type, theme_tmdb: t.tmdb_id, section_id: sectionId, rating_key: ratingKey })) || '';
           // v0.51.29: dropped the sibling ↓ download link — the native
           // <audio> controls' ⋮ overflow menu already has "Download" (the
           // user), so the extra arrow was redundant. The player now owns the
@@ -19059,18 +19127,18 @@
                  ? "motif's copy waits on disk as a backup — Plex keeps serving its own theme until PROMOTE TO ACTIVE deploys this."
                  : _backupPlex === 'absent'
                    ? "motif's copy waits on disk as a backup — this item is not in Plex, so there is nowhere to deploy it."
-                   : "motif's copy waits on disk as a backup — Plex no longer serves a theme; PROMOTE TO ACTIVE deploys this."]
+                   : "motif's copy waits on disk as a backup — Plex serves no theme; PROMOTE TO ACTIVE deploys this."]  // v0.51.344: the headline's words
             : _placedKinds.length
               ? ['tier-badge-placed', 'PLACED',
                  `motif's file is placed where Plex reads it (${_placedKinds.join(', ')}).`]
               : ['tier-badge-unplaced', 'NOT PLACED',
                  "motif's file is on disk but not placed for Plex yet."];
+          // v0.51.344: no URL, no player — an empty src fetches the page itself; the row keeps its badge and EDIT AUDIO
+          const _player = src ? `<audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">your browser doesn't support inline audio playback</audio>` : '';
           // v0.51.340: the badge sits under the label, so every player starts at the value edge.
           return `<dt class="info-ctl-label info-ctl-label-play">motif file `
             + `<span class="tier-badge ${_fileBadge[0]}" title="${htmlEscape(_fileBadge[2])}">${_fileBadge[1]}</span></dt>`
-            + `<dd class="info-play-row"><audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">`
-            + `your browser doesn't support inline audio playback`
-            + `</audio>`
+            + `<dd class="info-play-row">${_player}`
             + `<button class="btn btn-tiny btn-info" data-act="edit-audio"`
             + ` data-mt="${htmlEscape(t.media_type)}" data-id="${htmlEscape(t.tmdb_id)}"`
             + ` data-sec="${htmlEscape((lf && lf.section_id) || '')}"`
@@ -19383,7 +19451,8 @@
       // — it appears in the LOUDNESS section beside the +/- stepper. rating_key scopes
       // the edition, like audioBlock.
       // v0.51.343: lib/quick-play.js builds it, with audioBlock's section_id + rating_key query.
-      const _previewSrc = window.motifQuickPlay.fileSrc({ theme_media_type: lf.media_type, theme_tmdb: lf.tmdb_id, section_id: sectionId, rating_key: ratingKey });
+      // v0.51.344: guarded like the row ▶ — no lib, no audition (its button and player are skipped below)
+      const _previewSrc = (window.motifQuickPlay && window.motifQuickPlay.fileSrc({ theme_media_type: lf.media_type, theme_tmdb: lf.tmdb_id, section_id: sectionId, rating_key: ratingKey })) || '';
 
       const lvl = `<dt>plays at</dt><dd class="muted small">${measured.toFixed(1)} LUFS${
         tp !== null ? ` · peak ${tp.toFixed(1)} dBTP${tp > 0 ? ' <span class="accent-red loud-clip" title="The loudest moments peak above 0 dBTP, so they distort (clip) on playback. Leveling this theme quieter — set a target below and // LEVEL THIS THEME — pulls the peak back under 0 and clears the clipping.">(clipping)</span>' : ''}` : ''
@@ -19454,8 +19523,8 @@
                <span id="loud-gain-note" class="loud-gain-note muted small"></span>
              </div>
              <div class="loud-ctl-row">
-               <button class="btn btn-tiny btn-info" data-act="loud-preview"
-                       title="Hear the theme at the target level in its own preview player below. Nothing is written — this only changes playback volume, exactly the way mp3gain would.">// PREVIEW AT TARGET</button>
+               ${_previewSrc ? `<button class="btn btn-tiny btn-info" data-act="loud-preview"
+                       title="Hear the theme at the target level in its own preview player below. Nothing is written — this only changes playback volume, exactly the way mp3gain would.">// PREVIEW AT TARGET</button>` : ''}
                <button class="btn btn-tiny btn-warn" data-act="loud-normalize"
                        data-mt="${htmlEscape(lf.media_type || '')}"
                        data-id="${htmlEscape(lf.tmdb_id ?? '')}"
@@ -19465,9 +19534,9 @@
                <span id="loud-result" class="muted small info-probe-meta"></span>
              </div>
              <span id="loud-preview-note" class="muted small"></span>
-             <div class="loud-preview-player" hidden>
+             ${_previewSrc ? `<div class="loud-preview-player" hidden>
                <audio id="loud-preview-audio" class="info-audio" controls preload="none" src="${htmlEscape(_previewSrc)}">your browser doesn't support inline audio playback</audio>
-             </div>
+             </div>` : ''}
            </dd>`;
       }
       return `${lvl}${measuredRow}${state}${raw}${controls}`;
@@ -19590,13 +19659,19 @@
     // an ambiguous cut (the v0.51.223 contract: the LOUDNESS picker is the CTA).
     const _plexRk = ratingKey || data.plex_rating_key || '';
     const _plexRowItem = (libraryState.items || []).find((it) => String(it.rating_key) === String(_plexRk));
-    // v0.51.343: no row loaded (a deep link, a row off this page) — the payload decides, by computeQuickPlay's Plex-beside-a-standing-by-backup rule.
-    const _plexBesideFile = _plexRowItem
-      ? computeSrcLetter(_plexRowItem) === 'P'
-      : lfIsBackupOnly && _plexBackupState(data) === 'serves';
+    // v0.51.344: the row ▶'s rule decides — the loaded row, else this payload shaped as that row (the SRC letter disagreed on P and M)
+    const _qpRow = _plexRowItem || {
+      theme_media_type: t.media_type, theme_tmdb: t.tmdb_id, rating_key: _plexRk,
+      media_folder: (placements.find((p) => p.media_folder) || {}).media_folder || null,
+      placement_kind: placements.some((p) => p.placement_kind === 'plex_upload') ? 'plex_upload' : null,
+      file_path: lf ? lf.file_path : null, canonical_missing: !!lf && lf.canonical_present === 0,
+      plex_has_theme: data.plex_has_theme, plex_theme_verified_ok: data.plex_theme_verified_ok,
+      last_place_attempt_reason: lf ? lf.last_place_attempt_reason : null,
+    };
+    const _qpCard = (window.motifQuickPlay && window.motifQuickPlay.computeQuickPlay(_qpRow)) || null;
     // v0.51.340: the badge rides the label column, so this player and the motif file's share one left edge.
     // v0.51.341: digits-only rk (quick-play's rkOk, the proxy's 400 rule) — no player for a keyless or non-numeric key.
-    const plexThemeBlock = (data.plex_has_theme === 1 && /^\d+$/.test(String(_plexRk)) && (!lf || _plexBesideFile))
+    const plexThemeBlock = (_qpCard && _qpCard.kind === 'plex')
       ? `<dt class="info-ctl-label info-ctl-label-play">plex serves `
         + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span></dt>`
         + `<dd class="info-play-row"><audio controls preload="none" src="${window.motifQuickPlay.plexSrc({ rating_key: _plexRk })}" class="info-audio" data-plex-theme="1">`
@@ -20594,7 +20669,7 @@
     if (overrideIntent === 'backup') {
       sectionTitleText = plexState === 'serves'
         ? '✓ BACKUP READY — DEFERRING TO PLEX'
-        : plexState === 'absent' ? '✓ BACKUP READY — NOT IN PLEX' : '✓ BACKUP READY — PLEX NO LONGER SERVES';
+        : plexState === 'absent' ? '✓ BACKUP READY — NOT IN PLEX' : '✓ BACKUP READY — PLEX SERVES NO THEME';  // v0.51.344: the headline's words
     } else if (data.resolved) {
       sectionTitleText = '✓ RESOLVED — TDB UNAVAILABLE';
     } else if (data.plex_resolved) {
@@ -20673,11 +20748,16 @@
         const isSynthetic = !!(data.override && data.override.synthetic);
         const isPlexCloudSynthetic = isSynthetic
           && data.override && data.override.source_kind === 'plex_cloud';
+        // v0.51.344: "over Plex's theme" only while Plex serves one; otherwise the strip's own words
         const promoteTip = isPlexCloudSynthetic
           ? "Switch this row from backup to active. Motif uploads its copy of Plex's cloud theme back to Plex via the v1.18.36 re-upload trick — Plex serves the same bytes from the now-motif-managed entry."
           : isSynthetic
-            ? "Switch this row from backup to active. Motif will force-place its downloaded copy over Plex's theme on the next worker cycle."
-            : "Switch this row from backup to active. Motif will force-place your URL over Plex's theme on the next worker cycle.";
+            ? (plexState === 'serves'
+              ? "Switch this row from backup to active. Motif will force-place its downloaded copy over Plex's theme on the next worker cycle."
+              : "Switch this row from backup to active. Motif will force-place its downloaded copy on the next worker cycle — Plex serves no theme.")
+            : (plexState === 'serves'
+              ? "Switch this row from backup to active. Motif will force-place your URL over Plex's theme on the next worker cycle."
+              : "Switch this row from backup to active. Motif will force-place your URL on the next worker cycle — Plex serves no theme.");
         // v1.19.86: tone-match the deploy button to the row's backup
         // badge — amber-bright for PB (plex_cloud, link-glyph-b),
         // violet for UB (user backup, link-glyph-bk). source_kind is
@@ -20693,19 +20773,22 @@
             : promoteSourceKind === 'adopt'
               ? 'btn-promote-ab'
               : 'btn-promote-ub';
-        intentFlipBtnsHtml = `
-          <span class="recovery-section-flip">
-            <button class="btn btn-tiny ${promoteToneClass}"
-                    data-act="promote-to-active"
-                    data-mt="${htmlEscape(mt)}"
-                    data-id="${htmlEscape(tid)}"
-                    title="${htmlEscape(promoteTip)}">// PROMOTE TO ACTIVE</button>
-          </span>`;
+        // v0.51.344: no PROMOTE when the item is not in Plex — there is nothing to deploy into (operator decision b)
+        if (plexState !== 'absent') {
+          intentFlipBtnsHtml = `
+            <span class="recovery-section-flip">
+              <button class="btn btn-tiny ${promoteToneClass}"
+                      data-act="promote-to-active"
+                      data-mt="${htmlEscape(mt)}"
+                      data-id="${htmlEscape(tid)}"
+                      title="${htmlEscape(promoteTip)}">// PROMOTE TO ACTIVE</button>
+            </span>`;
+        }
         intentFlipCaption = plexState === 'serves'  // v0.51.343: "over Plex's theme" only while there is one
           ? "motif keeps its copy as a safety net; PROMOTE deploys it over Plex's theme"
           : plexState === 'absent'
             ? "motif keeps its copy as a safety net; this item is not in Plex, so there is nowhere to deploy it"
-            : "Plex no longer serves a theme; PROMOTE deploys motif's copy";
+            : "Plex serves no theme; PROMOTE deploys motif's copy";  // v0.51.344: the headline's words
       } else if (overrideIntent === 'replace' && data.plex_resolved) {
         // v1.18.78: MARK AS BACKUP only meaningful when Plex has
         // its own theme to fall back to. Demoting a RESOLVED
@@ -23455,6 +23538,8 @@
     loadTokens().catch(console.error);
     loadLibraries().catch(console.error);
     loadConfigIntoForms().catch(console.error);
+    // v0.51.344: a failed lib load was silent — the row ▶ and the INFO card players just vanished
+    if (!window.motifQuickPlay) console.error('motif: lib/quick-play.js did not load — the row ▶ and the INFO card players are off');
     bindSyncProbe();
     bindReprobePlexThemes();
     bindBulkProbeTdb();

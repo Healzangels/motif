@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 
 # v0.51.342: pathlib 3.12's is_file() ignore list, explicit — one stat, and 3.14's swallow-all is_file() can't move the split
 _CANONICAL_ABSENT_ERRNOS = (errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP)
+CANONICAL_CHECK_MARK_KEY = "canonical_checks_stamped_through"  # v0.51.344: runtime_settings — the newest stamp a v80-aware check wrote
 
 
 # v1.18.48: class-9 hot-path sub-pattern (see CLAUDE.md). find_theme_sidecar_path's
@@ -1103,13 +1104,15 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     writes canonical_present = 1 (present) / 0 (verified missing). A stat that
     raises OSError (transient Unraid/NFS fault) is INDETERMINATE: the row is
     SKIPPED so the prior value is preserved — a mount hiccup must never flag a
-    healthy canonical broken. is_file() returns False (NOT OSError) when the
-    mount's parent is gone (ENOENT/ENOTDIR are in pathlib's ignore list), so an
-    implausibly large missing set is a mount fault, not real breakage, and is
+    healthy canonical broken. A stat failing with an absent errno
+    (_CANONICAL_ABSENT_ERRNOS: ENOENT/ENOTDIR/EBADF/ELOOP) reads missing, not
+    indeterminate, when the mount's parent is gone, so an implausibly large
+    missing set is a mount fault, not real breakage, and is
     capped — one /data blip must never flip the whole library to false-broken.
     Confirmed-present stamps are always safe.
 
-    Stale by design: health is as fresh as the last enum, so a canonical
+    Stale by design: health is as fresh as the last enum, the daily 03:25 UTC
+    health pass or RUN CHECK, so a canonical
     deleted between runs renders the live red dot immediately but only sorts to
     the DL=broken bucket after the next enum stamps it. `themes_dir` is the
     canonical-storage root (file_path is relative to it); the caller passes
@@ -1129,8 +1132,8 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
             _scope_params).fetchone()[0]
     # v1.23.42: themes_dir liveness gate. If the canonical-storage root itself
     # isn't a live directory (the /data mount dropped), EVERY file_path stat
-    # reads missing via is_file()→False (ENOENT/ENOTDIR are in pathlib's ignore
-    # list, so the per-row OSError skip never fires). The cap below would still
+    # reads missing via the stat's absent errnos (_CANONICAL_ABSENT_ERRNOS), so
+    # the per-row OSError skip never fires. The cap below would still
     # catch an all-missing run, but probing the root up front is the direct
     # signal: a dead root means real breakage is unknowable — preserve every
     # row's prior canonical_present instead of stamping the library
@@ -1253,6 +1256,10 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
             if missing_updates:
                 missing = conn.executemany(stamp, missing_updates).rowcount
             checked += missing
+            # v0.51.344: a build with no CHANGED candidates stamps past this mark — boot sets those stamps aside.
+            conn.execute("INSERT INTO runtime_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, 'verify') "
+                         "ON CONFLICT(key) DO UPDATE SET value = MAX(value, excluded.value), "
+                         "updated_at = excluded.updated_at", (CANONICAL_CHECK_MARK_KEY, now, now))
             if size_heals:
                 # v0.51.338: compare-and-set so a writer that re-stamped the row meanwhile wins.
                 healed = conn.executemany(
@@ -1714,7 +1721,8 @@ def find_theme_sidecar_path(folder_path: str) -> Path | None:
 
 def sweep_stale_placement_temps(db_path: Path, *,
                                 section_ids: list[str] | None = None,
-                                older_than_secs: int = 3600) -> int:
+                                older_than_secs: int = 3600,
+                                themes_dir: Path | None = None) -> int:
     """v0.51.104: delete orphaned `theme.mp3.motif-tmp` files — the atomic
     staging temp `_safe_link_or_copy` writes and then os.replace()s to
     theme.mp3. A crash / container restart / FS hiccup in that split-second
@@ -1736,14 +1744,36 @@ def sweep_stale_placement_temps(db_path: Path, *,
                 "SELECT DISTINCT folder_path FROM plex_items "
                 "WHERE folder_path IS NOT NULL AND folder_path != ''"
                 + _scope_sql, _scope_params).fetchall()
+            canon_rows = conn.execute(
+                "SELECT DISTINCT file_path FROM local_files "
+                "WHERE file_path IS NOT NULL AND file_path != ''"
+                + _scope_sql, _scope_params).fetchall() if themes_dir is not None else []
     except Exception as e:  # noqa: BLE001 — defensive
         log.warning("sweep_stale_placement_temps: folder query failed: %s", e)
         return 0
     folders = [r["folder_path"] for r in rows]
-    if not folders:
+    canon_dirs: dict[Path, set[str]] = {}
+    if canon_rows:
+        try:
+            root_alive = themes_dir.is_dir()
+        except OSError:
+            root_alive = False
+        if not root_alive:
+            log.warning("sweep_stale_placement_temps: themes_dir %s is not a live directory — canonical "
+                        "restore temps not swept this run", themes_dir)
+        else:
+            for r in canon_rows:
+                p = themes_dir / r["file_path"]
+                canon_dirs.setdefault(p.parent, set()).add(p.name)
+    if not folders and not canon_dirs:
         return 0
+    import re
     import time as _time
     cutoff = _time.time() - max(0, older_than_secs)
+
+    def _fresh(st) -> bool:
+        # v0.51.344: link()/copy2() keep the source's mtime — only ctime says when the staging file was made.
+        return max(st.st_mtime, st.st_ctime) > cutoff
 
     def _sweep_one(folder_path: str) -> int:
         # First reachable candidate dir wins (mirror find_theme_sidecar_path).
@@ -1753,7 +1783,7 @@ def sweep_stale_placement_temps(db_path: Path, *,
                 st = tmp.stat()
             except OSError:
                 continue  # not present in this candidate — try the next
-            if st.st_mtime > cutoff:
+            if _fresh(st):
                 return 0  # too fresh — a placement may be mid-flight
             try:
                 tmp.unlink()
@@ -1766,12 +1796,54 @@ def sweep_stale_placement_temps(db_path: Path, *,
                 return 0
         return 0
 
+    list_warned = [False]
+
+    def _sweep_canonical_dir(item) -> int:
+        d, bases = item
+        try:
+            with os.scandir(d) as it:
+                names = [e.name for e in it]
+        except (FileNotFoundError, NotADirectoryError):
+            return 0  # a broken canonical's folder can be gone
+        except OSError as e:
+            (log.debug if list_warned[0] else log.warning)(
+                "sweep_stale_placement_temps: could not list %s (%s) — skipped", d, e)
+            list_warned[0] = True
+            return 0
+        from .canonical_health import _canonical_write_lock
+        removed = 0
+        for base in bases:
+            # v0.51.344: only the two writer shapes — _publish_store_bytes' .part and a restore's unique .motif-tmp.
+            shape = re.compile(re.escape(base) + r"(?:\.part|\.[0-9a-f]{16}\.motif-tmp)")
+            for name in names:
+                if not shape.fullmatch(name):
+                    continue
+                tmp = d / name
+                # v0.51.344: the writer's own lock — a publish re-opening a stranded .part never loses it mid-write.
+                with _canonical_write_lock(d / base):
+                    try:
+                        st = tmp.lstat()
+                    except OSError:
+                        continue  # gone since the listing — its writer finished
+                    if not S_ISREG(st.st_mode) or _fresh(st):
+                        continue
+                    try:
+                        tmp.unlink()
+                        log.info("sweep_stale_placement_temps: removed stale %s", tmp)
+                        removed += 1
+                    except OSError as e:
+                        log.warning("sweep_stale_placement_temps: could not remove %s: %s", tmp, e)
+        return removed
+
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=16) as ex:
-        total = sum(ex.map(_sweep_one, folders))
+        media_total = sum(ex.map(_sweep_one, folders))
+        canon_total = sum(ex.map(_sweep_canonical_dir, canon_dirs.items()))
+    total = media_total + canon_total
     if total:
-        log.info("sweep_stale_placement_temps: removed %d stale .motif-tmp "
-                 "file(s) across %d media folder(s)", total, len(folders))
+        log.info("sweep_stale_placement_temps: removed %d stale staging temp(s) — %d across %d media "
+                 "folder(s), %d across %d canonical folder(s)", total, media_total, len(folders),
+                 canon_total, len(canon_dirs))
     return total
 
 

@@ -40,7 +40,7 @@ from typing import Any
 
 import yaml
 
-from .events import _URL_QUERY_SECRET_RE  # v0.51.341: the events scrubber's sensitive query-param list — never a second one
+from .events import _URL_PARAM_SECRET_RE, _URL_QUERY_SECRET_RE  # v0.51.341: the events scrubber's sensitive query-param list — never a second one; v0.51.344: its fragment-aware regex too
 
 log = logging.getLogger(__name__)
 
@@ -902,7 +902,6 @@ def _is_masked_apprise_url(url: str) -> bool:
 
 
 _URL_SCHEME_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://")
-_URL_PARAM_SECRET_RE = re.compile(_URL_QUERY_SECRET_RE.pattern.replace("([?&]", "([?&#]", 1))  # v0.51.343: the same names after "#" — #access_token= was shown in clear
 
 
 def _split_userinfo(url: str) -> tuple[str, str | None, str]:
@@ -954,25 +953,37 @@ def _pre343_url_mask(url: str) -> str:
     return f"{prefix}{_APPRISE_MASK}@{rest}" if at >= 0 else f"{prefix}{rest}"
 
 
+def _pre341_url_mask(url: str) -> str:
+    scheme, _, rest = url.partition("://")
+    return f"{scheme}://{_APPRISE_MASK}@{rest.split('@', 1)[1]}" if "@" in rest.split("/", 1)[0] else url
+
+
 def unmask_url_credentials(submitted: str, stored: str) -> str:
     """v0.51.341: a PATCHed URL still carrying a mask takes the stored credentials back, its host/path edits kept; ValueError (naming no value) when nothing stored sits behind a mask, so a mask is never written."""
-    if stored and submitted == _pre343_url_mask(stored) != mask_url_credentials(stored):
+    if stored and submitted in (_pre343_url_mask(stored), _pre341_url_mask(stored)) and submitted != mask_url_credentials(stored):  # v0.51.344: and .340's first-"@" mask — https://***@ss@host doubled "@ss"
         return stored  # v0.51.343: a tab loaded on <=.342 sends back that build's mask (userinfo to the last "@"); joined, the credential moved to a host out of the query
     m = _URL_SCHEME_PREFIX_RE.match(submitted)
     prefix = m.group(0) if m else ""
     body = submitted[len(prefix):]
     _, stored_userinfo, stored_rest = _split_userinfo(stored or "")
-    kept: dict[str, list[str]] = {}
-    for q in _URL_PARAM_SECRET_RE.finditer(stored_rest):
-        kept.setdefault(q.group(1)[1:].lower(), []).append(_query_secret_value(q))  # v0.51.343: names match as the mask does, case-blind — ?TOKEN=*** over ?token= was a 400
+    tail = body[len(_APPRISE_MASK) + 1:] if body.startswith(_APPRISE_MASK + "@") else body
+    pool = [(q.group(1)[1:-1], _query_secret_value(q)) for q in _URL_PARAM_SECRET_RE.finditer(stored_rest)]
+    wanted = [q.group(1)[1:-1] for q in _URL_PARAM_SECRET_RE.finditer(tail) if _query_secret_value(q) == _APPRISE_MASK]
+    fills: list[str | None] = [None] * len(wanted)
+    for fold in (str, str.casefold):  # v0.51.344: the exact spelling binds first, then case-blind as the (?i) mask folds — by position ?token=*** took ?TOKEN='s value
+        for i, name in enumerate(wanted):
+            at = None if fills[i] is not None else next((p for p, (n, _) in enumerate(pool) if fold(n) == fold(name)), None)
+            if at is not None:
+                fills[i] = pool.pop(at)[1]
+    pending = iter(fills)
 
     def keep(q: "re.Match[str]") -> str:
         if _query_secret_value(q) != _APPRISE_MASK:
             return q.group(0)
-        stored_vals = kept.get(q.group(1)[1:].lower())
-        if not stored_vals:
+        value = next(pending)
+        if value is None:
             raise ValueError(f"the masked {q.group(1)[1:-1]} has no stored value to keep — type it in full")
-        return q.group(1) + stored_vals.pop(0)
+        return q.group(1) + value
 
     if body.startswith(_APPRISE_MASK + "@"):
         if stored_userinfo is None:
@@ -1055,31 +1066,7 @@ class ConfigFile:
         Raises ConfigValidationError ONLY for clearly malformed YAML, not
         for missing required values (use validate() for that)."""
         with self._lock:
-            cfg = MotifConfig()
-            if self.path.exists():
-                try:
-                    raw = yaml.safe_load(self.path.read_text()) or {}
-                except yaml.YAMLError as e:
-                    raise ConfigValidationError(
-                        [f"motif.yaml is not valid YAML: {e}"]
-                    ) from e
-                if not isinstance(raw, dict):
-                    raise ConfigValidationError(
-                        ["motif.yaml top-level must be a mapping"]
-                    )
-                _hydrate_dataclass(cfg, raw)
-            self._apply_env_overrides(cfg)
-            return cfg
-
-    def _apply_env_overrides(self, cfg: MotifConfig) -> None:
-        for env_name, dotted, conv in ENV_BINDINGS:
-            v = os.environ.get(env_name)
-            if v is None:
-                continue
-            try:
-                _set_dotted(cfg, dotted, conv(v))
-            except (ValueError, TypeError) as e:
-                log.warning("Ignoring invalid env %s=%r: %s", env_name, v, e)
+            return load_config_text(self.path.read_text() if self.path.exists() else "")  # v0.51.344: a missing file parses to {} — the defaults, then the env
 
     def save(self, cfg: MotifConfig, *, updated_by: str = "system") -> None:
         """Atomic save: write a temp file in the same directory, fsync,
@@ -1184,6 +1171,31 @@ class ConfigFile:
             log.info("Wrote motif.yaml (updated_by=%s)", updated_by)
 
 
+def load_config_text(text: str) -> MotifConfig:
+    """ConfigFile.load()'s pipeline over motif.yaml text: parse, hydrate, then env overrides. Raises ConfigValidationError on bad YAML or a non-mapping."""
+    try:
+        raw = yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        raise ConfigValidationError([f"motif.yaml is not valid YAML: {e}"]) from e
+    if not isinstance(raw, dict):
+        raise ConfigValidationError(["motif.yaml top-level must be a mapping"])
+    cfg = MotifConfig()
+    _hydrate_dataclass(cfg, raw)
+    _apply_env_overrides(cfg)  # v0.51.344: load() and the bundle preview share this — the preview re-spelled it through private loader internals
+    return cfg
+
+
+def _apply_env_overrides(cfg: MotifConfig) -> None:
+    for env_name, dotted, conv in ENV_BINDINGS:
+        v = os.environ.get(env_name)
+        if v is None:
+            continue
+        try:
+            _set_dotted(cfg, dotted, conv(v))
+        except (ValueError, TypeError) as e:
+            log.warning("Ignoring invalid env %s=%r: %s", env_name, v, e)
+
+
 def _hydrate_dataclass(target: Any, src: dict) -> None:
     """Recursively populate a dataclass from a dict. Unknown keys are
     silently ignored (forward-compat). A scalar leaf takes its declared
@@ -1219,8 +1231,10 @@ def _hydrate_dataclass(target: Any, src: dict) -> None:
 
 def _coerce_leaf(default: Any, value: Any) -> Any:
     """`value` in the type of the scalar leaf whose declared default is `default`, where that spelling loses nothing; else `value` unchanged."""
-    if isinstance(default, bool) or isinstance(value, bool):
-        return value  # v0.51.342: bool leaves stay strict, and true/false never stands in for a number or a string
+    if isinstance(value, bool):
+        return value  # v0.51.342: true/false never stands in for a number or a string
+    if isinstance(default, bool):
+        return bool(value) if type(value) is int and value in (0, 1) else value  # v0.51.344: only 0/1, losslessly — a hand-edited `enabled: 1` loaded and ran, yet the restore preview called the file unparseable
     if isinstance(default, str):
         if isinstance(value, (int, float)):
             try:
@@ -1229,8 +1243,8 @@ def _coerce_leaf(default: Any, value: Any) -> Any:
                 log.warning("motif.yaml: a text setting holds a %d-bit integer too long to write as text — kept as written",
                             value.bit_length())
                 return value
-        # v0.51.342: only where "" is the declared default (token, url, API keys, themes_dir) — every reader treats it as unset; a null cookies_file is Path("."), a directory
-        return "" if value is None and default == "" else value
+        # v0.51.342: "" where it is the declared default (token, url, API keys, themes_dir) — every reader treats it as unset; a null cookies_file was Path("."), a directory
+        return default if value is None else value  # v0.51.344: null is the declared default in every text leaf — a null default_method, cookies_file or cron was refused or crashed its read
     if isinstance(default, int):
         return int(value) if isinstance(value, float) and value.is_integer() else value
     if isinstance(default, float):

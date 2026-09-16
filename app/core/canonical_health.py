@@ -344,14 +344,47 @@ def _canonical_write_lock(canonical: Path) -> threading.Lock:
         return lock
 
 
+# v0.51.344: exit's deadline closes publishing — a fetch answering after it started a write the interpreter froze
+_PUBLISH_LOCK = threading.Lock()
+_PUBLISH_CLOSED = threading.Event()
+
+
+def close_publishing(timeout: float) -> bool:
+    """No store publish starts after this; True once none is mid-write, False if one still was after `timeout` s."""
+    _PUBLISH_CLOSED.set()
+    if not _PUBLISH_LOCK.acquire(timeout=max(0.0, timeout)):
+        return False
+    _PUBLISH_LOCK.release()
+    return True
+
+
+# v0.51.344: section_id -> (conn, data_version, keys, paths) of its queued downloads — the bulk re-read the backlog per row
+_IN_FLIGHT_DOWNLOADS: dict = {}
+
+
 def _download_in_flight(conn, r) -> bool:
-    """A queued or running download for this canonical — the edition rides the job's payload."""
-    return conn.execute(
-        "SELECT 1 FROM jobs WHERE job_type = 'download' AND status IN ('pending', 'running') "
-        "AND media_type = ? AND tmdb_id = ? AND section_id = ? "
-        "AND COALESCE(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.edition_key') END, '') = ? LIMIT 1",
-        (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
-    ).fetchone() is not None
+    """A queued or running download that writes this row's canonical path — its own, or another row's on that path."""
+    from .canonical import download_theme_rel
+    # v0.51.344: data_version moves on every other connection's commit — a download queued, ended or retitled re-reads
+    version = conn.execute("PRAGMA data_version").fetchone()[0]
+    memo = _IN_FLIGHT_DOWNLOADS.get(r["section_id"])
+    if memo is None or memo[0] is not conn or memo[1] != version:
+        keys, paths = set(), set()
+        for j in conn.execute(
+            "SELECT j.media_type, j.tmdb_id, t.title, t.year, ps.themes_subdir, "
+            "COALESCE(CASE WHEN json_valid(j.payload) THEN json_extract(j.payload, '$.edition_key') END, '') AS edition_key "
+            "FROM jobs j LEFT JOIN themes t ON t.media_type = j.media_type AND t.tmdb_id = j.tmdb_id "
+            "LEFT JOIN plex_sections ps ON ps.section_id = j.section_id "
+            "WHERE j.job_type = 'download' AND j.status IN ('pending', 'running') AND j.section_id = ?",
+            (r["section_id"],),
+        ).fetchall():
+            keys.add((j["media_type"], j["tmdb_id"], j["edition_key"]))
+            if j["title"] is not None and j["themes_subdir"]:
+                # v0.51.344: the path the download writes — an edition row on the untagged folder and a same-title tmdb share one theme.mp3
+                paths.add(str(Path(download_theme_rel(j["media_type"], j["themes_subdir"], j["title"], j["year"],
+                                                      j["edition_key"])) / "theme.mp3").casefold())
+        memo = _IN_FLIGHT_DOWNLOADS[r["section_id"]] = (conn, version, keys, paths)
+    return (r["media_type"], r["tmdb_id"], r["edition_key"]) in memo[2] or str(r["file_path"]).casefold() in memo[3]
 
 
 def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
@@ -403,6 +436,32 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
             )
 
 
+# v0.51.344: what the incoming stamp overwrites — size, sha, then the loudness/norm anchors it voids
+_INCOMING_COLS = ("file_size", "file_sha256", "loudness_i", "loudness_tp", "loudness_lra", "loudness_measured_at",
+                  "loudness_measured_sha256", "norm_state", "norm_gain_db", "norm_target", "norm_at",
+                  "norm_orig_sha256", "norm_orig_pcm_sha256", "norm_plex_entry_uri")
+_ROW_WHERE = " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? AND edition_key = ?"
+
+
+def _stamp_incoming(db_path: Path, r, *, size: int, sha: str, conn=None) -> tuple | None:
+    """Before other bytes move onto a BROKEN row's canonical: stamp their size and sha, void the anchors; return what it replaced."""
+    with _run_conn(db_path, conn) as c:
+        prior = c.execute(f"SELECT {', '.join(_INCOMING_COLS)} FROM local_files" + _ROW_WHERE, _row_key(r)).fetchone()
+        # v0.51.344: the incoming sha lands before the bytes — a kill or lock between replace and stamp kept the old sha and anchors
+        c.execute("UPDATE local_files SET " + ", ".join(f"{col} = ?" for col in _INCOMING_COLS) + _ROW_WHERE,
+                  (size, sha, *(None,) * (len(_INCOMING_COLS) - 2), *_row_key(r)))
+    return None if prior is None else tuple(prior)
+
+
+def _unstamp_incoming(db_path: Path, r, prior: tuple | None, *, sha: str, conn=None) -> None:
+    """A move that failed moved nothing: write back what _stamp_incoming replaced, unless another writer stamped since."""
+    if prior is None:
+        return
+    with _run_conn(db_path, conn) as c:
+        c.execute("UPDATE local_files SET " + ", ".join(f"{col} = ?" for col in _INCOMING_COLS) + _ROW_WHERE
+                  + " AND file_sha256 = ?", (*prior, *_row_key(r), sha))
+
+
 def _stamp_present(db_path: Path, r, *, conn=None) -> None:
     """The restore guard found a non-empty canonical: stamp canonical_present = 1
     only — size/sha stay as recorded, so CHANGED still reports a mismatch."""
@@ -452,6 +511,14 @@ def restore_from_placement(db_path: Path, themes_dir: Path, r, *, conn=None) -> 
                 continue
         if src is None:
             return {"ok": False, "reason": "placement_file_missing"}
+        from .adopt import _hash_file
+        try:
+            sha, size = _hash_file(src)
+        except OSError as e:
+            log.warning("restore-canonical: %s/%s section=%s could not read %s: %s",
+                        r["media_type"], r["tmdb_id"], r["section_id"], src, e)
+            return {"ok": False, "reason": f"link_failed:{e}"}
+        prior = _stamp_incoming(db_path, r, size=size, sha=sha, conn=conn) if sha != r["file_sha256"] else None
         try:
             canonical.parent.mkdir(parents=True, exist_ok=True)
             # v0.51.338: placement's link — any OSError (EPERM on SMB/FUSE) copies, staged so a dead copy leaves no partial.
@@ -459,6 +526,8 @@ def restore_from_placement(db_path: Path, themes_dir: Path, r, *, conn=None) -> 
         except OSError as e:
             log.warning("restore-canonical: %s/%s section=%s failed: %s",
                         r["media_type"], r["tmdb_id"], r["section_id"], e)
+            # v0.51.344: a staged link/copy that raised moved nothing — a canonical an EACCES stat hid is still the recorded one
+            _unstamp_incoming(db_path, r, prior, sha=sha, conn=conn)
             return {"ok": False, "reason": f"link_failed:{e}"}
         _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
                         placement_kind=kind if r["placement_kind"] != kind else None, conn=conn)
@@ -495,46 +564,60 @@ def _store_guard(themes_dir: Path, r) -> dict | None:
 def _fetch_from_plex_store(plex_client, r) -> dict:
     """The bytes Plex serves for one row: {ok, data, entry_uri} or {ok: False, reason}. No disk, no database."""
     rk = str(r["plex_rating_key"])
-    themes = plex_client.get_themes(rating_key=rk)
-    if not themes.get("ok"):
-        return {"ok": False, "reason": f"plex_themes:{themes.get('http_status') or themes.get('error')}"}
-    uri = _selected_entry_uri(themes.get("body"))
-    if not uri:
-        return {"ok": False, "reason": "no_theme_entry"}
-    got = plex_client.fetch_theme_bytes(item_rating_key=rk, entry_uri=uri)
-    data = got.get("bytes") if got.get("ok") else None
-    if not data:
-        return {"ok": False, "reason": f"plex_fetch:{got.get('http_status') or got.get('error')}"}
+    try:
+        themes = plex_client.get_themes(rating_key=rk)
+        if not themes.get("ok"):
+            return {"ok": False, "reason": f"plex_themes:{themes.get('http_status') or themes.get('error')}"}
+        uri = _selected_entry_uri(themes.get("body"))
+        if not uri:
+            return {"ok": False, "reason": "no_theme_entry"}
+        got = plex_client.fetch_theme_bytes(item_rating_key=rk, entry_uri=uri)
+        data = got.get("bytes") if got.get("ok") else None
+        if not data:
+            return {"ok": False, "reason": f"plex_fetch:{got.get('http_status') or got.get('error')}"}
+    except Exception as e:  # noqa: BLE001 — v0.51.344: one raising fetch re-raised in f.result() and dropped its batch's bytes
+        log.warning("restore from plex: %s/%s section=%s — reading Plex's answer raised %s: %s; row skipped",
+                    r["media_type"], r["tmdb_id"], r["section_id"], type(e).__name__, e)
+        return {"ok": False, "reason": f"plex_error:{type(e).__name__}"}
     return {"ok": True, "data": data, "entry_uri": uri}
 
 
 def _publish_store_bytes(db_path: Path, themes_dir: Path, r, data: bytes, uri: str, *, conn=None) -> dict:
     """Write fetched store bytes to the canonical and stamp them: {ok, bytes, entry_uri} or {ok: False, reason}."""
+    import hashlib
     import os
     canonical = themes_dir / r["file_path"]
-    # v0.51.342: under the path's lock, as restore_from_placement — the guard, the write and the stamp are one step.
-    with _canonical_write_lock(canonical):
-        # v0.51.342: a download that landed while the bytes were in flight wins.
-        guard = _store_guard(themes_dir, r)
-        if guard is not None:
-            return guard
-        with _run_conn(db_path, conn) as c:
-            in_flight = _download_in_flight(c, r)
-        if in_flight:
-            # v0.51.342: its ffmpeg -y truncates whatever lands on theme.mp3 before it finishes.
-            return {"ok": False, "reason": "download_in_flight"}
-        try:
-            canonical.parent.mkdir(parents=True, exist_ok=True)
-            tmp = canonical.with_name(canonical.name + ".part")
-            with tmp.open("wb") as f:
-                f.write(data)
-            os.replace(tmp, canonical)
-        except OSError as e:
-            log.warning("restore-from-plex-store: %s/%s section=%s write failed: %s",
-                        r["media_type"], r["tmdb_id"], r["section_id"], e)
-            return {"ok": False, "reason": f"write_failed:{e}"}
-        _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
-                        placement_kind=None, conn=conn)
+    # v0.51.344: one lock order — publishing's gate, then the path's lock
+    with _PUBLISH_LOCK:
+        if _PUBLISH_CLOSED.is_set():
+            return {"ok": False, "reason": "motif_exiting"}
+        # v0.51.342: under the path's lock, as restore_from_placement — the guard, the write and the stamp are one step.
+        with _canonical_write_lock(canonical):
+            # v0.51.342: a download that landed while the bytes were in flight wins.
+            guard = _store_guard(themes_dir, r)
+            if guard is not None:
+                return guard
+            with _run_conn(db_path, conn) as c:
+                in_flight = _download_in_flight(c, r)
+            if in_flight:
+                # v0.51.342: its ffmpeg -y truncates whatever lands on theme.mp3 before it finishes.
+                return {"ok": False, "reason": "download_in_flight"}
+            sha = hashlib.sha256(data).hexdigest()
+            prior = _stamp_incoming(db_path, r, size=len(data), sha=sha, conn=conn) if sha != r["file_sha256"] else None
+            try:
+                canonical.parent.mkdir(parents=True, exist_ok=True)
+                tmp = canonical.with_name(canonical.name + ".part")
+                with tmp.open("wb") as f:
+                    f.write(data)
+                os.replace(tmp, canonical)
+            except OSError as e:
+                log.warning("restore-from-plex-store: %s/%s section=%s write failed: %s",
+                            r["media_type"], r["tmdb_id"], r["section_id"], e)
+                # v0.51.344: the write goes to .part and os.replace is atomic — a failure moved nothing onto the canonical
+                _unstamp_incoming(db_path, r, prior, sha=sha, conn=conn)
+                return {"ok": False, "reason": f"write_failed:{e}"}
+            _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
+                            placement_kind=None, conn=conn)
     return {"ok": True, "bytes": len(data), "entry_uri": uri}
 
 
@@ -579,6 +662,7 @@ class _PlexGate:
         self._lock = threading.Lock()
         self._n = 0
         self._first_at = None
+        self._alive_at = None  # v0.51.344: when Plex last answered — a no-answer sent before it says nothing about Plex now
         self.tripped = False
         self.cancelled = threading.Event()
         # v0.51.342: the serial tail's only — the pool's loop sees the cancel and wakes its backoffs; a worker never asks.
@@ -608,20 +692,21 @@ class _PlexGate:
         with self._lock:
             return not self.tripped
 
-    def after(self, reason) -> None:
+    def after(self, reason, started) -> None:
         with self._lock:
             if reason is None or not str(reason).startswith(_PLEX_NO_ANSWER):
-                self._n, self._first_at = 0, None
+                self._n, self._first_at, self._alive_at = 0, None, self._clock()
                 return
+            if self._alive_at is not None and started < self._alive_at:
+                return  # v0.51.344: sent before Plex last answered — it says nothing about Plex now
             self._n += 1
-            now = self._clock()
             if self._first_at is None:
-                self._first_at = now
+                self._first_at = started  # v0.51.344: both ends are request starts — a refusal then a 30 s hang read as a 60 s outage
             # v0.51.342: count AND time — four workers make eight no-answers in ~8 s, shorter than a Plex restart.
-            if not self.tripped and self._n >= _PLEX_TRIP_AFTER and now - self._first_at >= _PLEX_TRIP_WINDOW_S:
+            if not self.tripped and self._n >= _PLEX_TRIP_AFTER and started - self._first_at >= _PLEX_TRIP_WINDOW_S:
                 self.tripped = True
                 log.warning("restore from plex: Plex gave no answer to %d requests over %.0f s — the remaining "
-                            "store rows are skipped as plex_unreachable", self._n, now - self._first_at)
+                            "store rows are skipped as plex_unreachable", self._n, started - self._first_at)
 
 
 def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_client_factory=None,
@@ -735,8 +820,9 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_clie
                     return i, {"ok": False, "reason": "plex_unreachable"}
                 if gate.cancelled.is_set():
                     return i, None  # v0.51.342: woke from a backoff after the cancel — never ask Plex; not tried.
+                started = gate._clock()
                 got = _fetch_from_plex_store(pool_client(), rows[i])
-                gate.after(None if got["ok"] else got["reason"])
+                gate.after(None if got["ok"] else got["reason"], started)
                 return i, got
 
             todo = iter(queued)
@@ -773,6 +859,9 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_clie
                         gate.cancelled.set()
                         # v0.51.342: a queued fetch still asked a hung Plex after the cancel — drop it; running ones publish.
                         pending = {f for f in pending if not f.cancel()}
+            except BaseException:
+                gate.cancelled.set()  # v0.51.344: a publish that raised left the backoffs to sleep out, then ask Plex for bytes nobody writes
+                raise
             finally:
                 pool.shutdown(wait=True, cancel_futures=True)
                 for c in clients:
@@ -796,8 +885,9 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_clie
                     return {"ok": False, "reason": "plex_unreachable"}
                 if gate.cancelled.is_set():
                     return None  # v0.51.342: as the pool's work() — woke from a backoff after the cancel; not tried.
+                started = gate._clock()
                 got = refetch_from_plex_store(db_path, themes_dir, tail_client(), r, conn=conn)
-                gate.after(None if got["ok"] else got["reason"])
+                gate.after(None if got["ok"] else got["reason"], started)
                 return got
 
             # v0.51.342: nothing else polls the cancel here, so a tail row's backoff must ask it — the pool's never do.
@@ -871,3 +961,18 @@ def forget_canonical_checks(db_path: Path) -> int:
             "    canonical_hash_miss_sig = NULL "
             "WHERE canonical_health_checked_at IS NOT NULL OR canonical_changed_candidate IS NOT NULL "
             "   OR canonical_hash_miss_sig IS NOT NULL").rowcount
+
+
+def forget_unmarked_checks(db_path: Path) -> tuple[int, str | None]:
+    """At boot: clears the check results stamped after the last check's mark; returns (rows cleared, the mark)."""
+    from .db import get_conn, transaction
+    from .plex_enum import CANONICAL_CHECK_MARK_KEY
+    with get_conn(db_path) as conn, transaction(conn):
+        row = conn.execute("SELECT value FROM runtime_settings WHERE key = ?", (CANONICAL_CHECK_MARK_KEY,)).fetchone()
+        mark = row[0] if row else None
+        # v0.51.344: no mark = stamps no v80-aware check vouched for (a .341 rollback or a pre-.344 build) — all go.
+        n = conn.execute("UPDATE local_files SET canonical_health_checked_at = NULL, "
+                         # v0.51.344: the whole result, as forget_canonical_checks — 'Not checked yet' says CHANGED is empty.
+                         "    canonical_changed_candidate = NULL, canonical_hash_miss_sig = NULL "
+                         "WHERE canonical_health_checked_at > ?", (mark or "",)).rowcount
+    return n, mark

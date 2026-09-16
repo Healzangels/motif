@@ -27,7 +27,18 @@ def _font_sizes(css: str):
         if selector.startswith(":root"):
             continue
         for value in re.findall(r"(?:^|[;\s])font-size:\s*([^;}]+)", m.group(2)):
-            yield selector, value.strip()
+            # v0.51.344: `9px !important` still retypes the 9px step (PB-083)
+            yield selector, re.sub(r"\s*!important$", "", value.strip())
+        for value in re.findall(r"(?:^|[;\s])font:\s*([^;}]+)", m.group(2)):
+            # v0.51.344: a font: shorthand's size (the token a /line-height may follow) is a font-size too
+            size = re.search(r"(?:^|\s)(\d*\.?\d+px)(?=/|\s|$)", value.strip())
+            if size:
+                yield selector, size.group(1)
+
+
+def test_the_size_reader_sees_important_and_the_font_shorthand():
+    css = ".a { font-size: 9px !important; }\n.b { font: 700 11px/14px var(--font-mono); }\n.c { font: inherit; }"
+    assert list(_font_sizes(css)) == [(".a", "9px"), (".b", "11px")]
 
 
 def test_the_smallest_step_is_named():

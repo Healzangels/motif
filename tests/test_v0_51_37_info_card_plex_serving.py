@@ -23,6 +23,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from _slice_helpers import slice_between
+
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 AUTH = {"X-Authentik-Username": "testadmin"}
@@ -32,7 +34,7 @@ AUTH = {"X-Authentik-Username": "testadmin"}
 
 def test_js_playback_label_has_plex_serving_branch():
     # v0.51.343: read the order inside the headline — the shared _plexBackupState helper above it also tests has_theme
-    fn = APP_JS[APP_JS.index("function _derivePlaybackSourceLabel() {"):APP_JS.index("function _humanSourceKind(")]
+    fn = slice_between(APP_JS, "function _derivePlaybackSourceLabel() {", "function _humanSourceKind(")  # v0.51.344: the end anchor searched after the start, not from the file top
     assert "data.plex_has_theme === 1" in fn
     assert "Plex is serving a theme motif no longer manages" in fn
     # the new branch must sit AFTER the plex_independent_theme branch and BEFORE

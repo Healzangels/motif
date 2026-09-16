@@ -6,6 +6,9 @@ type coercion for bool / int / list / str scalars.
 """
 from __future__ import annotations
 
+import sys
+import time
+
 import pytest
 
 from app.core.config_file import MotifConfig
@@ -118,6 +121,28 @@ def test_int_field_coerces(cfg):
     assert isinstance(cfg.downloads.audio_quality, int)
 
 
+@pytest.mark.parametrize("sent, stored", [(7, 7), ("7", 7), (" 30 ", 30), (30.0, 30)])
+def test_int_field_takes_an_integer_or_integer_text(cfg, sent, stored):
+    _apply_partial_config(cfg, {"downloads": {"rate_per_hour": sent}})
+    assert cfg.downloads.rate_per_hour == stored and type(cfg.downloads.rate_per_hour) is int
+
+
+@pytest.mark.parametrize("sent", [
+    True, None, "", "x", "1.5", 1.5, "1_6", "１６", [1], {"v": 1}, float("inf"), float("nan"),
+    pytest.param("9" * (sys.get_int_max_str_digits() + 1), id="past-the-int-text-limit"),
+])
+def test_int_field_refuses_a_non_integer_naming_the_key_not_the_value(cfg, sent):
+    # v0.51.344: int(v) answered in Python's words, echoing the value; 1.5 and true saved as 1
+    cfg.downloads.rate_per_hour = 30
+    with pytest.raises(ValueError) as e:
+        _apply_partial_config(cfg, {"downloads": {"rate_per_hour": sent}})
+    msg = str(e.value)
+    assert "downloads.rate_per_hour" in msg and "integer" in msg, msg
+    if isinstance(sent, str) and sent.strip():
+        assert sent.strip() not in msg, "the refusal names the key, never echoes the value"
+    assert cfg.downloads.rate_per_hour == 30 and type(cfg.downloads.rate_per_hour) is int
+
+
 def test_list_must_be_list(cfg):
     with pytest.raises(ValueError, match="must be a list"):
         _apply_partial_config(cfg, {"plex": {"section_exclude": "Movies"}})
@@ -167,10 +192,16 @@ def test_float_field_takes_a_json_number_or_numeric_string(cfg, sent, stored):
 @pytest.mark.parametrize("sent", [
     True, False, None, "", "abc", "-16 LUFS", "nan", "inf", "-Infinity", "1e999",
     float("nan"), float("inf"), float("-inf"), pytest.param(10 ** 400, id="int-too-big-for-float"), [-16], {"v": -16},
+    "-1_6", "１６", pytest.param(" -16", id="nbsp-16"), "1 6",  # v0.51.344: float() read these as -16 / 16
+    pytest.param("1" * 50_000 + "x", id="50k-digits-then-x"), pytest.param("1" * 50_000 + ".1x", id="50k-digits-point-digit-then-x"),
 ])
 def test_float_field_refuses_a_non_number_naming_the_key_not_the_value(cfg, sent):
+    started = time.perf_counter()
     with pytest.raises(ValueError) as e:
         _apply_partial_config(cfg, {"loudness": {"target_lufs": sent}})
+    elapsed = time.perf_counter() - started
+    # v0.51.344: the PATCH runs this on the event loop — `\d+\.?\d*` took 56-90s to refuse 50,000 digits and an "x"
+    assert elapsed < 1.0, f"refused in {elapsed:.2f}s; the number-text check must stay linear in the text's length"
     msg = str(e.value)
     assert "loudness.target_lufs" in msg
     if isinstance(sent, str) and sent.strip():

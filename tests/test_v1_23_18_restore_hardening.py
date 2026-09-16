@@ -15,6 +15,7 @@ Five fixes from the xhigh code review of the v1.23.15-17 backup feature:
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -104,7 +105,7 @@ def test_prerestore_copy_exempt_from_prune(tmp_path):
                            prerestore=True)
     for s in ("20260102-000000", "20260103-000000", "20260104-000000"):
         db_backup.create_backup(live, tmp_path, now_stamp=s)
-    removed = db_backup.prune_backups(tmp_path, retention=1)
+    removed = db_backup.prune_backups(tmp_path, retention=1, now_stamp=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))  # v0.51.344: prune sets aside a stamp after now
     # retention=1 keeps the newest ROUTINE backup; the two older routine
     # ones go; the prerestore copy is NEVER pruned.
     assert "motif-prerestore-20260101-000000.db" not in removed

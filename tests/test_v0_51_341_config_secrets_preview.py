@@ -406,8 +406,6 @@ def test_both_restore_endpoints_pass_the_live_cookies_path(tmp_path, monkeypatch
                     files={"file": (up.name, up.read_bytes(), "application/gzip")})
     assert r.status_code == 200, r.text
     assert r.json()["preview"]["cookies_target"] == str(live_ck)
-    # v0.51.343: an upload is named by its upload second — deleted so a different bundle in that same second is not a 409
-    assert client.post("/api/admin/database-backup/delete", json={"name": r.json()["preview"]["name"]}, headers=_H).status_code == 200
     bundle_ck = tmp_path / "bundle-mount" / "yt-cookies.txt"
     own = _bundle(tmp_path / "mk3", f"paths:\n  cookies_file: {bundle_ck}\n", stamp="20260913-060000")
     r = client.post("/api/admin/database-restore/upload", headers=_H,

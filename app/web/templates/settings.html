@@ -1462,7 +1462,8 @@
         <span class="form-label-text">WRITE A BUNDLE</span>
         <p class="form-hint">
           Each scheduled run writes a bundle (the snapshot is inside it)
-          instead of a bare snapshot. Retention counts both kinds.
+          instead of a bare snapshot. Retention counts both kinds
+          (uploaded bundles sit outside it).
         </p>
       </label>
       <label class="field-row">
@@ -1485,8 +1486,12 @@
                  data-cfg-field="database_backup.retention" placeholder="7" />
           <p class="form-hint">
             After each scheduled backup, delete all but the newest N
-            snapshots. <code>0</code> keeps every backup (you prune
-            manually). Manual backups count toward the limit.
+            snapshots and bundles. <code>0</code> keeps every backup (you prune
+            manually). Manual backups count toward the limit; uploaded
+            bundles and pre-restore copies never do — they stay until you
+            delete them. While every kept bundle left a member out over its
+            size cap, the newest complete bundle is kept as well, and a
+            backup stamped later than now is neither counted nor deleted.
           </p>
         </span>
       </label>

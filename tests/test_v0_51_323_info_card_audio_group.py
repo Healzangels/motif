@@ -158,10 +158,11 @@ def _label(lf, data, placements, ambiguous=False) -> str:
      "copy of Plex's cloud theme on disk as backup · Plex serves its own theme"),
     ({"source_kind": "adopt", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 1, "plex_theme_verified_ok": 1}, [],
      "adopted sidecar theme on disk as backup · Plex serves its own theme"),
+    # v0.51.344: "serves no theme" — has_theme 0 does not record that Plex ever served
     ({"source_kind": "themerrdb", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 0}, [],
-     "ThemerrDB theme on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)"),
+     "ThemerrDB theme on disk as backup · Plex serves no theme (PROMOTE TO ACTIVE deploys it)"),
     ({"source_kind": "url", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 1, "plex_theme_verified_ok": 0}, [],
-     "user-URL theme on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)"),
+     "user-URL theme on disk as backup · Plex serves no theme (PROMOTE TO ACTIVE deploys it)"),
     # v0.51.341: no plex_items row at all (has_theme is NOT NULL, so null = the item left Plex) — PROMOTE has nowhere to deploy
     ({"source_kind": "themerrdb", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": None}, [],
      "ThemerrDB theme on disk as backup · this item is not in Plex"),

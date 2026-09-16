@@ -34,10 +34,6 @@ def client_and_db(tmp_path, monkeypatch):
     monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
     monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
-    # v0.51.208: pin the loudness target to its -18 default — the marker assertions depend
-    # on the outlier threshold, and other loudness tests leak MOTIF_LOUDNESS_TARGET (the
-    # v0.51.201 leak). Without this a leaked floor (-31) makes -20 read as an outlier.
-    monkeypatch.delenv("MOTIF_LOUDNESS_TARGET", raising=False)
     from app.config import Settings
     from app.core.auth import create_admin, init_auth_schema
     from app.web.api import create_app

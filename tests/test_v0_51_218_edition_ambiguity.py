@@ -42,7 +42,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
     monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("MOTIF_LOUDNESS_TARGET", raising=False)
     from app.config import Settings
     from app.core.auth import create_admin, init_auth_schema
     from app.web.api import create_app

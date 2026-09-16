@@ -220,8 +220,8 @@ def test_a_post_swap_failure_that_cannot_unstage_the_database_names_what_applies
     with pytest.raises(bundle.StagingError) as exc:
         bundle.stage_bundle_restore(db, cd, b, keep_config=False)
     msg = str(exc.value)
-    assert bundle.pending_members(db, cd) == ["database"], "the config this call staged is gone; the database would not go"
-    assert "motif.db.restore-pending could not be removed" in msg and "it applies at restart" in msg, msg
+    assert bundle.pending_members(db, cd) == ["database", "config"], "v0.51.344: the database would not go, so the config staged with it stays"
+    assert "motif.db.restore-pending could not be removed" in msg and "a restart applies it with the staged config and your live cookies file" in msg, msg
     assert "nothing from this bundle is staged" not in msg
 
 
@@ -240,13 +240,12 @@ def test_the_endpoint_answers_a_post_swap_failure_in_words_with_nothing_pending(
 # ── 4. wrong-typed leaves ────────────────────────────────────────────
 
 # v0.51.342: an unquoted number in a text leaf is no longer here — the loader hydrates it to text (test_v0_51_342_config_bundle_integration)
+# v0.51.344: nor a null text leaf (its declared default) or a 0/1 bool leaf (false/true) — the same file's walks; a 2 is still refused
 _WRONG_LEAVES = [
     ("plex:\n  url:\n    host: PLEX-VALUE\n", "plex.url", "PLEX-VALUE"),
     ("plex:\n  url: [PLEX-VALUE]\n", "plex.url", "PLEX-VALUE"),
     ("paths:\n  cookies_file:\n    at: COOKIE-VALUE\n", "paths.cookies_file", "COOKIE-VALUE"),
     ("paths:\n  cookies_file: [COOKIE-VALUE]\n", "paths.cookies_file", "COOKIE-VALUE"),
-    ("paths:\n  cookies_file: null\n", "paths.cookies_file", None),
-    ("plex:\n  movie_section: null\n", "plex.movie_section", None),
     ("plex:\n  token: true\n", "plex.token", None),
     ("downloads:\n  concurrency: '3'\n", "downloads.concurrency", None),
     ("web:\n  port: 8080.5\n", "web.port", None),
@@ -254,7 +253,7 @@ _WRONG_LEAVES = [
     ("loudness:\n  target_lufs: 'nan'\n", "loudness.target_lufs", None),
     ("plex:\n  enabled: 'true'\n", "plex.enabled", None),
     ("notifications:\n  apprise_urls: discord://HOOK-VALUE\n", "notifications.apprise_urls", "HOOK-VALUE"),
-    ("plex:\n  enabled: 1\n", "plex.enabled", None),
+    ("plex:\n  enabled: 2\n", "plex.enabled", None),
     ("database_backup:\n  retention: true\n", "database_backup.retention", None),
     ("downloads:\n  rate_per_hour: THIRTY-VALUE\n", "downloads.rate_per_hour", "THIRTY-VALUE"),
     ("loudness:\n  target_lufs: LOUD-VALUE\n", "loudness.target_lufs", "LOUD-VALUE"),
@@ -283,13 +282,14 @@ def test_a_wrong_typed_leaf_is_refused_by_its_dotted_key_never_its_value(tmp_pat
 def test_the_probed_leaves_load_without_raising_then_break_the_reads_boot_makes(tmp_path, no_env):
     from app.config import Settings
     from app.core.plex import PlexClient, PlexConfig
-    # v0.51.342: reversed for an unquoted number (it now hydrates to text); a list, a mapping and a null still break these reads
+    from app.core.config_file import PathsConfig
+    # v0.51.342: reversed for an unquoted number (it now hydrates to text); a list and a mapping still break these reads
     (tmp_path / "motif.yaml").write_text("paths:\n  cookies_file: [5]\n")
     with pytest.raises(TypeError):
         Settings(config_dir=tmp_path, data_dir=tmp_path / "data").cookies_file  # the boot's apply_pending_cookies argument
     (tmp_path / "motif.yaml").write_text("paths:\n  cookies_file: null\n")
-    with pytest.raises(TypeError):
-        Settings(config_dir=tmp_path, data_dir=tmp_path / "data").cookies_file
+    # v0.51.344: reversed for a null — it hydrates to the declared default, never Path(".")
+    assert Settings(config_dir=tmp_path, data_dir=tmp_path / "data").cookies_file == Path(PathsConfig().cookies_file)
     (tmp_path / "motif.yaml").write_text("plex:\n  url:\n    host: 5\n")
     s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
     with pytest.raises(AttributeError):

@@ -96,7 +96,9 @@ const out = cases.map((c) => {
           last_place_attempt_reason: 'backup_only' },
     t: { media_type: 'tv', tmdb_id: 777 }, placements: [],
     data: { plex_has_theme: c.plexHasTheme, plex_rating_key: '' },
-    libraryState: { items: [{ rating_key: c.rk }] }, computeSrcLetter: () => 'P',
+    // v0.51.344: the loaded row is what the row ▶'s rule reads — a standing-by backup beside c.plexHasTheme
+    libraryState: { items: [{ rating_key: c.rk, theme_media_type: 'tv', theme_tmdb: 777, file_path: 'tv/x/theme.mp3',
+                              last_place_attempt_reason: 'backup_only', plex_has_theme: c.plexHasTheme }] },
   });
   const body = parse('<dl class="dlg-grid">' + rows + '</dl>');
   const players = body.querySelectorAll('audio.info-audio');
@@ -159,7 +161,7 @@ const out = cases.map((rk) => {
     htmlEscape, window, row: { plex_title: 'X', plex_media_type: 'show', rating_key: rk, plex_has_theme: 1 } });
   const full = (ratingKey, plexRk) => vm.runInNewContext(block + '\nplexThemeBlock;', {
     htmlEscape, window, lfIsBackupOnly: false, ratingKey, lf: null, data: { plex_has_theme: 1, plex_rating_key: plexRk },
-    libraryState: { items: [] }, computeSrcLetter: () => 'P' });
+    t: { media_type: 'show', tmdb_id: 1 }, placements: [], libraryState: { items: [] } });  // v0.51.344: the card's in-scope theme + placements feed the row-shaped gate
   const quick = computeQuickPlay({ plex_has_theme: 1, plex_theme_verified_ok: 1, rating_key: rk });
   return { rk, bare: bareHtml, fullArg: full(rk, ''), fullPayload: full(undefined, rk),
            quick: quick ? quick.src : null };

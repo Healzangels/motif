@@ -83,23 +83,37 @@ def _admissible(name):
     return name.isascii() and name.isprintable()
 
 
+def _ascii_stamp(s):
+    return len(s) == 15 and s[8] == "-" and all(c in "0123456789" for c in s[:8] + s[9:])
+
+
 def _upload_stamp(name):
     # v0.51.343: the uploaded-bundle shape spelled without a regex — motif-bundle-upload-<8 ASCII digits>-<6>.tar.gz
     pre, suf = "motif-bundle-upload-", ".tar.gz"
     mid = name[len(pre):-len(suf)] if name.startswith(pre) and name.endswith(suf) else ""
-    ok = len(mid) == 15 and mid[8] == "-" and all(c in "0123456789" for c in mid[:8] + mid[9:])
-    return mid if ok else None
+    ok = _ascii_stamp(mid[:15]) and mid[15:] in ("", *(f"-{n}" for n in range(2, 100)))  # v0.51.344: -2..-99, a same-second upload's next free name
+    return mid[:15] if ok else None
+
+
+def _partial_stamp(name):
+    # v0.51.344: the partial-bundle shape spelled without a regex — motif-bundle-partial-<8 ASCII digits>-<6>.tar.gz
+    pre, suf = "motif-bundle-partial-", ".tar.gz"
+    mid = name[len(pre):-len(suf)] if name.startswith(pre) and name.endswith(suf) else ""
+    return mid if _ascii_stamp(mid) else None
 
 
 def _want(name):
-    """(is_backup_name, kind_of, _stamp_of, retained): the frozen copy on printable ASCII, uploads outside retention, quirks refused."""
+    """(is_backup_name, kind_of, _stamp_of, retained, partial): the frozen copy on printable ASCII, uploads outside retention, partial bundles inside it, quirks refused."""
     stamp = _upload_stamp(name)
     if stamp is not None:
-        return True, "bundle", stamp, False
+        return True, "bundle", stamp, False, False
+    stamp = _partial_stamp(name)
+    if stamp is not None:
+        return True, "bundle", stamp, True, True
     kind = _old_kind_of(name) if _admissible(name) else None
     if kind is None:
-        return False, None, None, None
-    return True, kind, _old_stamp_of(name), bool(_OLD_BACKUP_RE.match(name) or _OLD_BUNDLE_RE.match(name))
+        return False, None, None, None, None
+    return True, kind, _old_stamp_of(name), bool(_OLD_BACKUP_RE.match(name) or _OLD_BUNDLE_RE.match(name)), False
 
 
 # ── the generated name corpus ────────────────────────────────────────
@@ -108,12 +122,15 @@ _STAMPS = (NOW, "20260101-000000", "00000000-000000", "99999999-999999",
            "２０２６０９１２-０４００００", "٢٠٢٦٠٩١٢-٠٤٠٠٠٠",
            "2026091-040000", "202609120-040000", "20260912_040000", "20260912-04000",
            "20260912-0400000", "20260912040000", "2026O912-040000", "x", "")
+_STAMPS += (f"{NOW}-2", f"{NOW}-99", f"{NOW}-0", f"{NOW}-1", f"{NOW}-02", f"{NOW}-100", f"{NOW}-２", f"{NOW}-")  # v0.51.344: an upload's -N and its near misses
 _PREFIXES = ("motif-", "motif-prerestore-", "motif-bundle-", "Motif-", "MOTIF-", "motif-Bundle-",
              "motif-PRERESTORE-", "motif_", "motif-bundle_", "motif-prerestore", "motif--",
              "motif-snapshot-", "xmotif-", " motif-", "", "./motif-", "../motif-",
              "backups/motif-", "..\\motif-", "/motif-",
              "motif-bundle-upload-", "motif-bundle-upload_", "motif-bundle-upload", "motif-Bundle-Upload-",
              "motif-upload-", "motif-prerestore-upload-", "motif-bundle-upload-upload-", "backups/motif-bundle-upload-")
+_PREFIXES += ("motif-bundle-partial-", "motif-bundle-partial_", "motif-bundle-partial", "motif-bundle-Partial-", "motif-partial-",
+              "motif-bundle-partial-upload-", "motif-bundle-upload-partial-", "backups/motif-bundle-partial-")  # v0.51.344: the partial shape and its near misses
 _SUFFIXES = (".db", ".tar.gz", ".tar", ".gz", ".DB", ".TAR.GZ", ".db.part", ".tar.gz.part",
              ".db\n", ".tar.gz\n", ".db\n\n", ".db ", " .db", ".db/", ".db\\", "", ".db/..",
              ".tar.gz/../motif.db", ".db-wal", ".dbx", ".tar.gz.db", ".db.tar.gz")
@@ -132,6 +149,10 @@ def test_the_corpus_reaches_every_old_outcome():
         "a traversal attempt wrapped around a valid name"
     # v0.51.343: the upload shape, and its near misses the old table and the new one both refuse
     assert any(_upload_stamp(n) for n in CORPUS) and any(n.startswith("motif-bundle-upload") and not _want(n)[0] for n in CORPUS)
+    # v0.51.344: a -N upload, a partial bundle, and near misses of each that both tables refuse
+    assert any(_upload_stamp(n) and not n.endswith(f"{_upload_stamp(n)}.tar.gz") for n in CORPUS)
+    assert any(n.startswith("motif-bundle-upload-") and n.endswith(".tar.gz") and f"{NOW}-" in n and not _want(n)[0] for n in CORPUS)
+    assert any(_partial_stamp(n) for n in CORPUS) and any(n.startswith("motif-bundle-partial") and not _want(n)[0] for n in CORPUS)
 
 
 def test_name_functions_match_the_frozen_copy_on_printable_ascii_and_refuse_the_quirks():
@@ -149,13 +170,14 @@ def test_name_functions_match_the_frozen_copy_on_printable_ascii_and_refuse_the_
 
 
 def test_classify_is_the_one_answer_for_gate_kind_stamp_and_retention():
-    assert db_backup._classify(f"motif-{NOW}.db") == ("snapshot", NOW, True)
-    assert db_backup._classify(f"motif-bundle-{NOW}.tar.gz") == ("bundle", NOW, True)
-    assert db_backup._classify(f"motif-prerestore-{NOW}.db") == ("prerestore", NOW, False)
-    assert db_backup._classify(f"motif-bundle-upload-{NOW}.tar.gz") == ("bundle", NOW, False)  # v0.51.343
+    assert db_backup._classify(f"motif-{NOW}.db") == ("snapshot", NOW, True, False)
+    assert db_backup._classify(f"motif-bundle-{NOW}.tar.gz") == ("bundle", NOW, True, False)
+    assert db_backup._classify(f"motif-prerestore-{NOW}.db") == ("prerestore", NOW, False, False)
+    assert db_backup._classify(f"motif-bundle-upload-{NOW}.tar.gz") == ("bundle", NOW, False, False)  # v0.51.343
+    assert db_backup._classify(f"motif-bundle-partial-{NOW}.tar.gz") == ("bundle", NOW, True, True)  # v0.51.344: + partial
     for n in CORPUS:
-        ok, kind, stamp, retained = _want(n)
-        assert db_backup._classify(n) == ((kind, stamp, retained) if ok else None), n
+        ok, kind, stamp, retained, partial = _want(n)
+        assert db_backup._classify(n) == ((kind, stamp, retained, partial) if ok else None), n
 
 
 # ── the same comparison on a real backups dir ────────────────────────
@@ -165,11 +187,13 @@ _FS_NEAR_MISSES = (f"motif-bundle-{NOW}.tar", "motif-bundle-x.tar.gz", f"motif-{
                    f" motif-{NOW}.db", f"motif-{NOW}.dbx", f"motif-prerestore{NOW}.db",
                    f"motif-{NOW}.db\n\n", "manifest.json", "motif.db", "notes.txt",
                    f"motif-bundle-upload-{NOW}.tar", f"motif-bundle-upload-{NOW}.tar.gz.part")
+_FS_NEAR_MISSES += (f"motif-bundle-partial-{NOW}.tar", f"motif-bundle-partial-{NOW}.tar.gz.part",
+                    f"motif-bundle-upload-{NOW}-1.tar.gz", f"motif-bundle-upload-{NOW}-100.tar.gz")  # v0.51.344
 
 
 def _fs_names():
     names, seen = [], set()
-    for n in [n for n in CORPUS if _old_is_backup_name(n) or _upload_stamp(n)] + list(_FS_NEAR_MISSES):
+    for n in [n for n in CORPUS if _old_is_backup_name(n) or _upload_stamp(n) or _partial_stamp(n)] + list(_FS_NEAR_MISSES):  # v0.51.344: partial names too
         if n.casefold() not in seen:  # a case-insensitive filesystem would merge the two
             seen.add(n.casefold())
             names.append(n)
@@ -188,7 +212,7 @@ def _populate(cd: Path, names: list[str]) -> list[str]:
 
 def _frozen_reach(n):
     # v0.51.343: the names the frozen copy is still the oracle for — printable ASCII, not an upload
-    return _admissible(n) and not _upload_stamp(n)
+    return _admissible(n) and not _upload_stamp(n) and not _partial_stamp(n)  # v0.51.344: a partial name has no frozen counterpart
 
 
 def test_list_backups_matches_the_frozen_copy_on_disk(tmp_path):
@@ -204,6 +228,9 @@ def test_list_backups_matches_the_frozen_copy_on_disk(tmp_path):
                for r in ups)
     assert rows == sorted(rows, key=lambda r: (_want(r.name)[2], r.name), reverse=True), "newest first across every shape"
     assert {(r.kind, r.retained) for r in rows} == {("snapshot", True), ("prerestore", False), ("bundle", True), ("bundle", False)}
+    # v0.51.344: partial rides the row exactly where the name is the partial shape, and it is a retained bundle
+    assert [r.name for r in rows if r.partial] == [r.name for r in rows if _partial_stamp(r.name)] and any(r.partial for r in rows)
+    assert all((r.kind, r.retained) == ("bundle", True) for r in rows if r.partial)
     assert db_backup.list_backups(tmp_path / "absent") == _old_list_backups(tmp_path / "absent") == []
 
 
@@ -211,11 +238,13 @@ def test_list_backups_matches_the_frozen_copy_on_disk(tmp_path):
 def test_prune_backups_matches_the_frozen_copy_on_disk(tmp_path, retention):
     names = _fs_names()
     # v0.51.343: retargeted — the frozen copy prunes the printable-ASCII names; quirk names and uploads sit beside them untouched
+    # v0.51.344: partial names stay out (they count toward retention and carry the spare rule — test_v0_51_344_backup_retention_names); now is past every corpus stamp
+    beside = [n for n in names if not _frozen_reach(n) and not _partial_stamp(n)]
     _populate(tmp_path / "old", [n for n in names if _frozen_reach(n)])
-    _populate(tmp_path / "new", names)
-    removed = db_backup.prune_backups(tmp_path / "new", retention)
+    _populate(tmp_path / "new", [n for n in names if not _partial_stamp(n)])
+    removed = db_backup.prune_backups(tmp_path / "new", retention, now_stamp="99999999-999999")
     assert removed == _old_prune_backups(tmp_path / "old", retention)
     assert (sorted(p.name for p in (tmp_path / "new" / "backups").iterdir())
-            == sorted([p.name for p in (tmp_path / "old" / "backups").iterdir()] + [n for n in names if not _frozen_reach(n)]))
+            == sorted([p.name for p in (tmp_path / "old" / "backups").iterdir()] + beside))
     if retention in (2, 7):
         assert removed and not any("prerestore" in n for n in removed)

@@ -23,6 +23,7 @@ from test_v0_51_339_canonical_health_restore import (  # noqa: F401 — admin_cl
     _DRIVER, _NODE, APP_JS, _app_fn, _report, _row, admin_client,
 )
 from test_v0_51_342_canonical_health_changed import _boot, _main_lines
+from test_v0_51_342_restore_from_plex_job import ssr_running  # noqa: F401 — a fixture
 
 NOW = "2026-09-13T00:00:00"
 AUTH = {"X-Authentik-Username": "testadmin"}
@@ -320,9 +321,6 @@ def test_the_page_names_every_pass_that_re_reads_the_files(admin_client):
 _CANCEL_BTN = "canon-restore-plex-cancel-btn"
 _RUNNING = {"status": "running", "stage": "restoring", "done": 3, "total": 10, "restored_sidecar": 1,
             "restored_store": 1, "skipped_count": 1, "cancelling": False, "elapsed_s": 4.0}
-_SSR_RUNNING = {"canon-restore-plex-btn": {"disabled": True, "display": "", "text": "// RESTORING…"},
-                _CANCEL_BTN: {"display": ""},
-                "canon-restore-plex-status": {"text": "restoring…", "dataset": {"running": "1"}}}
 _PROGRESS = "restoring 3 / 10 · 2 restored · 1 skipped"
 
 
@@ -340,6 +338,7 @@ def _run(tmp_path, responses, clicks, ssr=None):
     start = APP_JS.index("  function bindCanonicalHealth() {")
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "bind.js").write_text(_app_fn("fmtRelativePast") + _app_fn("proxyStatusHint") + _app_fn("gatewayTimeoutNote")
+                                      + _app_fn("restoreSkipWord") + _app_fn("failWords")
                                       + APP_JS[start:APP_JS.index("\n  function ", start + 1)])
     (tmp_path / "scenario.json").write_text(json.dumps({"responses": responses, "clicks": clicks, "ssr": ssr or {}}))
     (tmp_path / "driver.js").write_text(driver)
@@ -386,11 +385,14 @@ def test_a_run_that_ends_under_the_note_clears_it_and_the_next_run_shows_its_pro
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")
-def test_an_idle_pages_failed_status_poll_reaches_the_console_and_a_watched_run_retries_quietly(tmp_path):
+def test_an_idle_pages_failed_status_poll_reaches_the_console_and_a_watched_run_retries_quietly(tmp_path, ssr_running):
     (s0,), err = _run(tmp_path / "idle", [_report(), {"__throw": {"status": 502}}], [])
     assert s0["__timers"] == 0
+    # v0.51.344: an idle page whose status poll failed claims nothing — no words, no restore button, no block
+    assert (s0["canon-restore-plex-status"]["text"], s0["canon-restore-plex-btn"]["display"],
+            s0["canon-missing-block"]["display"]) == ("", "none", "none")
     assert "canonical health restore status failed" in err, err
     snaps, err = _run(tmp_path / "running", [_report(), {"__throw": {"status": 502}}, _RUNNING], ["tick"],
-                      ssr=_SSR_RUNNING)
+                      ssr=ssr_running)
     assert snaps[0]["__timers"] == 1 and snaps[1]["canon-restore-plex-status"]["text"] == _PROGRESS
     assert "restore status failed" not in err, err

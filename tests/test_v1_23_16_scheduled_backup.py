@@ -9,6 +9,7 @@ the retention prune keeps the newest N.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,9 @@ def test_env_overrides(monkeypatch):
 
 # ── retention prune ──────────────────────────────────────────
 
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")  # v0.51.344: prune sets aside a stamp after now
+
 
 def test_prune_keeps_newest_n(tmp_path):
     db = tmp_path / "motif.db"
@@ -64,7 +68,7 @@ def test_prune_keeps_newest_n(tmp_path):
     for stamp in ("20260101-000000", "20260102-000000",
                   "20260103-000000", "20260104-000000"):
         db_backup.create_backup(db, tmp_path, now_stamp=stamp)
-    removed = db_backup.prune_backups(tmp_path, retention=2)
+    removed = db_backup.prune_backups(tmp_path, retention=2, now_stamp=_now())
     # the two OLDEST are removed.
     assert sorted(removed) == ["motif-20260101-000000.db",
                                "motif-20260102-000000.db"]
@@ -76,7 +80,7 @@ def test_prune_zero_keeps_all(tmp_path):
     db = tmp_path / "motif.db"
     _seed_db(db)
     db_backup.create_backup(db, tmp_path, now_stamp="20260101-000000")
-    assert db_backup.prune_backups(tmp_path, retention=0) == []
+    assert db_backup.prune_backups(tmp_path, retention=0, now_stamp=_now()) == []
     assert len(db_backup.list_backups(tmp_path)) == 1
 
 

@@ -396,6 +396,7 @@ def _run_page(tmp_path, responses, clicks, ssr=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
     # v0.51.342: the page's own fmtRelativePast + gatewayTimeoutNote ride along — the restore poll words with them.
     (tmp_path / "bind.js").write_text(_app_fn("fmtRelativePast") + _app_fn("proxyStatusHint") + _app_fn("gatewayTimeoutNote")
+                                      + _app_fn("restoreSkipWord") + _app_fn("failWords")  # v0.51.344: hoisted out of the binder
                                       + APP_JS[start:APP_JS.index("\n  function ", start + 1)])
     (tmp_path / "scenario.json").write_text(json.dumps({"responses": responses, "clicks": clicks, "ssr": ssr or {}}))
     (tmp_path / "driver.js").write_text(_DRIVER)
@@ -458,6 +459,10 @@ _SKIP_WORDING = {
     "plex_unreachable": "Plex gave no answer — not tried",
     # v0.51.342: a row whose download is in flight is left to it.
     "download_in_flight": "download still in flight — not touched",
+    # v0.51.344: Plex answered, but reading its answer raised.
+    "plex_error:": "Plex fetch failed",
+    # v0.51.344: a Plex answer after motif's exit deadline is not written.
+    "motif_exiting": "motif was shutting down — not written",
 }
 
 
@@ -488,7 +493,8 @@ def _emitted_skip_reasons() -> set[str]:
 def test_the_restore_status_words_each_skip_reason(tmp_path):
     assert _emitted_skip_reasons() == set(_SKIP_WORDING), "a restore reason has no wording here (and in SKIP_WORDS)"
     samples = {"link_failed:": "link_failed:[Errno 1] Operation not permitted", "plex_themes:": "plex_themes:None",
-               "plex_fetch:": "plex_fetch:500", "write_failed:": "write_failed:[Errno 28] No space left"}
+               "plex_fetch:": "plex_fetch:500", "write_failed:": "write_failed:[Errno 28] No space left",
+               "plex_error:": "plex_error:AttributeError"}
     # a distinct count per reason, so a reason worded as another (or as the fallback) changes a group's total
     skipped, expected = [], {}
     for n, (reason, words) in enumerate(_SKIP_WORDING.items(), start=1):

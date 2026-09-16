@@ -158,24 +158,60 @@ def test_sync_upsert_theme_promotes_collection_orphan_by_title():
 # ── Download path under themes/collections/<section>/ ─────────
 
 
-def test_do_download_routes_collections_under_collections_parent():
+def test_do_download_routes_collections_under_collections_parent(tmp_path, monkeypatch):
     """`_do_download` must re-base media_root for collection rows
     so the file lands under `themes/collections/<section_subdir>/`
     instead of `themes/<section_subdir>/`. Keeps the staging tree
     legible — the user: 'collections folder then broken further
     into movies, tv, anime.'"""
-    src = WORKER_PY.read_text()
-    fn_start = src.index("def _do_download(self, job:")
-    # _do_place follows _do_download in the class definition.
-    fn_end = src.index("\n    def _do_place(self, job:", fn_start + 1)
-    body = src[fn_start:fn_end]
-    # Pin the conditional re-base.
-    assert 'if media_type == "collection":' in body, (
-        "v1.18.2: _do_download must branch on collection to "
-        "re-base media_root"
-    )
-    assert "media_root.parent / \"collections\" / media_root.name" in body, (
-        "v1.18.2: collection media_root must be "
+    # v0.51.344: runs the real _do_download — the nesting moved into canonical.download_theme_rel with the in-flight check
+    import json
+    import sqlite3
+    import threading
+    from contextlib import closing
+    from app.config import Settings
+    from app.core import worker as worker_mod
+    from app.core.canonical import canonical_theme_subdir
+    from app.core.db import init_db
+    from app.core.events import now_iso
+    from app.core.runtime import set_dry_run
+    settings = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
+    init_db(settings.db_path)
+    (tmp_path / "themes").mkdir()
+    settings._cfg.paths.themes_dir = str(tmp_path / "themes")
+    settings._cfg.paths.min_free_disk_mb = 0
+    set_dry_run(settings.db_path, False, updated_by="test")
+    monkeypatch.setattr(worker_mod, "log_event", lambda *a, **k: None)
+    wrote = []
+
+    class Chosen(Exception):
+        pass
+
+    def download_theme(*, output_dir, **_kw):
+        wrote.append(output_dir)
+        raise Chosen()
+    monkeypatch.setattr(worker_mod, "download_theme", download_theme)
+    now = now_iso()
+    with closing(sqlite3.connect(settings.db_path)) as conn:
+        conn.execute(
+            "INSERT INTO plex_sections (section_id, title, type, is_anime, is_4k, themes_subdir, included, "
+            "discovered_at, last_seen_at) VALUES ('3', 'Anime', 'show', 1, 0, 'anime', 1, ?, ?)", (now, now))
+        conn.execute(
+            "INSERT INTO themes (media_type, tmdb_id, title, upstream_source, last_seen_sync_at, first_seen_sync_at, "
+            "youtube_url) VALUES ('collection', 27, 'Willy Wonka Collection', 'themoviedb', ?, ?, "
+            "'https://www.youtube.com/watch?v=abcdefghijk')", (now, now))
+        conn.execute(
+            "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, payload, status, created_at) "
+            "VALUES ('download', 'collection', 27, '3', ?, 'running', ?)", (json.dumps({}), now))
+        conn.commit()
+        conn.row_factory = sqlite3.Row
+        job = conn.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 1").fetchone()
+    with pytest.raises(Chosen):
+        worker_mod.Worker(settings=settings, stop_event=threading.Event(),
+                          bucket=worker_mod.TokenBucket(60, 60))._do_download(job)
+    assert wrote == [settings.themes_dir / "collections" / "anime"
+                     / canonical_theme_subdir("Willy Wonka Collection", None)], (
+        "v1.18.2: a collection download must stage under "
         "<themes_dir>/collections/<section_subdir>/"
     )
 

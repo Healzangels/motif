@@ -41,26 +41,33 @@ def _plex_item(db, *, rk, section, folder):
         c.commit()
 
 
-def _tmp_in(folder: Path, *, age_secs: float) -> Path:
+def _tmp_in(folder: Path) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     t = folder / "theme.mp3.motif-tmp"
     t.write_bytes(b"x" * 16)
-    old = time.time() - age_secs
-    os.utime(t, (old, old))
     return t
 
 
-def test_sweep_removes_stale_keeps_fresh_and_untouched(tmp_path):
+def _clock_at(monkeypatch, at: float):
+    # v0.51.344: the gate reads ctime too, which os.utime cannot age — the sweep's clock moves instead.
+    monkeypatch.setattr(time, "time", lambda: at)
+
+
+def test_sweep_removes_stale_keeps_fresh_and_untouched(tmp_path, monkeypatch):
     db = _db(tmp_path)
     a = tmp_path / "movies" / "Old {edition-x}"       # stale tmp → delete
     b = tmp_path / "movies" / "Fresh {edition-x}"      # fresh tmp → keep
     c = tmp_path / "movies" / "Themed {edition-x}"     # real theme, no tmp
-    stale = _tmp_in(a, age_secs=7200)                  # 2h old > 1h threshold
-    fresh = _tmp_in(b, age_secs=60)                    # 1m old < threshold
+    stale = _tmp_in(a)
+    time.sleep(0.05)
+    made_between = time.time()
+    time.sleep(0.05)
+    fresh = _tmp_in(b)
     c.mkdir(parents=True); (c / "theme.mp3").write_bytes(b"real")
     for i, folder in enumerate((a, b, c), start=1):
         _plex_item(db, rk=str(100 + i), section="1", folder=str(folder))
 
+    _clock_at(monkeypatch, made_between + 3600)  # the 1h gate falls between the two temps
     removed = sweep_stale_placement_temps(db)
     assert removed == 1
     assert not stale.exists(), "stale tmp must be removed"
@@ -68,15 +75,16 @@ def test_sweep_removes_stale_keeps_fresh_and_untouched(tmp_path):
     assert (c / "theme.mp3").exists(), "the real theme is untouched"
 
 
-def test_sweep_scopes_to_given_sections(tmp_path):
+def test_sweep_scopes_to_given_sections(tmp_path, monkeypatch):
     db = _db(tmp_path)
     a = tmp_path / "s1" / "A"
     d = tmp_path / "s2" / "D"
-    ta = _tmp_in(a, age_secs=7200)
-    td = _tmp_in(d, age_secs=7200)
+    ta = _tmp_in(a)
+    td = _tmp_in(d)
     _plex_item(db, rk="201", section="1", folder=str(a))
     _plex_item(db, rk="202", section="2", folder=str(d))
 
+    _clock_at(monkeypatch, time.time() + 7200)  # both 2h old
     removed = sweep_stale_placement_temps(db, section_ids=["1"])
     assert removed == 1
     assert not ta.exists(), "scoped section's stale tmp removed"

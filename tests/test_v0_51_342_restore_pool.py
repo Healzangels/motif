@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import sqlite3
 import threading
 import time
@@ -663,6 +664,17 @@ def test_cancel_during_the_folder_pass_stops_before_the_next_row(tmp_path):
         "a folder row was restored after the run saw the cancel"
 
 
+def test_cancel_during_the_shared_path_tail_stops_before_the_next_row(tmp_path):
+    # v0.51.344: the tail's own cancel poll was untested — the folder pass and the pool pinned theirs only
+    db, themes = _seed_store(tmp_path, n=3, shared=(601, 602, 603))
+    fetches: list[str] = []
+    res = ch.restore_from_plex(db, themes, None, workers=4, plex_client_factory=lambda: FakePlex(on_fetch=fetches.append),
+                               cancel_check=lambda: len(fetches) >= 1)
+    assert (res["cancelled"], res["restored_store"], res["not_attempted"], fetches) == (True, 1, 2, ["9601"]), \
+        "a cancel seen between shared-path rows let the tail go on"
+    assert res["restored"] + len(res["skipped"]) + res["not_attempted"] == 3
+
+
 def test_a_stamp_that_raises_fails_the_run_instead_of_hanging(tmp_path, monkeypatch):
     real = ch._stamp_restored
 
@@ -689,3 +701,7 @@ def test_a_stamp_that_raises_fails_the_run_instead_of_hanging(tmp_path, monkeypa
         ch.restore_from_plex(db2, themes2, FakePlex())
     assert [_lf_cols(db2, t, ("canonical_present",))[0] for t in (601, 602, 603)] == [1, 1, 0], \
         "the rows written before the failure stay committed"
+    torn = (themes2 / "movies" / "603" / "theme.mp3").read_bytes()
+    # v0.51.344: the lock-induced tear — its bytes moved and its stamp did not; the row still names the bytes on disk
+    assert _lf_cols(db2, 603, ("file_sha256", "file_size")) == (hashlib.sha256(torn).hexdigest(), len(torn)), \
+        "a stamp that failed after the replace left the old sha on new bytes"

@@ -8,7 +8,7 @@ uncommitted pages), so we use SQLite's `VACUUM INTO`, which holds a
 read transaction and writes a fully-valid, compacted database file —
 the sqlite.org-recommended way to back up a live database.
 
-Backups land in <config_dir>/backups/ as motif-YYYYMMDD-HHMMSS.db.
+Backups land in <config_dir>/backups/ under the name shapes of _KINDS.
 That dir is on /config (the appdata mount — same place as motif.db,
 motif.yaml, cookies.txt; already writable + on the Unraid array).
 
@@ -52,13 +52,16 @@ _PRERESTORE_RE = re.compile(r"motif-prerestore-([0-9]{8}-[0-9]{6})\.db")
 # sharing the list, the name gate, retention and the four endpoints.
 _BUNDLE_RE = re.compile(r"motif-bundle-([0-9]{8}-[0-9]{6})\.tar\.gz")
 # v0.51.343: an uploaded bundle, named by its upload's UTC time and kept outside retention like a pre-restore copy.
-_UPLOAD_RE = re.compile(r"motif-bundle-upload-([0-9]{8}-[0-9]{6})\.tar\.gz")
+_UPLOAD_RE = re.compile(r"motif-bundle-upload-([0-9]{8}-[0-9]{6})(?:-(?:[2-9]|[1-9][0-9]))?\.tar\.gz")  # v0.51.344: -2..-99 — a same-second upload takes the next free name
+# v0.51.344: a bundle that left motif.yaml or cookies.txt out over its cap — its manifest is the LAST tar member, so only its name can say so cheaply
+_PARTIAL_RE = re.compile(r"motif-bundle-partial-([0-9]{8}-[0-9]{6})\.tar\.gz")
 # v0.51.343: the one name table — (kind, name shape, counts toward retention), read only through _classify.
-_KINDS = (
-    ("bundle", _UPLOAD_RE, False),
-    ("bundle", _BUNDLE_RE, True),
-    ("prerestore", _PRERESTORE_RE, False),
-    ("snapshot", _BACKUP_RE, True),
+_KINDS = (  # v0.51.344: + partial, so prune reads it off the listed row
+    ("bundle", _UPLOAD_RE, False, False),
+    ("bundle", _PARTIAL_RE, True, True),
+    ("bundle", _BUNDLE_RE, True, False),
+    ("prerestore", _PRERESTORE_RE, False, False),
+    ("snapshot", _BACKUP_RE, True, False),
 )
 
 
@@ -69,29 +72,26 @@ class BackupFile:
     created_at: str  # ISO-8601 derived from the embedded stamp (UTC)
     kind: str = "snapshot"  # v0.51.335: snapshot | prerestore | bundle
     retained: bool = True  # v0.51.343: False = outside retention (a pre-restore copy or an uploaded bundle), for the list chip
+    partial: bool = False  # v0.51.344: a motif-bundle-partial-* — it left a member out over its cap
 
 
 def backups_dir(config_dir: Path) -> Path:
     return config_dir / BACKUP_SUBDIR
 
 
-def _classify(name: str) -> tuple[str, str, bool] | None:
-    # v0.51.343: separators refused once, then (kind, stamp, retained) from the first _KINDS row that matches.
+def _classify(name: str) -> tuple[str, str, bool, bool] | None:
+    # v0.51.343: separators refused once, then (kind, stamp, retained, partial) from the first _KINDS row that matches.
     if "/" in name or "\\" in name or name in (".", ".."):
         return None
-    for kind, shape, retained in _KINDS:
+    for kind, shape, retained, partial in _KINDS:
         m = shape.fullmatch(name)  # v0.51.343: with ASCII [0-9] — `\d` admitted full-width digits (newest forever) and `$` a trailing newline
         if m:
-            return kind, m.group(1), retained
+            return kind, m.group(1), retained, partial
     return None
 
 
 def is_backup_name(name: str) -> bool:
-    """True iff `name` is a motif-<ts>.db (or motif-prerestore-<ts>.db,
-    v1.23.18) filename with no path separators. The download/delete
-    endpoints call this before touching any file by name — without it a
-    crafted name could traverse out of the backups dir or address an
-    arbitrary file. Every shape must match the whole name (fullmatch)."""
+    """True iff `name` fullmatches a _KINDS shape with no path separator — the gate every name-addressed endpoint runs first."""
     return _classify(name) is not None
 
 
@@ -175,9 +175,7 @@ def vacuum_into(db_path: Path, dest: Path) -> None:
 
 
 def list_backups(config_dir: Path) -> list[BackupFile]:
-    """Every motif-<ts>.db AND motif-prerestore-<ts>.db in the backups
-    dir, newest first (by embedded stamp). Non-matching files (and
-    subdirs) are ignored, not an error."""
+    """Every file in the backups dir whose name _classify accepts, newest first by embedded stamp; anything else is ignored."""
     bdir = backups_dir(config_dir)
     if not bdir.exists():
         return []
@@ -189,7 +187,7 @@ def list_backups(config_dir: Path) -> list[BackupFile]:
         c = _classify(p.name)
         if c is None:
             continue
-        kind, stamp, retained = c
+        kind, stamp, retained, partial = c
         try:
             size = p.stat().st_size
         except OSError as e:
@@ -197,7 +195,7 @@ def list_backups(config_dir: Path) -> list[BackupFile]:
             continue
         rows.append((stamp, BackupFile(name=p.name, size=size,
                                        created_at=_iso_from_stamp(stamp),
-                                       kind=kind, retained=retained)))
+                                       kind=kind, retained=retained, partial=partial)))
     # Sort by embedded stamp (true chronological across both name
     # shapes), newest first.
     rows.sort(key=lambda r: (r[0], r[1].name), reverse=True)
@@ -228,24 +226,32 @@ def delete_backup(config_dir: Path, name: str) -> bool:
     return True
 
 
-def prune_backups(config_dir: Path, retention: int) -> list[str]:
-    """v1.23.16: keep the newest `retention` ROUTINE backups, delete
-    the older ones. `retention <= 0` keeps everything (no prune).
-    Returns the names removed. Used by the scheduled-backup job after
-    each new snapshot; a per-file OS error is logged + skipped, not
-    fatal.
-
-    v1.23.18: pre-restore safety copies (motif-prerestore-*) are
-    EXEMPT — they're the undo for a destructive restore and must not be
-    auto-deleted by retention. Only motif-<ts>.db routine snapshots
-    count toward + are eligible for the prune."""
+def prune_backups(config_dir: Path, retention: int, *, now_stamp: str, keep: str | None = None) -> list[str]:
+    """Keep the newest `retention` backups whose _KINDS row counts toward retention and delete the older — never `keep` or one stamped after `now_stamp`, plus the newest complete bundle while every kept bundle is partial; `retention <= 0` keeps all; returns names removed, a per-file OS error logged and skipped."""
     if retention <= 0:
         return []
     # v0.51.335: bundles count with the snapshots — one retention window
     # over both kinds; pre-restore copies stay exempt.
     # v0.51.343: the retained flag comes from the _KINDS table, not a re-encoded regex pair.
-    routine = [b for b in list_backups(config_dir) if _classify(b.name)[2]]
-    doomed = routine[retention:]  # newest-first → tail is oldest
+    now_iso = _iso_from_stamp(now_stamp)
+    routine: list[BackupFile] = []
+    for b in list_backups(config_dir):
+        if not b.retained:  # v0.51.344: list_backups already classified each file — no second _classify pass
+            continue
+        if b.created_at > now_iso:  # v0.51.344: a legacy upload or a clock-ahead write outranked every new file, so each nightly deleted its own
+            log.warning("backup retention: %s is stamped after now (%s) — not counted and not pruned; delete it from "
+                        "the backup list if it is not wanted", b.name, now_stamp)
+            continue
+        routine.append(b)
+    window = routine[:retention]
+    doomed = [b for b in routine[retention:] if b.name != keep]  # v0.51.344: never the file the job just wrote
+    kept_bundles = [b for b in window if b.kind == "bundle"]
+    if kept_bundles and all(b.partial for b in kept_bundles):  # v0.51.344: R1-F4 — partial bundles rotated out the only bundle holding cookies.txt
+        spare = next((b for b in doomed if b.kind == "bundle" and not b.partial), None)
+        if spare is not None:
+            doomed.remove(spare)
+            log.info("backup retention: kept %s — the newest bundle that left nothing out; every newer kept bundle "
+                     "left a member out", spare.name)
     removed: list[str] = []
     bdir = backups_dir(config_dir)
     for b in doomed:
@@ -285,7 +291,8 @@ def inspect_restore_source(path: Path) -> RestoreCheck:
         with open(path, "rb") as f:
             head = f.read(16)
     except OSError as e:
-        return RestoreCheck(False, None, f"unreadable: {e}")
+        log.warning("restore check: %s is unreadable (%s)", path, e)
+        return RestoreCheck(False, None, f"unreadable: {e.strerror or type(e).__name__}")  # v0.51.344: an OSError's str names the absolute path, which reached the browser — the path stays in the log
     if head != b"SQLite format 3\x00":
         return RestoreCheck(False, None,
                             "not a SQLite database (bad file header)")

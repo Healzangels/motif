@@ -54,6 +54,8 @@ targets; the bulk is fine as-is.
 
 from __future__ import annotations
 
+import re
+
 
 def slice_to_next(src: str, start_anchor: str, *end_anchors: str,
                    start_offset: int = 1) -> str:
@@ -142,3 +144,91 @@ CSS_NEXT_RULE = (
 )
 """End-anchor set for CSS rule blocks — the next selector or
 at-rule at the start of a line."""
+
+# v0.51.344: JS comments blanked to spaces, newlines kept — a scan of code lines must not read a trailing // note as code
+_JS_WORD = re.compile(r"[A-Za-z_$][\w$]*")
+_JS_REGEX_PREV = frozenset("(,=:[!&|?{};+-*%<>~^")
+_JS_REGEX_WORDS = frozenset(("return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw",
+                             "case", "do", "else", "yield", "await"))
+
+
+def blank_js_comments(src: str) -> str:
+    """Blank every // and /* */ comment in JS source; strings, templates (with ${} nesting) and regex literals stay."""
+    out = list(src)
+    n = len(src)
+    modes = [["code", 0]]
+    prev, word = "", ""
+    i = 0
+    while i < n:
+        c = src[i]
+        mode = modes[-1]
+        if mode[0] == "tpl":
+            if c == "\\":
+                i += 2
+            elif c == "`":
+                modes.pop()
+                prev, word = "`", ""
+                i += 1
+            elif src.startswith("${", i):
+                modes.append(["code", 0])
+                prev, word = "", ""
+                i += 2
+            else:
+                i += 1
+            continue
+        if c.isspace():
+            i += 1
+        elif src.startswith("//", i) or src.startswith("/*", i):
+            if src[i + 1] == "/":
+                j = src.find("\n", i)
+                j = n if j == -1 else j
+            else:
+                j = src.find("*/", i + 2)
+                j = n if j == -1 else j + 2
+            for k in range(i, j):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        elif c in "'\"":
+            j = i + 1
+            while j < n and src[j] not in (c, "\n"):
+                j += 2 if src[j] == "\\" else 1
+            prev, word = c, ""
+            i = j + 1
+        elif c == "`":
+            modes.append(["tpl", 0])
+            i += 1
+        elif c == "/" and (prev == "" or prev in _JS_REGEX_PREV or word in _JS_REGEX_WORDS):
+            j, in_class = i + 1, False
+            while j < n and src[j] != "\n":
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] == "[":
+                    in_class = True
+                elif src[j] == "]":
+                    in_class = False
+                elif src[j] == "/" and not in_class:
+                    break
+                j += 1
+            prev, word = "/", ""
+            i = j + 1
+        elif c == "{":
+            mode[1] += 1
+            prev, word = c, ""
+            i += 1
+        elif c == "}" and mode[1] == 0 and len(modes) > 1:
+            modes.pop()
+            i += 1
+        else:
+            if c == "}":
+                mode[1] -= 1
+            m = _JS_WORD.match(src, i)
+            if m:
+                word = m.group(0)
+                prev = word[-1]
+                i = m.end()
+            else:
+                prev, word = c, ""
+                i += 1
+    return "".join(out)

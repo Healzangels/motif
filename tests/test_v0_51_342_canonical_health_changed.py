@@ -231,17 +231,18 @@ def test_verify_makes_one_stat_per_row(tmp_path, monkeypatch):
 
 
 def test_one_stat_keeps_the_missing_and_skipped_split(tmp_path, monkeypatch):
-    db, themes = _mk(tmp_path, n=8)
+    db, themes = _mk(tmp_path, n=10)
     with _conn(db) as c:
-        _lf(c, 9)
-        c.execute("UPDATE local_files SET file_path = ? WHERE tmdb_id = 9", ("movies/9/the\x00me.mp3",))  # stat: ValueError
+        _lf(c, 11)
+        c.execute("UPDATE local_files SET file_path = ? WHERE tmdb_id = 11", ("movies/11/the\x00me.mp3",))  # stat: ValueError
     _exec(db, "UPDATE local_files SET canonical_present = 1, canonical_changed_candidate = 1, "
               "canonical_hash_miss_sig = 'prior'")
     (themes / _rel(3)).unlink()
     (themes / _rel(3)).mkdir()  # a directory where the file should be
     _write(themes, 4, b"")  # a 0-byte stub
     faults = {str(themes / _rel(1)): errno.EACCES, str(themes / _rel(2)): errno.EIO,
-              str(themes / _rel(5)): errno.ENOENT, str(themes / _rel(6)): errno.ELOOP}
+              str(themes / _rel(5)): errno.ENOENT, str(themes / _rel(6)): errno.ELOOP,
+              str(themes / _rel(7)): errno.ENOTDIR, str(themes / _rel(8)): errno.EBADF}  # v0.51.344: every absent errno
     real = os.stat
 
     def faulty(path, *a, **kw):
@@ -254,11 +255,11 @@ def test_one_stat_keeps_the_missing_and_skipped_split(tmp_path, monkeypatch):
         res = plex_enum.verify_canonical_health(db, themes)
     finally:
         monkeypatch.setattr(os, "stat", real)
-    assert res == {"checked": 7, "missing": 5, "skipped": 2}, res
+    assert res == {"checked": 9, "missing": 7, "skipped": 2}, res
     flags = _flags(db)
     assert flags[1] == flags[2] == (1, 1, "prior"), "an unreadable canonical keeps its last result whole"
-    assert [flags[t] for t in (3, 4, 5, 6, 9)] == [(0, None, None)] * 5
-    assert flags[7] == flags[8] == (1, None, None)
+    assert [flags[t] for t in (3, 4, 5, 6, 7, 8, 11)] == [(0, None, None)] * 7
+    assert flags[9] == flags[10] == (1, None, None)
 
 
 # ── T5-T7: the heal and the hash-miss memo ───────────────────────────
@@ -622,6 +623,24 @@ def test_a_check_with_no_themes_dir_says_nothing_was_checked(app_env):
     assert "check" in r.json() and r.json()["check"] is None
 
 
+def test_a_check_against_a_dead_themes_root_reads_nothing_and_keeps_the_last_results(app_env):
+    api_mod, settings, tmp_path = app_env
+    themes = tmp_path / "themes"
+    _fill(settings.db_path, themes, 4)
+    settings._cfg.paths.themes_dir = str(themes)
+    client = TestClient(api_mod.create_app(settings))
+    first = client.post(CHECK, headers=AUTH).json()
+    assert first["check"] == {"checked": 4, "missing": 0, "skipped": 0}
+    before = _flags(settings.db_path)
+    settings._cfg.paths.themes_dir = str(tmp_path / "unmounted")
+    r = client.post(CHECK, headers=AUTH)
+    assert r.status_code == 200, r.text
+    # v0.51.344: a configured but dead root reaches verify through the endpoint — never read as "no themes dir".
+    assert r.json()["check"] == {"checked": 0, "missing": 0, "skipped": 4}
+    assert r.json()["checked"] == first["checked"], "the last check's freshness is untouched"
+    assert _flags(settings.db_path) == before and {p for p, _f, _s in before.values()} == {1}
+
+
 # ── T14: the page, under node ────────────────────────────────────────
 
 def _ago(**delta) -> str:
@@ -663,6 +682,19 @@ def test_the_freshness_line_and_the_all_clear_say_what_the_last_check_covered(tm
     assert f["className"] == "form-hint form-hint-warn"
     assert f["text"].endswith(" · over a day old — // RUN CHECK re-reads every theme."), f["text"]
     assert s4["canon-freshness"]["display"] == "none" and s4["canon-clear-block"]["display"] == ""
+
+
+@pytest.mark.skipif(not _NODE, reason="node not installed")
+def test_the_freshness_line_turns_stale_past_26_hours_and_not_before(tmp_path):
+    fresh = {"tracked": 5, "never": 0, "oldest": _ago(hours=25), "newest": _ago(minutes=10)}
+    stale = dict(fresh, oldest=_ago(hours=27))
+    s0, s1 = _run_page(tmp_path, [_page(fresh), {"status": "idle"}, _page(stale)], ["canon-check-btn"])
+    # v0.51.344: the 26 h bound from both sides — a missed daily pass warns, a late one does not.
+    f = s0["canon-freshness"]
+    assert f["className"] == "form-hint" and " · over a day old" not in f["text"], f["text"]
+    f = s1["canon-freshness"]
+    assert f["className"] == "form-hint form-hint-warn", f["text"]
+    assert f["text"].endswith(" · over a day old — // RUN CHECK re-reads every theme."), f["text"]
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")

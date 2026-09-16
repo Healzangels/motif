@@ -38,6 +38,18 @@ def _reset_login_rate_limit_state():
     _reset_login_failures_for_test()
     yield
 
+
+@pytest.fixture(autouse=True)
+def _restore_os_environ():
+    saved = dict(os.environ)  # v0.51.344: a test that wrote os.environ bare leaked into every later test (.342 gate #1 went 31 red)
+    yield
+    # pytest rewrites PYTEST_CURRENT_TEST per phase itself; rewinding it would mislabel the teardown
+    for key in [k for k in os.environ if k not in saved and k != "PYTEST_CURRENT_TEST"]:
+        os.environ.pop(key, None)
+    for key, value in saved.items():
+        if key != "PYTEST_CURRENT_TEST" and os.environ.get(key) != value:
+            os.environ[key] = value
+
 # 1. Allowlist the test client's IP so forward-auth (fail-closed since v1.24.12)
 #    admits the X-Authentik-Username header the suite uses to authenticate.
 #    setdefault → a real env value (or a per-test monkeypatch) still wins.

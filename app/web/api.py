@@ -33,6 +33,7 @@ from typing import Annotated, Literal, Optional
 import csv
 import io
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -67,7 +68,7 @@ from ..core.editions import (
     edition_key_for_folder, edition_key_for_rating_key,
     edition_label_for_folder,
 )
-from ..core.events import log_event, now_iso
+from ..core.events import log_event, now_iso, now_iso_ms
 from ..core.plex import PlexClient, PlexConfig, THEME_UPLOAD_CEILING_BYTES
 from ..core.runtime import is_dry_run, set_dry_run
 from ..core.sections import (
@@ -194,9 +195,16 @@ _ALLOWED_TOP_LEVEL = {
 }
 
 
+_NUMBER_TEXT_RE = re.compile(r"\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\s*", re.ASCII)  # v0.51.344: float() read '-1_6' as -16 and '１６' as 16; "." and fraction one group — `\d+\.?\d*` split a digit run n ways, quadratic on the event loop
+_INT_TEXT_RE = re.compile(r"\s*[+-]?\d+\s*", re.ASCII)  # v0.51.344: int() read '1_6' as 16
+
+
 def _apply_partial_config(cfg, body: dict) -> None:
     """Mutate `cfg` in place from a partial JSON body. Raises ValueError
     on unknown sections or type mismatches."""
+    import dataclasses
+    from ..core.config_file import MotifConfig
+    defaults = MotifConfig()
     for section_name, section_body in body.items():
         if section_name not in _ALLOWED_TOP_LEVEL:
             raise ValueError(f"unknown config section: {section_name}")
@@ -205,8 +213,13 @@ def _apply_partial_config(cfg, body: dict) -> None:
         if not isinstance(section_body, dict):
             raise ValueError(f"section {section_name!r} must be an object")
         section = getattr(cfg, section_name)
+        if not dataclasses.is_dataclass(section):  # v0.51.344: a hand-edited `loudness: 2026-09-14` loads as a date — type(section)() answered "function missing required argument 'year'"
+            log.warning("config PATCH: motif.yaml's %s is not a section (it loaded as %s) — saving it from its defaults",
+                        section_name, type(section).__name__)
+            section = getattr(MotifConfig(), section_name)
+            setattr(cfg, section_name, section)
         # v0.51.342: the float branch keys on the DECLARED default — a hand-edited `target_lufs: -16` loads as int and hit the int branch.
-        declared = type(section)()
+        declared = getattr(defaults, section_name)
         for k, v in section_body.items():
             if not hasattr(section, k):
                 raise ValueError(f"unknown field: {section_name}.{k}")
@@ -243,14 +256,15 @@ def _apply_partial_config(cfg, body: dict) -> None:
                     setattr(section, k, "")
                     continue
             # v0.51.343: a USERINFO_URL_KEYS value (sync URLs v1.21.17/v1.23.69, plex.url v0.51.341) still masked takes its stored secrets back; host/path edits kept.
-            from ..core.config_file import USERINFO_URL_KEYS, _is_masked_url_credentials, unmask_url_credentials
-            if f"{section_name}.{k}" in USERINFO_URL_KEYS and isinstance(v, str) and _is_masked_url_credentials(v):
-                v = unmask_url_credentials(v, getattr(section, k))
+            from ..core.config_file import USERINFO_URL_KEYS, unmask_url_credentials
+            if f"{section_name}.{k}" in USERINFO_URL_KEYS and isinstance(v, str):  # v0.51.344: unmask decides what a mask is — this gate missed .342's "#secret=x?token=***" and wrote it
+                stored_url = getattr(section, k)
+                v = unmask_url_credentials(v, stored_url if isinstance(stored_url, str) else "")  # v0.51.344: a hand-edited mapping or list holds no credential to keep
             current = getattr(section, k)
             if isinstance(getattr(declared, k), float):
                 # v0.51.342: loudness.target_lufs fell to the str() branch, so validate() 400'd every SAVE DOWNLOADS.
-                import math
-                if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+                if (isinstance(v, bool) or not isinstance(v, (int, float, str))
+                        or (isinstance(v, str) and not _NUMBER_TEXT_RE.fullmatch(v))):  # v0.51.344: ASCII digits only — float() read '-1_6' as -16
                     raise ValueError(f"{section_name}.{k} must be a number")
                 try:
                     num = float(v)
@@ -265,7 +279,13 @@ def _apply_partial_config(cfg, body: dict) -> None:
                 else:
                     setattr(section, k, bool(v))
             elif isinstance(getattr(declared, k), int):  # v0.51.342: declared — a hand-edited `rate_per_hour: '30'` was re-saved as a string
-                setattr(section, k, int(v))
+                if isinstance(v, bool) or not (isinstance(v, int) or (isinstance(v, float) and v.is_integer())
+                                               or (isinstance(v, str) and _INT_TEXT_RE.fullmatch(v))):
+                    raise ValueError(f"{section_name}.{k} must be an integer")  # v0.51.344: int(v) answered in Python's words echoing the value; Infinity was a 500, 1.5 saved as 1
+                try:
+                    setattr(section, k, int(v))
+                except ValueError:  # v0.51.344: past Python's 4300-digit int-from-text limit — the same words, never Python's
+                    raise ValueError(f"{section_name}.{k} must be an integer") from None
             elif isinstance(current, list):
                 if not isinstance(v, list):
                     raise ValueError(f"{section_name}.{k} must be a list, got {type(v).__name__}")
@@ -6528,7 +6548,7 @@ _CANON_RESTORE_THREAD: threading.Thread | None = None  # v0.51.342: the last run
 def _canon_restore_view() -> dict:
     """v0.51.342: the job as the status endpoint reports it — progress while it runs, else this process's last result."""
     with _CANON_RESTORE_LOCK:
-        st = {k: v for k, v in _CANON_RESTORE_STATE.items() if k not in ("cancel", "t0")}
+        st = {k: v for k, v in _CANON_RESTORE_STATE.items() if k not in ("cancel", "t0", "user_cancel")}
         if st.get("status") == "running":
             st["cancelling"] = bool(_CANON_RESTORE_STATE.get("cancel"))
             t0 = _CANON_RESTORE_STATE.get("t0")
@@ -26714,16 +26734,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         try:
             if kind == "bundle":
-                from .. import __version__
-                from ..core.db import CURRENT_SCHEMA_VERSION
-                bf = await run_in_threadpool(
-                    lambda: bundle_mod.create_bundle(
-                        settings.db_path, settings.config_dir,
-                        config_file=settings.config_dir / "motif.yaml",
-                        cookies_file=settings.cookies_file,
-                        themes_dir=settings.themes_dir, now_stamp=stamp,
-                        motif_version=__version__,
-                        schema_version=CURRENT_SCHEMA_VERSION))
+                bf = await run_in_threadpool(bundle_mod.create_bundle_for, settings, stamp)  # v0.51.344: the scheduler's spelling too — the eight kwargs were hand-kept twice
             else:
                 bf = await run_in_threadpool(
                     db_backup.create_backup,
@@ -26750,6 +26761,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "backup": {
                 "name": bf.name, "size": bf.size,
                 "created_at": bf.created_at, "kind": bf.kind,
+                "partial": bf.partial,  # v0.51.344: a bundle that left a member out, by its name shape
             },
         }
 
@@ -26768,7 +26780,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "backups": [
                 {"name": b.name, "size": b.size, "created_at": b.created_at,
                  "kind": b.kind,  # v0.51.335
-                 "retained": b.retained}  # v0.51.343: False = kept outside retention (a pre-restore copy or an uploaded bundle)
+                 "retained": b.retained,  # v0.51.343: False = kept outside retention (a pre-restore copy or an uploaded bundle)
+                 "partial": b.partial}  # v0.51.344: the chip says a member was left out
                 for b in backups
             ],
         }
@@ -26776,7 +26789,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/admin/database-backup/download/{name}")
     async def api_admin_database_backup_download(request: Request, name: str):
         """Stream one backup file. resolve_backup re-validates the
-        name against the motif-<ts>.db pattern, so a crafted path
+        name against the _KINDS name table, so a crafted path
         can't escape the backups dir or address an arbitrary file."""
         _require_admin(request)
         path = db_backup.resolve_backup(settings.config_dir, name)
@@ -27151,7 +27164,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                    counts=None, scanned_at=None, error=None, cancel=False)
         t = threading.Thread(target=_animethemes_sweep_run, args=(db,),
                              name="animethemes-sweep", daemon=True)
-        t.start()
+        try:
+            t.start()
+        except Exception as e:  # noqa: BLE001 — v0.51.344: a start that raised left the sweep 'running' forever
+            with _AT_SWEEP_LOCK:
+                _AT_SWEEP_STATE.update(status="failed", error=f"could not start the sweep thread: {e}", stage=None)
+            log.error("anime-themes sweep: could not start the sweep thread: %s — nothing ran", e)
+            raise HTTPException(status_code=500,
+                                detail=f"could not start the sweep — motif could not start a thread ({e}); nothing ran")
         return {"ok": True, "started": True}
 
     @app.post("/api/admin/animethemes-sweep/cancel")
@@ -27318,19 +27338,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=507 if e.out_of_space else 500, detail=str(e))
             except bundle_mod.StagingError as e:  # v0.51.341: an earlier staging's config could not be dropped — nothing new staged, and the answer says why
                 raise HTTPException(status_code=500, detail=str(e))
+            left_as_is = [{"member": n, "why": w} for n, w in bc.left_as_is.items()]  # v0.51.344: a list — the scrubber redacts a "cookies.txt" key's value
+            said = "".join(f" {d['why']}." for d in left_as_is)  # v0.51.344: only the log carried these words — the banner and the event never said a file stayed
             log_event(
                 settings.db_path, level="warning", component="backup",
                 message=f"Bundle restore staged from {name} "
                         f"({' + '.join(bc.staged)}; schema v{bc.db.schema_version}); "
-                        f"applies on restart",
+                        f"applies on restart{'.' if said else ''}{said}",  # v0.51.344: a sentence break only when words follow — a clean restore's message stays byte-identical
                 detail={"name": name, "members": bc.staged,
-                        "schema_version": bc.db.schema_version, "keep_config": keep},
+                        "schema_version": bc.db.schema_version, "keep_config": keep, "left_as_is": left_as_is},
             )
             out = _stage_restore_response(bc.db)
             out["members"] = bc.staged
+            out["left_as_is"] = left_as_is
             out["message"] = ("Restore staged (" + " + ".join(bc.staged) + "). Restart the "
                               "motif container to apply it — what it replaces is backed "
-                              "up automatically just before the swap.")
+                              "up automatically just before the swap." + said)
             return out
         try:
             check = await run_in_threadpool(  # v0.51.339: an earlier bundle's config/cookies would apply beside THIS snapshot at boot
@@ -27375,6 +27398,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not data:
             raise HTTPException(status_code=400, detail="empty file")
 
+        def _upload_not_saved(e: OSError, where: str, at: Path) -> "bundle_mod.ExtractionWriteError":
+            import errno
+            log.error("database restore upload: could not save the upload in %s (%s) — nothing was kept", at, e)
+            return bundle_mod.ExtractionWriteError(  # v0.51.344: an ENOSPC saving the upload was a wordless 500 the page blamed on a proxy
+                f"could not save the upload in {where} ({e.strerror or type(e).__name__}) — nothing was kept; "
+                "free space or fix permissions there, then try again", out_of_space=e.errno in (errno.ENOSPC, errno.EDQUOT))
+
         # v0.51.336: an uploaded BUNDLE is not staged — it joins the list
         # under its upload's UTC time and comes back as a preview; the
         # operator then confirms by name (the same path as a listed bundle).
@@ -27385,47 +27415,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 import tempfile as _tf
                 from datetime import datetime, timezone
                 bdir = db_backup.backups_dir(settings.config_dir)
-                bdir.mkdir(parents=True, exist_ok=True)
-                fd, tmp = _tf.mkstemp(prefix=".restore-upload.", suffix=".tar.gz", dir=str(bdir))
+                try:
+                    bdir.mkdir(parents=True, exist_ok=True)
+                    fd, tmp = _tf.mkstemp(prefix=".restore-upload.", suffix=".tar.gz", dir=str(bdir))
+                except OSError as e:
+                    raise _upload_not_saved(e, "the backups directory", bdir) from e
                 tmp_p = Path(tmp)
                 try:
-                    with os.fdopen(fd, "wb") as f:
-                        f.write(data)
+                    try:
+                        with os.fdopen(fd, "wb") as f:
+                            f.write(data)
+                    except OSError as e:  # v0.51.344: only the write — file_upload's FileExistsError keeps its own 503
+                        raise _upload_not_saved(e, "the backups directory", bdir) from e
                     chk = bundle_mod.inspect_bundle(tmp_p)
                     if not chk.ok:
                         raise ValueError(chk.error or "invalid bundle")
                     # v0.51.343: the upload's own UTC time, never the manifest's created_at — a future stamp pruned every nightly, an old one the upload
-                    name = bundle_mod.uploaded_bundle_name(datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))
-                    dest = bdir / name
-                    if dest.exists():
-                        # v0.51.342: compared with the upload already in memory — two whole-file sha256 passes were pure cost
-                        same = dest.stat().st_size == len(data)
-                        if same:
-                            view, off = memoryview(data), 0
-                            with dest.open("rb") as f:
-                                while same and (chunk := f.read(1 << 20)):
-                                    same = chunk == view[off:off + len(chunk)]
-                                    off += len(chunk)
-                            same = same and off == len(data)
-                        if not same:
-                            raise FileExistsError(name)
-                    else:
-                        os.replace(tmp, dest)
+                    dest = bundle_mod.file_upload(tmp_p, bdir, datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))  # v0.51.344: a name no other upload holds — no same-second 409, no overwrite of a previewed upload
                     return bundle_mod.preview(dest, settings.config_dir / "motif.yaml",
                                               cookies_target=settings.cookies_file,  # v0.51.341: the live path; a bundle config names its own
                                               check=chk)  # v0.51.342: dest holds exactly the bytes chk read (renamed, or equal) — a second inspection re-inflated and re-checked them
                 finally:
-                    try: os.unlink(tmp)
-                    except OSError: pass
+                    try:
+                        os.unlink(tmp)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:  # v0.51.344: was a bare pass — a temp upload left in the backups dir went unlogged
+                        log.warning("database restore upload: could not remove the temp upload %s (%s)", tmp, e)
             try:
                 pv = await run_in_threadpool(_import_bundle)
             except ValueError as e:
                 raise HTTPException(status_code=422, detail=str(e))
             except bundle_mod.ExtractionWriteError as e:  # v0.51.342: the disk's fault, never a 422 "not a motif bundle"
                 raise HTTPException(status_code=507 if e.out_of_space else 500, detail=str(e))
-            except FileExistsError as e:
-                raise HTTPException(status_code=409,
-                                    detail=f"a different bundle already exists as {e} — delete it first")
+            except FileExistsError as e:  # v0.51.344: was a 409 "delete it first" — now only every -N name for one second being taken, which a retry clears
+                raise HTTPException(status_code=503, detail=f"{e} — try the upload again")
             log_event(
                 settings.db_path, level="info", component="backup",
                 message=f"Bundle uploaded: {pv['name']} (preview shown; nothing staged)",
@@ -27435,11 +27459,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def _stage_uploaded() -> "db_backup.RestoreCheck":
             import os
             import tempfile as _tf
-            fd, tmp = _tf.mkstemp(prefix=".restore-upload.", suffix=".db",
-                                  dir=str(settings.config_dir))
             try:
-                with os.fdopen(fd, "wb") as f:
-                    f.write(data)
+                fd, tmp = _tf.mkstemp(prefix=".restore-upload.", suffix=".db",
+                                      dir=str(settings.config_dir))
+            except OSError as e:
+                raise _upload_not_saved(e, "the config directory", settings.config_dir) from e
+            try:
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(data)
+                except OSError as e:
+                    raise _upload_not_saved(e, "the config directory", settings.config_dir) from e
                 # v0.51.339: an uploaded snapshot stages the database only — drop a bundle's config/cookies
                 return bundle_mod.stage_snapshot_restore(settings.db_path, settings.config_dir, Path(tmp))  # v0.51.341: under the staging lock
             finally:
@@ -27450,6 +27480,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             check = await run_in_threadpool(_stage_uploaded)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
+        except bundle_mod.ExtractionWriteError as e:  # v0.51.344: the disk refused the upload itself
+            raise HTTPException(status_code=507 if e.out_of_space else 500, detail=str(e))
         except bundle_mod.StagingError as e:
             raise HTTPException(status_code=500, detail=str(e))
         log_event(
@@ -27663,7 +27695,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             target=_orphan_scan_run, args=(settings, db),
             name="orphan-scan", daemon=True,
         )
-        t.start()
+        try:
+            t.start()
+        except Exception as e:  # noqa: BLE001 — v0.51.344: a start that raised left the scan 'running' forever
+            with _ORPHAN_SCAN_LOCK:
+                _ORPHAN_SCAN_STATE.update(status="failed", error=f"could not start the scan thread: {e}")
+            log.error("orphan scan: could not start the scan thread: %s — nothing ran", e)
+            raise HTTPException(status_code=500,
+                                detail=f"could not start the orphan scan — motif could not start a thread ({e}); nothing ran")
         return {"ok": True, "started": True}
 
     @app.get("/api/admin/orphan-scan/status")
@@ -27698,7 +27737,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             target=_loudness_audit_run, args=(settings, db),
             name="loudness-audit", daemon=True,
         )
-        t.start()
+        try:
+            t.start()
+        except Exception as e:  # noqa: BLE001 — v0.51.344: a start that raised left the audit 'running' forever
+            with _LOUDNESS_AUDIT_LOCK:
+                _LOUDNESS_AUDIT_STATE.update(status="failed", error=f"could not start the audit thread: {e}")
+            log.error("loudness audit: could not start the audit thread: %s — nothing ran", e)
+            raise HTTPException(status_code=500,
+                                detail=f"could not start the loudness audit — motif could not start a thread ({e}); nothing ran")
         return {"ok": True, "started": True}
 
     @app.get("/api/admin/loudness-audit/status")
@@ -27740,7 +27786,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """v0.51.167: read side of CANONICAL HEALTH — the broken canonicals
         (local_files.canonical_present=0) split into re-downloadable vs
         canonical-missing. Pure read from the LAST-stamped canonical_present (as
-        fresh as the last enum / hourly scheduler / RUN CHECK); the page loads this
+        fresh as the last enum / the daily 03:25 UTC health pass / RUN CHECK); the page loads this
         on open, then RUN CHECK re-stamps + refreshes."""
         _require_admin(request)
         from ..core.canonical_health import broken_canonical_report
@@ -27838,27 +27884,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     log.debug("canonical restore: could not remove the temp marker %s: %s", tmp, ue)
             return False
 
-    def _canon_restore_finish_marker(obj: dict) -> None:
+    def _canon_restore_finish_marker(obj: dict, marked: bool) -> None:
         """v0.51.342: the last run's marker; one that can't be written must not leave 'running' to read as a restart."""
         import os
         dest = _canon_restore_path(settings)
+        # v0.51.344: worded by whether this run's running marker landed — with none, the file is an earlier run's
+        lost = ("removing the running marker, so after a restart the page shows no last run" if marked else
+                "removing any marker an earlier run left (this run's start marker was never written either), "
+                "so after a restart the page shows no last run")
         with _CANON_RESTORE_MARKER_LOCK:
-            if _canon_restore_write(obj, "removing the running marker, so after a restart the page shows no last run"):
+            if _canon_restore_write(obj, lost):
                 return
             try:
                 os.unlink(dest)
             except FileNotFoundError:
                 log.debug("canonical restore: no marker at %s to remove", dest)
             except OSError as e:
-                log.warning("canonical restore: could not remove %s (%s) — after a restart the page calls this "
-                            "finished run cut off by a restart", dest, e)
+                log.warning("canonical restore: could not remove %s (%s) — after a restart the page %s", dest, e,
+                            "calls this finished run cut off by a restart" if marked
+                            else "shows the marker an earlier run left as the last run")
 
-    def _canon_restore_cut_off(actor: str, t0: float, how: str) -> None:
+    def _canon_restore_cut_off(db_path: Path, actor: str, t0: float, how: str, counts: dict, marked: bool,
+                               exc: BaseException | None = None) -> None:
         """v0.51.342: stopped by motif's shutdown — the running marker stays, so the next start reports the run cut off."""
         with _CANON_RESTORE_LOCK:
             _CANON_RESTORE_STATE.update(status="interrupted", stage=None, elapsed_s=round(time.monotonic() - t0, 1))
-        log.warning("canonical restore from Plex by %s was cut off by a motif shutdown (%s) — its running marker "
-                    "stays, so the next start reports it cut off and asks for RUN CHECK", actor, how)
+        # v0.51.344: a real failure that coincides with exit kept no traceback
+        log.warning("canonical restore from Plex by %s was cut off by a motif shutdown (%s) — %s", actor, how,
+                    "its running marker stays, so the next start reports it cut off and asks for RUN CHECK" if marked
+                    else "its start marker was never written, so the next start cannot report it cut off — "
+                         "RUN CHECK before RESTORE FROM PLEX", exc_info=exc)
+        try:
+            # v0.51.344: the restores a cut-off run committed had no audit row
+            with get_conn(db_path) as conn, transaction(conn):
+                _record_audit(conn, actor=actor, action="canonical_restore_from_plex",
+                              details={**counts, "status": "interrupted", "how": how})
+            log_event(db_path, level="WARNING", component="api",
+                      message=f"Canonical restore from Plex by {actor} was cut off by a motif shutdown after "
+                              f"{counts.get('restored', 0)} restored — RUN CHECK after the restart")
+        except Exception as e:  # noqa: BLE001 — the restores are committed; exit goes on without the row
+            log.warning("canonical restore from Plex by %s was cut off, but its audit row / event could not "
+                        "be written: %s", actor, e)
 
     def _canon_restore_run(db_path: Path, themes_dir: Path, plex_cfg, plus_mode, actor: str) -> None:
         """v0.51.342: the RESTORE FROM PLEX thread — progress into the page state, the
@@ -27868,10 +27934,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with _CANON_RESTORE_LOCK:
             _CANON_RESTORE_STATE["t0"] = t0
             started_at = _CANON_RESTORE_STATE.get("started_at")
+        marked = False
         try:
             with _CANON_RESTORE_MARKER_LOCK:
-                _canon_restore_write({"status": "running", "started_at": started_at, "actor": actor},
-                                     "a restart during this run will not be reported")
+                # v0.51.344: the start write can fail too — then whatever marker is there is an earlier run's
+                marked = _canon_restore_write({"status": "running", "started_at": started_at, "actor": actor},
+                                              "a restart during this run will not be reported")
             factory = (lambda: PlexClient(plex_cfg, plus_mode=plus_mode)) if plex_cfg else None
 
             def _cb(done: int, total: int, counts: dict) -> None:
@@ -27884,14 +27952,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             summary = restore_from_plex(db_path, themes_dir, None, plex_client_factory=factory,
                                         progress_cb=_cb, cancel_check=_cancel)
-            if summary["cancelled"] and _CANON_RESTORE_SHUTDOWN.is_set():
-                _canon_restore_cut_off(actor, t0, f"{summary['restored']} restored, {summary['not_attempted']} not tried")
+            with _CANON_RESTORE_LOCK:
+                user_cancel = bool(_CANON_RESTORE_STATE.get("user_cancel"))
+            if summary["cancelled"] and _CANON_RESTORE_SHUTDOWN.is_set() and not user_cancel:
+                _canon_restore_cut_off(db_path, actor, t0,
+                                       f"{summary['restored']} restored, {summary['not_attempted']} not tried",
+                                       {k: v for k, v in summary.items() if k != "skipped"}, marked)
                 return
             final = {"status": "cancelled" if summary["cancelled"] else "done", "started_at": started_at,
-                     "finished_at": now_iso(), "elapsed_s": round(time.monotonic() - t0, 1), "actor": actor,
+                     "finished_at": now_iso_ms(), "elapsed_s": round(time.monotonic() - t0, 1), "actor": actor,
                      "skipped_count": len(summary["skipped"]), **summary}
             # v0.51.342: the marker lands while the state still reads running — a START in between lost its marker to it.
-            _canon_restore_finish_marker(final)
+            _canon_restore_finish_marker(final, marked)
             with _CANON_RESTORE_LOCK:
                 _CANON_RESTORE_STATE.update(final, stage=None, error=None, total=summary["broken"],
                                             done=summary["broken"] - summary["not_attempted"])
@@ -27913,17 +27985,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception as e:  # noqa: BLE001 — the job must end in a named state, never a stuck "running"
             if _CANON_RESTORE_SHUTDOWN.is_set():
                 # v0.51.342: exit refuses new pool work ('cannot schedule new futures') — the restart, not a failure.
-                _canon_restore_cut_off(actor, t0, f"{type(e).__name__}: {e}")
+                with _CANON_RESTORE_LOCK:
+                    counts = {k: _CANON_RESTORE_STATE.get(k) or 0
+                              for k in ("done", "total", "restored_sidecar", "restored_store", "skipped_count")}
+                counts["restored"] = counts["restored_sidecar"] + counts["restored_store"]
+                _canon_restore_cut_off(db_path, actor, t0, f"{type(e).__name__}: {e}", counts, marked, exc=e)
                 return
             log.exception("canonical restore from Plex failed")
             with _CANON_RESTORE_LOCK:
-                failed = {k: v for k, v in _CANON_RESTORE_STATE.items() if k not in ("cancel", "t0")}
-                failed.update(status="failed", error=str(e), finished_at=now_iso(), stage=None,
+                failed = {k: v for k, v in _CANON_RESTORE_STATE.items() if k not in ("cancel", "t0", "user_cancel")}
+                failed.update(status="failed", error=str(e), finished_at=now_iso_ms(), stage=None,
                               elapsed_s=round(time.monotonic() - t0, 1),
                               restored=(failed.get("restored_sidecar") or 0) + (failed.get("restored_store") or 0))
             # v0.51.342: as on the done path — the marker first, then the state a START can claim.
             try:
-                _canon_restore_finish_marker(failed)
+                _canon_restore_finish_marker(failed, marked)
             finally:
                 with _CANON_RESTORE_LOCK:
                     _CANON_RESTORE_STATE.update(failed)
@@ -27959,8 +28035,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # v0.51.342: a re-click after a 504 attaches — a second run raced the first's .part / .motif-tmp.
                 return {"ok": True, "started": False, "already_running": True}
             _CANON_RESTORE_STATE.clear()
+            # v0.51.344: ms — a run started in the second the page last saw read as "the start never reached motif"
             _CANON_RESTORE_STATE.update(
-                status="running", stage="listing", started_at=now_iso(), actor=request.state.user,
+                status="running", stage="listing", started_at=now_iso_ms(), actor=request.state.user,
                 done=0, total=0, restored_sidecar=0, restored_store=0, skipped_count=0, error=None,
                 cancel=False, plex=bool(cfg), workers=RESTORE_PLEX_WORKERS)
             # v0.51.342: the handle lands with the claim — a shutdown before the thread's first line joined the last run's.
@@ -27968,7 +28045,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 target=_canon_restore_run,
                 args=(db, settings.themes_dir, cfg, settings.plus_equiv_mode, request.state.user),
                 name="canonical-restore-from-plex", daemon=True)
-            _CANON_RESTORE_THREAD.start()
+            try:
+                _CANON_RESTORE_THREAD.start()
+            except Exception as e:  # noqa: BLE001 — v0.51.344: a failed start stayed 'running' and exit joined a thread that never ran
+                _CANON_RESTORE_STATE.clear()
+                _CANON_RESTORE_STATE["status"] = "idle"
+                _CANON_RESTORE_THREAD = None
+                log.error("canonical restore: could not start the RESTORE FROM PLEX thread: %s — nothing ran", e)
+                raise HTTPException(status_code=500, detail=f"could not start RESTORE FROM PLEX — motif could not "
+                                                            f"start a thread ({e}); nothing ran")
         return {"ok": True, "started": True}
 
     @app.post("/api/admin/canonical-health/restore-from-plex/cancel")
@@ -27978,6 +28063,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             running = _CANON_RESTORE_STATE.get("status") == "running"
             if running:
                 _CANON_RESTORE_STATE["cancel"] = True
+                # v0.51.344: a user's cancel that finishes during exit is a cancel, not a cut-off
+                _CANON_RESTORE_STATE["user_cancel"] = True
         return {"ok": True, "cancelling": running}
 
     def _canon_restore_last_run() -> dict | None:

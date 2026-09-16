@@ -15,7 +15,6 @@ exist and are valid woff2; the font-var chains still name VT323 / JetBrains Mono
 from __future__ import annotations
 
 import re
-import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -96,12 +95,11 @@ def test_font_var_chains_unchanged():
 
 # ── behavioural: the mount actually serves the woff2 ────────────────────
 
-def _client(tmp: Path) -> TestClient:
-    import os
-    os.environ["MOTIF_TRUST_FORWARD_AUTH"] = "true"
-    os.environ["MOTIF_FORWARD_AUTH_ALLOWED_IPS"] = "127.0.0.1"
-    os.environ["MOTIF_CONFIG_DIR"] = str(tmp)
-    os.environ["MOTIF_DATA_DIR"] = str(tmp / "data")
+def _client(tmp: Path, monkeypatch) -> TestClient:
+    monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")  # v0.51.344: monkeypatch, not bare os.environ (trust + a deleted temp dir leaked past this test)
+    monkeypatch.setenv("MOTIF_FORWARD_AUTH_ALLOWED_IPS", "127.0.0.1")
+    monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp))
+    monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp / "data"))
     from app.config import Settings
     from app.core.db import init_db
     from app.core.auth import init_auth_schema
@@ -112,9 +110,8 @@ def _client(tmp: Path) -> TestClient:
     return TestClient(create_app(s), client=("127.0.0.1", 50000))
 
 
-def test_font_files_served_by_static_mount():
-    with tempfile.TemporaryDirectory() as d:
-        client = _client(Path(d))
-        r = client.get("/static/fonts/vt323-400.woff2")
-        assert r.status_code == 200
-        assert r.content[:4] == b"wOF2"
+def test_font_files_served_by_static_mount(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    r = client.get("/static/fonts/vt323-400.woff2")
+    assert r.status_code == 200
+    assert r.content[:4] == b"wOF2"

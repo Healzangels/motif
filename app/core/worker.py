@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..config import Settings
-from .canonical import canonical_theme_subdir
+from .canonical import download_theme_rel
 from .db import get_conn, transaction
 from .downloader import DownloadError, FailureKind, download_theme
 from .editions import edition_key_for_folder
@@ -1770,14 +1770,13 @@ class Worker:
         # per-section (Movies / 4K Movies / TV Shows / Anime / etc.)
         # so the existing leaf shape transposes cleanly under the
         # new collections/ parent.
-        if media_type == "collection":
-            media_root = media_root.parent / "collections" / media_root.name
         # v1.21.54 (B2a): per-edition downloads stage under a separate
         # leaf so an Extended theme doesn't overwrite the standard one.
         # _dl_edition_key resolved up-front (v1.21.92) for the override
         # scope; reused here for the staging path.
-        out_dir = media_root / canonical_theme_subdir(
-            theme["title"], theme["year"], _dl_edition_key)
+        # v0.51.344: built by the helper RESTORE FROM PLEX's in-flight check uses (collections/ nesting included)
+        out_dir = self.settings.themes_dir / download_theme_rel(
+            media_type, section_subdir, theme["title"], theme["year"], _dl_edition_key)
 
         # Dry-run: log what we would do and stop here (no YouTube hit, no rate-limit token consumed)
         if is_dry_run(self.settings.db_path, default=self.settings.dry_run_default):

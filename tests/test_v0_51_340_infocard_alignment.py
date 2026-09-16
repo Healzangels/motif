@@ -94,7 +94,8 @@ def test_play_row_badges_the_label_and_opens_the_value_on_the_player(name, start
     assert len(rows) == 1, f"{name}: one play row, badge inside its <dt>"
     row = rows[0]
     assert row.group("label").rstrip() == label, name  # v0.51.340: the trailing separator is its own guard below
-    assert row.group("dd").startswith("<audio "), (
+    el = _first_element(src, row.start("dd"))  # v0.51.344: the motif file's player is a gated const, so read the value's first element
+    assert el and el[0] == "audio", (
         f"{name}: the <dd> must open on the player, so every player starts at the value edge")
     assert "tier-badge" not in row.group("dd"), f"{name}: no badge left inside the value row"
 

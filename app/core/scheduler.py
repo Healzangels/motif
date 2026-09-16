@@ -1088,21 +1088,23 @@ def _cleanup_sessions_job(db_path: Path) -> None:
                   message=f"Purged {purged} expired session(s)")
 
 
-def _sweep_placement_temps_job(db_path: Path) -> None:
+def _sweep_placement_temps_job(settings: "Settings") -> None:
     """v0.51.104: daily cleanup of orphaned theme.mp3.motif-tmp files left in
     media folders by interrupted atomic placements (a crash/restart between the
     hardlink-copy and the os.replace). Normally cleaned on the next placement to
     that folder, but a folder that never gets re-placed (edition drift, a switch
     to plex_upload) keeps the orphan. No-op when there are none."""
     from .plex_enum import sweep_stale_placement_temps
+    db_path = settings.db_path
     try:
-        removed = sweep_stale_placement_temps(db_path)
+        # v0.51.344: themes_dir too — a killed canonical restore strands theme.mp3.part / theme.mp3.<hex>.motif-tmp there.
+        removed = sweep_stale_placement_temps(db_path, themes_dir=settings.themes_dir)
     except Exception as e:  # noqa: BLE001 — a hygiene sweep must never crash the scheduler
         log.warning("Stale .motif-tmp sweep job failed: %s", e)
         return
     if removed:
         log_event(db_path, level="INFO", component="scheduler",
-                  message=f"Removed {removed} stale .motif-tmp placement temp(s)")
+                  message=f"Removed {removed} stale placement / canonical-restore temp(s)")
 
 
 def _daily_health_passes_job(settings: "Settings") -> None:
@@ -1307,15 +1309,13 @@ def _scheduled_database_backup(settings: "Settings") -> None:
         if settings.db_backup_bundle:  # v0.51.339: no getattr shim — a settings surface without the toggle fails loudly, never a silent bare snapshot
             # v0.51.335: a bundle — the snapshot plus motif.yaml, cookies.txt
             # and the themes census — instead of a bare snapshot (spec § 3).
-            from app import __version__
             from . import bundle as bundle_mod
-            from .db import CURRENT_SCHEMA_VERSION
-            bf = bundle_mod.create_bundle(
-                settings.db_path, settings.config_dir,
-                config_file=settings.config_dir / "motif.yaml",
-                cookies_file=settings.cookies_file, themes_dir=settings.themes_dir,
-                now_stamp=stamp, motif_version=__version__,
-                schema_version=CURRENT_SCHEMA_VERSION)
+            try:
+                bf = bundle_mod.create_bundle_for(settings, stamp)  # v0.51.344: the API's spelling too — the eight kwargs were hand-kept twice
+            except bundle_mod.BundleOverCap as e:  # v0.51.344: every nightly wrote nothing and said to take the snapshot the job can take itself
+                bf = db_backup.create_backup(settings.db_path, settings.config_dir, now_stamp=stamp)
+                log_event(settings.db_path, level="WARNING", component="backup",
+                          message=f"Scheduled backup bundle not written ({e}) — a plain database snapshot was taken instead")
         else:
             bf = db_backup.create_backup(
                 settings.db_path, settings.config_dir, now_stamp=stamp)
@@ -1330,8 +1330,9 @@ def _scheduled_database_backup(settings: "Settings") -> None:
         log_event(settings.db_path, level="WARNING", component="backup",
                   message=f"Scheduled database backup failed: {e}")
         return
-    removed = db_backup.prune_backups(
-        settings.config_dir, settings.db_backup_retention)
+    removed = db_backup.prune_backups(  # v0.51.344: now read after the create, so a backup landing during the VACUUM is never "future"
+        settings.config_dir, settings.db_backup_retention,
+        now_stamp=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"), keep=bf.name)
     msg = (f"Scheduled backup bundle created: {bf.name}" if bf.kind == "bundle"
            else f"Scheduled database backup created: {bf.name}")
     if removed:
@@ -1478,7 +1479,7 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
     # a writer-lock job, so it doesn't contend with the DB prunes above; no-op
     # when there are no orphans.
     scheduler.add_job(
-        _sweep_placement_temps_job, args=[settings.db_path],
+        _sweep_placement_temps_job, args=[settings],
         trigger=CronTrigger(minute="20", hour="3", timezone="UTC"),
         id="placement_temp_sweep", replace_existing=True, max_instances=1,
     )

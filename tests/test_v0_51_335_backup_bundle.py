@@ -14,6 +14,7 @@ import json
 import re
 import sqlite3
 import tarfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -215,7 +216,7 @@ def test_prune_counts_bundles_and_snapshots_together_never_prerestore(tmp_path):
     db_backup.create_backup(db, cd, now_stamp="20260912-050000")
     db_backup.create_backup(db, cd, now_stamp="20260912-060000")
     db_backup.create_backup(db, cd, now_stamp="20260901-000000", prerestore=True)
-    removed = db_backup.prune_backups(cd, retention=2)
+    removed = db_backup.prune_backups(cd, retention=2, now_stamp=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))  # v0.51.344: prune sets aside a stamp after now
     assert removed == [f"motif-bundle-{NOW}.tar.gz"], "the oldest routine file — a bundle — goes; the pre-restore copy stays"
     assert sorted(p.name for p in (cd / "backups").iterdir()) == [
         "motif-20260912-050000.db", "motif-20260912-060000.db", "motif-prerestore-20260901-000000.db",
@@ -277,6 +278,7 @@ def test_scheduled_job_writes_a_bundle_when_the_toggle_is_on(tmp_path, monkeypat
     class S:  # the settings surface the job reads
         db_path = db
         config_dir = cd
+        config_file = type("CF", (), {"path": cfg})  # v0.51.344: create_bundle_for reads the loaded config file's path
         cookies_file = cookies
         themes_dir = cd / "data" / "themes"
         db_backup_enabled = True

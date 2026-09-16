@@ -79,6 +79,7 @@ def env(tmp_path, monkeypatch):
     finally:
         for held in _HELD:
             held.release.set()
+            held.after_cancel.set()
         _HELD.clear()
         _join_job()
         _reset_job()
@@ -86,10 +87,14 @@ def env(tmp_path, monkeypatch):
 
 class HeldRestore:
     """Stands in for core's restore_from_plex: reports progress, then waits to be released or cancelled."""
-    def __init__(self, *, fail=None, released=False):
+    def __init__(self, *, fail=None, released=False, unreachable=False):
         self.release = threading.Event()
         self.entered = threading.Event()
+        # v0.51.344: clear after_cancel to hold the run between seeing the cancel and returning — the 'cancelling' window
+        self.cancel_seen, self.after_cancel = threading.Event(), threading.Event()
+        self.after_cancel.set()
         self.fail = fail
+        self.unreachable = unreachable
         self.calls: list[dict] = []
         if released:
             self.release.set()
@@ -105,15 +110,17 @@ class HeldRestore:
         while not self.release.wait(0.01):
             if cancel_check():
                 cancelled = True
+                self.cancel_seen.set()
+                self.after_cancel.wait(10)
                 break
         if self.fail is not None:
             raise self.fail
         skipped = [{"title": "T1", "media_type": "movie", "tmdb_id": 1, "section_id": "1", "reason": "no_plex_copy"}]
         if cancelled:
             return {"broken": 10, "restored_sidecar": 1, "restored_store": 1, "restored": 2, "skipped": skipped,
-                    "cancelled": True, "not_attempted": 7, "plex_unreachable": False}
+                    "cancelled": True, "not_attempted": 7, "plex_unreachable": self.unreachable}
         return {"broken": 10, "restored_sidecar": 5, "restored_store": 4, "restored": 9, "skipped": skipped,
-                "cancelled": False, "not_attempted": 0, "plex_unreachable": False}
+                "cancelled": False, "not_attempted": 0, "plex_unreachable": self.unreachable}
 
 
 def _status(client):
@@ -197,6 +204,34 @@ def test_cancel_reaches_the_bulk_and_reads_cancelled(env, monkeypatch):
     assert _messages(events) == ["Canonical restore from Plex by testadmin: 1 from sidecars, 1 from Plex's store, "
                                  "1 skipped of 10 broken — cancelled, 7 not tried"]
     assert client.post(CANCEL, headers=AUTH).json() == {"ok": True, "cancelling": False}
+
+
+def test_status_says_cancelling_between_the_cancel_and_the_run_ending(env, monkeypatch):
+    client, settings, tmp_path, events = env
+    held = HeldRestore()
+    held.after_cancel.clear()
+    monkeypatch.setattr(ch, "restore_from_plex", held)
+    client.post(START, headers=AUTH)
+    assert held.entered.wait(10)
+    assert _status(client)["cancelling"] is False
+    assert client.post(CANCEL, headers=AUTH).json() == {"ok": True, "cancelling": True}
+    assert held.cancel_seen.wait(10), "premise: the run saw the cancel and is still winding down"
+    st = _status(client)
+    # v0.51.344: the page words '— cancelling…' from this flag, and only its False value was pinned
+    assert (st["status"], st["cancelling"]) == ("running", True), st
+    held.after_cancel.set()
+    assert _finish(client)["status"] == "cancelled"
+
+
+def test_a_run_plex_never_answered_says_so_in_its_event(env, monkeypatch):
+    client, settings, tmp_path, events = env
+    monkeypatch.setattr(ch, "restore_from_plex", HeldRestore(released=True, unreachable=True))
+    client.post(START, headers=AUTH)
+    st = _finish(client)
+    assert (st["status"], st["plex_unreachable"]) == ("done", True)
+    (message,) = _messages(events)
+    # v0.51.344: the events log is where the operator reads why the store rows went untried
+    assert message.endswith(" — Plex gave no answer"), message
 
 
 def test_a_missing_themes_dir_is_refused_before_the_job_is_claimed(env, monkeypatch):
@@ -316,9 +351,8 @@ def test_the_interrupted_rewrite_never_lands_on_a_run_started_while_it_reads(env
         assert go.wait(10)
         return got
     monkeypatch.setattr(api_mod, "_canon_restore_read", read)
-    spy = _SpyLock(api_mod._CANON_RESTORE_MARKER_LOCK) if hasattr(api_mod, "_CANON_RESTORE_MARKER_LOCK") else None
-    if spy is not None:
-        monkeypatch.setattr(api_mod, "_CANON_RESTORE_MARKER_LOCK", spy)
+    spy = _SpyLock(api_mod._CANON_RESTORE_MARKER_LOCK)
+    monkeypatch.setattr(api_mod, "_CANON_RESTORE_MARKER_LOCK", spy)
     held = HeldRestore()
     monkeypatch.setattr(ch, "restore_from_plex", held)
     out = {}
@@ -326,11 +360,8 @@ def test_the_interrupted_rewrite_never_lands_on_a_run_started_while_it_reads(env
     reader.start()
     assert reading.wait(10), "premise: the status read is reading the cut-off run's marker"
     assert client.post(START, headers=AUTH).json()["started"] is True
-    end = time.monotonic() + 10
-    # the new run either reached its marker write or is already past it
-    while not (held.entered.is_set() or (spy is not None and spy.job_asked.is_set())):
-        assert time.monotonic() < end, "the new run never reached its marker"
-        time.sleep(0.005)
+    # v0.51.344: the reader holds the lock, so the run waits there — no hasattr, no sleep loop
+    assert spy.job_asked.wait(10), "the new run never asked for the marker lock"
     go.set()
     reader.join(10)
     assert out["st"] == {**dead, "status": "interrupted", "first_report": True}
@@ -549,7 +580,7 @@ def test_the_page_ssr_locks_restore_while_the_job_runs(env, monkeypatch):
     assert " disabled" in tag and "display:none" not in tag and label == "// RESTORING…"
     ctag, clabel = _button(busy, "canon-restore-plex-cancel-btn")
     assert "display:none" not in ctag and clabel == "// CANCEL"
-    # v0.51.342: what the binder seeds its running state from — _SSR_RUNNING mirrors this render.
+    # v0.51.342: what the binder seeds its running state from — the ssr_running fixture reads this render.
     assert 'data-running="1"' in _status_span(busy)
     held.release.set()
     _finish(client)
@@ -692,20 +723,61 @@ def test_a_report_landing_mid_run_keeps_the_busy_label(tmp_path):
     assert s1["canon-check-btn"]["disabled"] is True, "the check's own finally unlocked CHECK mid-run"
 
 
-_SSR_RUNNING = {"canon-restore-plex-btn": {"disabled": True, "display": "", "text": "// RESTORING…"},
-                "canon-restore-plex-cancel-btn": {"display": ""},
-                "canon-restore-plex-status": {"text": "restoring…", "dataset": {"running": "1"}}}
+@pytest.fixture
+def ssr_running(tmp_path_factory, monkeypatch):
+    """The restore controls as /admin/canonical-health renders them while a run is going — what the binder seeds from."""
+    # v0.51.344: derived from the render — a hand-written copy seeds a state the template may no longer produce
+    from app.config import Settings
+    from app.core.auth import create_admin, init_auth_schema
+    from app.web import api as api_mod
+    root = tmp_path_factory.mktemp("ssr-running")
+    with monkeypatch.context() as m:
+        m.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
+        m.setenv("MOTIF_CONFIG_DIR", str(root))
+        m.setenv("MOTIF_DATA_DIR", str(root / "data"))
+        settings = Settings(config_dir=root, data_dir=root / "data")
+        (root / "themes").mkdir(parents=True, exist_ok=True)
+        settings._cfg.paths.themes_dir = str(root / "themes")
+        init_db(settings.db_path)
+        init_auth_schema(settings.db_path)
+        create_admin(settings.db_path, username="testadmin", password="testpassword")
+        app = api_mod.create_app(settings)
+        with api_mod._CANON_RESTORE_LOCK:
+            saved = dict(api_mod._CANON_RESTORE_STATE)
+            assert saved.get("status") != "running", "a run is going — the fixture would relabel its state"
+            api_mod._CANON_RESTORE_STATE["status"] = "running"
+        try:
+            html = TestClient(app).get("/admin/canonical-health", headers=AUTH).text
+        finally:
+            with api_mod._CANON_RESTORE_LOCK:
+                api_mod._CANON_RESTORE_STATE.clear()
+                api_mod._CANON_RESTORE_STATE.update(saved)
+    btag, blabel = _button(html, "canon-restore-plex-btn")
+    ctag, _clabel = _button(html, "canon-restore-plex-cancel-btn")
+    span = re.search(r'(<span[^>]*\bid="canon-restore-plex-status"[^>]*>)([^<]*)</span>', html)
+    assert span, "no #canon-restore-plex-status span"
+    dataset = {re.sub(r"-([a-z])", lambda g: g.group(1).upper(), k): v
+               for k, v in re.findall(r'\sdata-([a-z-]+)="([^"]*)"', span.group(1))}
+
+    def shown(tag):
+        return "none" if re.search(r'style="[^"]*display:\s*none', tag) else ""
+    return {"canon-restore-plex-btn": {"disabled": bool(re.search(r"\sdisabled\b", btag)), "display": shown(btag),
+                                       "text": blabel},
+            "canon-restore-plex-cancel-btn": {"display": shown(ctag)},
+            "canon-restore-plex-status": {"text": span.group(2), "dataset": dataset}}
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")
-def test_a_page_rendered_mid_run_whose_first_poll_fails_keeps_polling(tmp_path):
+def test_a_page_rendered_mid_run_whose_first_poll_fails_keeps_polling(tmp_path, ssr_running):
     page = _report(missing=[_row(1605, "Load Blip", "store")], restorable=3)
     after = _report(missing=[_row(1605, "Load Blip", "store")], restorable=1)
     s0, s1, s2 = _run_page(tmp_path, [page, {"__throw": {"status": 502}}, _RUNNING, _finished(), after],
-                           ["tick", "tick"], ssr=_SSR_RUNNING)
+                           ["tick", "tick"], ssr=ssr_running)
     btn = s0["canon-restore-plex-btn"]
     assert (btn["text"], btn["disabled"], btn["display"]) == ("// RESTORING…", True, ""), \
         "the report relabelled the server-rendered busy button"
+    # v0.51.344: a failed first poll leaves the server's words on the line — neither blanked nor replaced
+    assert s0["canon-restore-plex-status"]["text"] == ssr_running["canon-restore-plex-status"]["text"] != ""
     assert s0["canon-restore-plex-cancel-btn"]["display"] == ""
     assert (s0["canon-check-btn"]["disabled"], s0["canon-repair-btn"]["disabled"]) == (True, True)
     assert s0["__timers"] == 1, "one failed poll at load left nothing polling the run"
@@ -716,6 +788,19 @@ def test_a_page_rendered_mid_run_whose_first_poll_fails_keeps_polling(tmp_path):
     assert (btn["text"], btn["disabled"], btn["display"]) == ("// RESTORE FROM PLEX (1)", False, "")
     assert (s2["canon-check-btn"]["disabled"], s2["canon-repair-btn"]["disabled"]) == (False, False)
     assert (s2["canon-restore-plex-cancel-btn"]["display"], s2["__timers"]) == ("none", 0)
+
+
+@pytest.mark.skipif(not _NODE, reason="node not installed")
+def test_a_page_rendered_mid_run_whose_first_poll_is_done_shows_the_result_as_watched(tmp_path, ssr_running):
+    page = _report(missing=[_row(1608, "Quick Title", "store")], restorable=1)
+    (s0,) = _run_page(tmp_path, [page, _finished(), _report()], [], ssr=ssr_running)
+    status = s0["canon-restore-plex-status"]
+    # v0.51.344: a run the server rendered as going is this page's own — its result is not a 'last run'
+    assert (status["text"], status["className"]) == (
+        "✓ restored 9 (5 from Plex folders, 4 from Plex's store) · 1 skipped (1 Plex gave no answer — not tried)",
+        "form-status form-status-ok")
+    assert (s0["canon-check-btn"]["disabled"], s0["canon-repair-btn"]["disabled"], s0["canon-restore-plex-btn"]["disabled"],
+            s0["canon-restore-plex-cancel-btn"]["display"], s0["__timers"]) == (False, False, False, "none", 0)
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")
@@ -781,3 +866,64 @@ def test_a_last_run_the_page_did_not_watch_is_labelled_and_does_not_force_the_bl
     (s0,) = _run_page(tmp_path, [_report(), _finished(finished_at=_ago(hours=3))], [])
     assert s0["canon-restore-plex-status"]["text"].startswith("last run 3h ago: ✓ restored 9")
     assert s0["canon-missing-block"]["display"] == "none", "an old run's summary must not hold the block open"
+
+
+@pytest.mark.skipif(not _NODE, reason="node not installed")
+def test_a_watched_run_cut_off_without_a_first_report_still_alarms(env, monkeypatch, ssr_running):
+    client, settings, tmp_path, events = env
+    from app.web import api as api_mod
+    monkeypatch.setattr(api_mod, "_CANON_RESTORE_SHUTDOWN", threading.Event())
+    monkeypatch.setattr(api_mod, "_CANON_RESTORE_THREAD", None)
+    held = HeldRestore()
+    monkeypatch.setattr(ch, "restore_from_plex", held)
+    assert client.post(START, headers=AUTH).json()["started"] is True
+    assert held.entered.wait(10)
+    api_mod.canon_restore_shutdown().join(10)
+    cut = _status(client)
+    assert cut["status"] == "interrupted" and "first_report" not in cut, f"premise: a live cut-off carries no first_report: {cut}"
+    _s0, s1 = _run_page(tmp_path / "page", [_report(), _RUNNING, cut, _report()], ["tick"], ssr=ssr_running)
+    status = s1["canon-restore-plex-status"]
+    # v0.51.344: the watch alone makes this an alarm — first_report belongs to the marker read after a restart
+    assert status["className"] == "form-status form-status-fail", status
+    assert re.fullmatch(r"✗ the run started .+ was cut off by a motif restart — RUN CHECK, then RESTORE FROM PLEX "
+                        r"restores what is left", status["text"]), status
+    assert (s1["canon-missing-block"]["display"], s1["__timers"]) == ("", 0)
+
+
+def _real_ending(client, monkeypatch, ending):
+    """A run that really ended failed or cancelled, and the status the endpoint then gives."""
+    if ending == "failed":
+        monkeypatch.setattr(ch, "restore_from_plex", HeldRestore(fail=RuntimeError("disk vanished"), released=True))
+        assert client.post(START, headers=AUTH).json()["started"] is True
+    else:
+        held = HeldRestore()
+        monkeypatch.setattr(ch, "restore_from_plex", held)
+        assert client.post(START, headers=AUTH).json()["started"] is True
+        assert held.entered.wait(10)
+        assert client.post(CANCEL, headers=AUTH).json()["cancelling"] is True
+    st = _finish(client)
+    assert st["status"] == ending, st
+    return st
+
+
+@pytest.mark.skipif(not _NODE, reason="node not installed")
+@pytest.mark.parametrize("ending", ["failed", "cancelled"])
+def test_a_real_failed_or_cancelled_run_is_worded_on_load_and_when_watched(env, monkeypatch, ssr_running, ending):
+    client, settings, tmp_path, events = env
+    st = _real_ending(client, monkeypatch, ending)
+    if ending == "failed":
+        words = f"✗ restore failed — {st['error']} ({st['restored']} restored before it stopped)"
+        cls = "form-status form-status-fail"
+    else:
+        words = (f"✓ cancelled — restored {st['restored']} ({st['restored_sidecar']} from Plex folders, "
+                 f"{st['restored_store']} from Plex's store) · 1 skipped (1 no Plex copy) · "
+                 f"{st['not_attempted']} not tried")
+        cls = "form-status form-status-ok"
+    # v0.51.344: payloads from real runs — the failed and cancelled words were only ever fed hand-written ones
+    (loaded,) = _run_page(tmp_path / "loaded", [_report(), st], [])
+    status = loaded["canon-restore-plex-status"]
+    assert status["text"].startswith("last run ") and status["text"].endswith(": " + words), status
+    assert status["className"] == cls
+    (watched,) = _run_page(tmp_path / "watched", [_report(), st, _report()], [], ssr=ssr_running)
+    status = watched["canon-restore-plex-status"]
+    assert (status["text"], status["className"]) == (words, cls)

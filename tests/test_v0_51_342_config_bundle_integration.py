@@ -99,30 +99,36 @@ def _doc(pairs) -> dict:
 def _spellings() -> dict[str, tuple[dict, dict]]:
     leaves = _scalar_leaves()
     text = [(s, k) for s, k, d in leaves if type(d) is str]
-    empty = [(s, k) for s, k, d in leaves if type(d) is str and d == ""]
+    texts = [(s, k, d) for s, k, d in leaves if type(d) is str]
     ints = [(s, k, d) for s, k, d in leaves if type(d) is int]
     nums = [(s, k, d) for s, k, d in leaves if type(d) is float]
+    bools = [(s, k, d) for s, k, d in leaves if type(d) is bool]
     return {  # name: (the hand-edited document, the same settings in their canonical types)
         "an int in every text leaf": (_doc((s, k, 1000 + i) for i, (s, k) in enumerate(text)),
                                       _doc((s, k, str(1000 + i)) for i, (s, k) in enumerate(text))),
         "a float in every text leaf": (_doc((s, k, 1000.5 + i) for i, (s, k) in enumerate(text)),
                                        _doc((s, k, str(1000.5 + i)) for i, (s, k) in enumerate(text))),
-        "null in every text leaf whose default is empty": (_doc((s, k, None) for s, k in empty),
-                                                           _doc((s, k, "") for s, k in empty)),
+        # v0.51.344: every text leaf — a null is its declared default, not only where that default is ""
+        "null in every text leaf": (_doc((s, k, None) for s, k, _ in texts), _doc(texts)),
         "a whole float in every integer leaf": (_doc((s, k, float(d)) for s, k, d in ints), _doc(ints)),
         "an int in every number leaf": (_doc((s, k, int(d) + 2) for s, k, d in nums),
                                         _doc((s, k, float(int(d) + 2)) for s, k, d in nums)),
         "a numeric string in every number leaf": (_doc((s, k, f"{d + 2:g}") for s, k, d in nums),
                                                   _doc((s, k, d + 2) for s, k, d in nums)),
+        "0 and 1 in every bool leaf": (_doc((s, k, int(d)) for s, k, d in bools), _doc(bools)),  # v0.51.344
     }
 
 
 def test_the_walk_reaches_the_leaves_the_review_named():
     sp = _spellings()
     assert sp["an int in every text leaf"][0]["plex"]["movie_section"] is not None
-    assert set(sp["null in every text leaf whose default is empty"][0]["plex"]) >= {"url", "token"}
+    assert set(sp["null in every text leaf"][0]["plex"]) >= {"url", "token", "movie_section"}
+    assert "default_method" in sp["null in every text leaf"][0]["placement"]
     assert "port" in sp["a whole float in every integer leaf"][0]["web"]
     assert "target_lufs" in sp["a numeric string in every number leaf"][0]["loudness"]
+    hand_bools = sp["0 and 1 in every bool leaf"][0]
+    assert "enabled" in hand_bools["plex"]
+    assert {v for sec in hand_bools.values() if isinstance(sec, dict) for v in sec.values()} == {0, 1}, "both spellings walked"
 
 
 _NOT_READS = {"cfg", "config_file", "config_write_lock", "revision", "config_dir", "data_dir", "db_path", "session_key_file"}
@@ -199,7 +205,7 @@ def test_the_endpoint_previews_against_a_live_unquoted_movie_section_with_the_di
 
 def test_a_settings_save_heals_a_hand_edited_bool_or_integer_leaf():
     cfg = MotifConfig()
-    cfg.plex.enabled = 1                    # a bool leaf stays strict at load
+    cfg.plex.enabled = 1                    # set in code — a hand-edited 0/1 hydrates to a bool at load since v0.51.344
     cfg.downloads.rate_per_hour = "30"      # and a numeric string in an integer leaf is not coerced there
     _apply_partial_config(cfg, {"plex": {"enabled": "true"}, "downloads": {"rate_per_hour": 45}})
     assert cfg.plex.enabled is True and cfg.downloads.rate_per_hour == 45 and type(cfg.downloads.rate_per_hour) is int
@@ -352,13 +358,19 @@ def test_the_scheduled_bundle_says_what_it_left_out(tmp_path, monkeypatch, no_en
     assert bundle.stage_bundle_restore(*_live(tmp_path), cd / "backups" / made.name, keep_config=False).staged == ["database", "config"]
 
 
-def test_a_scheduled_bundle_over_the_database_cap_fails_visibly_and_writes_nothing(tmp_path, monkeypatch, no_env):
+def test_a_scheduled_bundle_over_the_database_cap_takes_a_plain_snapshot_instead(tmp_path, monkeypatch, no_env):
+    # v0.51.344: retargeted from "fails visibly and writes nothing" — every nightly wrote nothing and said to take the snapshot the job can take itself
     run, seen, cd = _scheduled(tmp_path, monkeypatch)
     monkeypatch.setattr(bundle, "_MEMBER_CAP", {**bundle._MEMBER_CAP, bundle.MEMBER_DB: 1024})
     run()
-    assert [e["level"] for e in seen] == ["WARNING"] and "Scheduled database backup failed" in seen[0]["message"], seen
-    assert "over the 1024-byte cap a bundle's database may be" in seen[0]["message"], seen[0]["message"]
-    assert db_backup.list_backups(cd) == [] and not list((cd / "backups").glob(".bundle-*"))
+    assert [e["level"] for e in seen] == ["WARNING", "INFO"], seen
+    said = seen[0]["message"]
+    assert said.startswith("Scheduled backup bundle not written") and "over the 1024-byte cap a bundle's database may be" in said, said
+    assert said.endswith("a plain database snapshot was taken instead"), said
+    [made] = db_backup.list_backups(cd)
+    assert made.kind == "snapshot" and seen[1]["message"] == f"Scheduled database backup created: {made.name}", (made, seen[1])
+    assert db_backup.inspect_restore_source(cd / "backups" / made.name).ok, "the snapshot it took restores"
+    assert not list((cd / "backups").glob(".bundle-*"))
 
 
 # ── 3. a fault writing the extraction is the disk's ──────────────────

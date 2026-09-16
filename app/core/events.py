@@ -27,6 +27,11 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def now_iso_ms() -> str:
+    # v0.51.344: a job's run stamps — two runs in one second read as the same run on the canonical page
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
 # Bounded queue — overflows drop the oldest event rather than blocking
 # a caller. Sized for a worst-case sync that fires ~thousands of
 # events; even at 5K/queue we'd flush within a few seconds.
@@ -295,11 +300,9 @@ _URL_CREDENTIALS_RE = re.compile(
 # an asymmetry with the dict-key scrubber (which already does substring
 # containment). Sharing the word list also means a future addition to
 # _SCRUB_SUBSTRINGS automatically covers this regex too.
-_URL_QUERY_SECRET_RE = re.compile(
-    r"(?i)([?&][A-Za-z0-9_\-]*(?:"
-    + "|".join(re.escape(_s) for _s in _SCRUB_SUBSTRINGS)
-    + r")[A-Za-z0-9_\-]*=)[^&\s#\"']+",
-)
+_URL_SECRET_PARAM_NAME = r"[A-Za-z0-9_\-]*(?:" + "|".join(re.escape(_s) for _s in _SCRUB_SUBSTRINGS) + r")[A-Za-z0-9_\-]*="  # v0.51.344: one name list builds both regexes below — never a string replace
+_URL_QUERY_SECRET_RE = re.compile(r"(?i)([?&]" + _URL_SECRET_PARAM_NAME + r")[^&\s#\"']+")  # v0.51.344: the .342 query-only shape — config_file._pre343_url_mask's stale-tab oracle
+_URL_PARAM_SECRET_RE = re.compile(r"(?i)([?&#]" + _URL_SECRET_PARAM_NAME + r")[^&\s#\"']+")  # v0.51.344: the same names after "#" — a fragment's FIRST param (#access_token=) was logged in clear
 
 # v1.24.12 (security audit, defense-in-depth): webhook URLs carry their secret
 # in the PATH — `…/webhooks/<id>/<token>` (Discord, apprise-generic) — which
@@ -329,7 +332,7 @@ def _redact_url_credentials(s: str) -> str:
     host / param-name for diagnostic value."""
     s = _URL_CREDENTIALS_RE.sub(
         lambda m: f"{m.group('scheme')}***@", s)
-    s = _URL_QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}***", s)
+    s = _URL_PARAM_SECRET_RE.sub(lambda m: f"{m.group(1)}***", s)  # v0.51.344: query and fragment params, as the settings mask
     s = _URL_WEBHOOK_PATH_RE.sub(lambda m: f"{m.group(1)}***", s)
     s = _URL_SLACK_WEBHOOK_RE.sub(lambda m: f"{m.group(1)}***", s)
     return s

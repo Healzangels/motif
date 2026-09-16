@@ -236,13 +236,16 @@ def admin_client(tmp_path, monkeypatch):
     monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
     from app.config import Settings
     from app.core.auth import create_admin, init_auth_schema
-    from app.web.api import create_app
+    from app.web import api as api_mod
     settings = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
     settings._cfg.paths.themes_dir = str(tmp_path / "themes")
     init_db(settings.db_path)
     init_auth_schema(settings.db_path)
     create_admin(settings.db_path, username="testadmin", password="testpassword")
-    return TestClient(create_app(settings)), settings, tmp_path
+    events: list[dict] = []
+    # v0.51.344: events went through the process-global flusher, bound to whichever test's DB logged first
+    monkeypatch.setattr(api_mod, "log_event", lambda _db, **k: events.append(k))
+    return TestClient(api_mod.create_app(settings)), settings, tmp_path, events
 
 
 def _seed_into(settings, tmp_path):
@@ -279,11 +282,13 @@ def _finish_restore_job(client):
     for t in threading.enumerate():
         if t.name == "canonical-restore-from-plex":
             t.join(10)
+            # v0.51.344: a terminal status can come before the audit row — a live thread here outlives the test
+            assert not t.is_alive(), "the restore job thread did not finish"
     return st
 
 
 def test_endpoint_restores_from_folders_without_plex_and_reports(admin_client):
-    client, settings, tmp_path = admin_client
+    client, settings, tmp_path, events = admin_client
     _seed_into(settings, tmp_path)
     _reset_restore_job()
     # v0.51.342: a page open reads the last check's CHANGED candidates — RUN CHECK makes the first one.
@@ -305,6 +310,9 @@ def test_endpoint_restores_from_folders_without_plex_and_reports(admin_client):
     assert j["restored_sidecar"] == 1 and j["restored_store"] == 0
     assert {s["tmdb_id"]: s["reason"] for s in j["skipped"]} == {102: "plex_unavailable", 103: "no_plex_copy"}
     assert (tmp_path / "themes" / "movies" / "101" / "theme.mp3").read_bytes() == b"sidecar-bytes-101"
+    assert [e["message"] for e in events if e["message"].startswith("Canonical restore from Plex")] == [
+        f"Canonical restore from Plex by testadmin: 1 from sidecars, 0 from Plex's store, {len(j['skipped'])} skipped "
+        f"of {j['broken']} broken"]
     r = client.get("/api/admin/canonical-health/report", headers=AUTH)
     assert r.json()["counts"]["broken"] == 2
 

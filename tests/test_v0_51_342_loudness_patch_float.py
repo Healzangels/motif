@@ -73,7 +73,8 @@ def test_patch_target_lufs_saves_a_float(tmp_path, monkeypatch, sent, stored):
     assert on_disk == stored and type(on_disk) is float
 
 
-@pytest.mark.parametrize("sent", [None, True, "", "abc", float("nan"), float("inf"), "-Infinity"])
+@pytest.mark.parametrize("sent", [None, True, "", "abc", float("nan"), float("inf"), "-Infinity",
+                                  "-1_6", "１６", " -16"])  # v0.51.344: float() read digit grouping, full-width and Unicode-space spellings
 def test_a_non_number_target_is_a_400_in_words_and_saves_nothing(tmp_path, monkeypatch, sent):
     client, settings = _api(tmp_path, monkeypatch)
     assert client.patch("/api/config", headers=_H, json={"downloads": {"concurrency": 2}}).status_code == 200

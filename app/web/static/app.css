@@ -2684,6 +2684,13 @@ body.help-mode .settings-help-about { display: block; }
 #library-bulk-bar .btn {
   white-space: nowrap;
 }
+/* v0.51.344: _layoutBulkBar adds .is-wrapped when the primaries + // MORE cannot share one row (PB-071); labelled row, so it wraps left. */
+#library-bulk-bar.is-wrapped { flex-wrap: wrap; position: relative; }
+/* v0.51.344: an in-bar label wider than the bar (a bulk result) wraps inside its own button; panel buttons keep one line. */
+#library-bulk-bar.is-wrapped > .btn { max-width: 100%; white-space: normal; }
+/* v0.51.344: a wrapped // MORE can open a row at the left edge, where its right-anchored panel went off-screen; drop it below the bar. */
+#library-bulk-bar.is-wrapped > .row-menu { position: static; }
+#library-bulk-bar.is-wrapped .row-menu-panel { left: 0; right: auto; }
 /* v1.17.18: overflow menu styling — the panel anchors to the
    right edge of the // MORE summary button (the default
    .row-menu-panel rule does this via `right: 0`). Constrain

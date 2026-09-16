@@ -18,13 +18,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+import yaml
 
 from app.core import canonical_health as ch
 from app.core import placement
 from app.core.db import get_conn, init_db
 from test_v0_51_339_canonical_health_restore import _DRIVER, _LEVELLED, _NODE, _NORM_COLS, APP_JS, _app_fn, _report, _row
-from test_v0_51_342_restore_from_plex_job import (  # noqa: F401 — env is the job endpoints' fixture
-    _SSR_RUNNING, AUTH, JOB_THREAD, START, HeldRestore, _ago, _finish, _marker, env,
+from test_v0_51_342_restore_from_plex_job import (  # noqa: F401 — env and ssr_running are fixtures
+    AUTH, JOB_THREAD, START, HeldRestore, _ago, _finish, _marker, env, ssr_running,
 )
 from test_v0_51_342_restore_pool import SHARED
 from test_v0_51_342_restore_shutdown_cancel import _free_port, _http, _seed_rows, _up
@@ -221,6 +222,15 @@ def test_a_restore_removes_only_the_staging_file_it_created(tmp_path, monkeypatc
         assert res == {"ok": True, "kind": "copy"} and canonical.read_bytes() == SIDECAR
 
 
+def test_one_lock_guards_every_case_spelling_of_a_canonical_path(tmp_path):
+    # v0.51.344: N3 — the bulk treats case spellings as one shared path, so the writers' lock must too
+    a = ch._canonical_write_lock(tmp_path / "Movies" / "Heat (1995)" / "theme.mp3")
+    b = ch._canonical_write_lock(tmp_path / "movies" / "HEAT (1995)" / "theme.mp3")
+    other = ch._canonical_write_lock(tmp_path / "tv" / "Heat (1995)" / "theme.mp3")
+    assert a is b, "two spellings of one canonical path got two locks — their writers can stage it at once"
+    assert a is not other
+
+
 def test_the_per_item_restore_is_refused_while_restore_from_plex_runs(env, monkeypatch):
     client, settings, tmp_path, events = env
     tmdb = 1803
@@ -363,14 +373,16 @@ def _run_library_loop(work, items, responses):
 @pytest.mark.skipif(not _NODE, reason="node not installed")
 def test_the_library_restore_loop_counts_what_each_answer_restored(tmp_path):
     items = [{"canonical_missing": True, "file_path": "x", "theme_media_type": "movie", "theme_tmdb": t,
-              "plex_title": f"T{t}"} for t in (1, 2, 3)]
+              "plex_title": f"T{t}"} for t in (1, 2, 3, 4, 5)]
     responses = [{"ok": True, "restored": 1, "skipped": [{"section_id": "2", "reason": "canonical_already_present"}]},
                  {"ok": True, "restored": 0, "skipped": [{"section_id": "1", "reason": "link_failed:[Errno 2]"}]},
-                 {"__throw": {"status": 409}}]
+                 {"__throw": {"status": 409}},
+                 # v0.51.344: N6 — an answer whose restored is not a number says nothing was restored
+                 {"ok": True, "restored": "1", "skipped": []}, {"ok": True, "skipped": []}]
     out = _run_library_loop(tmp_path, items, responses)
-    assert (len(out["calls"]), out["left"]) == (3, 0)
-    assert out["text"] == "// 1 RESTORED · 2 FAILED", \
-        "a 200 that restored nothing was counted as RESTORED, or a section already present as FAILED"
+    assert (len(out["calls"]), out["left"]) == (5, 0)
+    assert out["text"] == "// 1 RESTORED · 4 FAILED", \
+        "a 200 that restored nothing (or no number) was counted as RESTORED, or a section already present as FAILED"
 
 
 def _seed_two_sections(db, plexdir, tmdb):
@@ -415,6 +427,22 @@ def test_a_title_listed_in_two_sections_is_restored_by_one_call_and_counted_by_i
     out = _run_library_loop(tmp_path / "library-loop", items, answers)
     assert out["calls"] == [f"POST {_item(tmdb)}"], "each of the title's rows restored the whole title again"
     assert out["text"] == "// 2 RESTORED", "two restored canonicals must read as two, with nothing FAILED"
+
+
+def test_a_download_for_another_canonical_leaves_this_one_restorable(env):
+    # v0.51.344: N1 — a download queued for the 4K cut's canonical must not hold the other cut's restore
+    client, settings, tmp_path, events = env
+    tmdb = 2702
+    _seed_two_sections(settings.db_path, tmp_path / "plex", tmdb)
+    with closing(sqlite3.connect(settings.db_path)) as c:
+        c.execute("INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, payload, status, created_at) "
+                  "VALUES ('download', 'movie', ?, '2', ?, 'pending', ?)", (tmdb, json.dumps({"edition_key": ""}), _ago(seconds=1)))
+        c.commit()
+    got = client.post(_item(tmdb), headers=AUTH).json()
+    themes = tmp_path / "themes"
+    assert (got["restored"], got["skipped"]) == (1, [{"section_id": "2", "reason": "download_in_flight"}]), got
+    assert [(themes / sub / "Two Cuts" / "theme.mp3").exists() for sub in ("movies", "movies-4k")] == [True, False], \
+        "the download of one canonical decided whether another canonical was restored"
 
 
 # ── R3-F3: a download in flight ──────────────────────────────────────
@@ -577,7 +605,7 @@ def _page(tmp_path, responses, clicks, ssr=None):
     start = APP_JS.index("  function bindCanonicalHealth() {")
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "bind.js").write_text(_app_fn("fmtRelativePast") + _app_fn("proxyStatusHint")
-                                      + _app_fn("gatewayTimeoutNote")
+                                      + _app_fn("gatewayTimeoutNote") + _app_fn("restoreSkipWord") + _app_fn("failWords")
                                       + APP_JS[start:APP_JS.index("\n  function ", start + 1)])
     (tmp_path / "scenario.json").write_text(json.dumps({"responses": responses, "clicks": clicks, "ssr": ssr or {}}))
     (tmp_path / "driver.js").write_text(_DRIVER.replace(_THROW_OLD, _THROW_NEW))
@@ -647,21 +675,34 @@ _LOGIN_PAGE = ("✗ could not reach motif — a reverse proxy / WAF may have ret
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")
+@pytest.mark.parametrize("button, status_id, detail", [
+    (_CHECK_BTN, "canon-check-status", "RESTORE FROM PLEX is running — run the check when it finishes"),
+    (_REPAIR_BTN, "canon-repair-status", "RESTORE FROM PLEX is running — repair when it finishes"),
+], ids=["check-409", "repair-409"])
+def test_a_check_or_repair_refused_by_a_running_restore_words_it_and_attaches_to_the_run(tmp_path, button, status_id,
+                                                                                         detail):
+    # v0.51.344: another tab's run refused the click — these params pinned the page unlocked beside a live run
+    _s0, s1 = _page(tmp_path, [_PAGE, {"status": "idle"}, {"__throw": {"status": 409, "detail": detail}}, _RUNNING],
+                    [button])
+    status = s1[status_id]
+    assert (status["text"], status["className"]) == ("✗ " + detail, "form-status form-status-fail")
+    assert (s1[_BTN]["text"], s1[_CHECK_BTN]["disabled"], s1[_REPAIR_BTN]["disabled"], s1["__timers"]) == (
+        "// RESTORING…", True, True, 1), "the page stayed unlocked beside the run that refused it"
+    assert s1[_STATUS]["text"] == _PROGRESS
+
+
+@pytest.mark.skipif(not _NODE, reason="node not installed")
 @pytest.mark.parametrize("button, status_id, thrown, words", [
-    (_CHECK_BTN, "canon-check-status", {"status": 409, "detail": "RESTORE FROM PLEX is running — run the check when it finishes"},
-     "✗ RESTORE FROM PLEX is running — run the check when it finishes"),
     (_CHECK_BTN, "canon-check-status", {"status": 401, "detail": "authentication required"}, _SIGN_IN),
     (_CHECK_BTN, "canon-check-status", {"status": 502}, _GATEWAY),
     (_CHECK_BTN, "canon-check-status", {"nonjson": True}, _LOGIN_PAGE),
-    (_REPAIR_BTN, "canon-repair-status", {"status": 409, "detail": "RESTORE FROM PLEX is running — repair when it finishes"},
-     "✗ RESTORE FROM PLEX is running — repair when it finishes"),
     (_REPAIR_BTN, "canon-repair-status", {"status": 401, "detail": "authentication required"}, _SIGN_IN),
     (_REPAIR_BTN, "canon-repair-status", {"status": 502}, _GATEWAY),
     (_BTN, _STATUS, {"status": 409, "detail": "themes_dir not configured"}, "✗ themes_dir not configured"),
     (_BTN, _STATUS, {"status": 401, "detail": "authentication required"}, _SIGN_IN),
     (_BTN, _STATUS, {"status": 403}, "✗ 403: a reverse proxy / WAF answered before reaching motif — blocked by a WAF / "
                                      "CrowdSec rule (or an oversized body) — retry on your LAN, or check the proxy/WAF."),
-], ids=["check-409", "check-401", "check-502", "check-login-page", "repair-409", "repair-401", "repair-502",
+], ids=["check-401", "check-502", "check-login-page", "repair-401", "repair-502",
         "restore-409", "restore-401", "restore-403-proxy"])
 def test_the_page_words_each_failure_instead_of_printing_the_json(tmp_path, button, status_id, thrown, words):
     _s0, s1 = _page(tmp_path, [_PAGE, {"status": "idle"}, {"__throw": thrown}], [button])
@@ -672,9 +713,9 @@ def test_the_page_words_each_failure_instead_of_printing_the_json(tmp_path, butt
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")
-def test_a_lost_session_mid_run_is_said_on_the_progress_line_and_the_poll_keeps_trying(tmp_path):
+def test_a_lost_session_mid_run_is_said_on_the_progress_line_and_the_poll_keeps_trying(tmp_path, ssr_running):
     snaps = _page(tmp_path, [_PAGE, _RUNNING, {"__throw": {"status": 401, "detail": "authentication required"}},
-                             {"__throw": {"nonjson": True}}, _RUNNING], ["tick", "tick", "tick"], ssr=_SSR_RUNNING)
+                             {"__throw": {"nonjson": True}}, _RUNNING], ["tick", "tick", "tick"], ssr=ssr_running)
     _s0, s1, s2, s3 = snaps
     lost = _PROGRESS + " — lost contact: the session expired, reload and sign in"
     for s in (s1, s2):
@@ -684,20 +725,20 @@ def test_a_lost_session_mid_run_is_said_on_the_progress_line_and_the_poll_keeps_
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")
-def test_a_login_page_as_the_first_failed_poll_mid_run_says_the_session_expired(tmp_path):
+def test_a_login_page_as_the_first_failed_poll_mid_run_says_the_session_expired(tmp_path, ssr_running):
     # v0.51.342: an SSO page answering the poll (a non-JSON 200) must say so on its own — a 401 first wrote the note for it.
     _s0, s1, s2 = _page(tmp_path, [_PAGE, _RUNNING, {"__throw": {"nonjson": True}}, _RUNNING], ["tick", "tick"],
-                        ssr=_SSR_RUNNING)
+                        ssr=ssr_running)
     assert s1[_STATUS]["text"] == _PROGRESS + " — lost contact: the session expired, reload and sign in", s1[_STATUS]
     assert (s1["__timers"], s1[_BTN]["text"], s1[_CHECK_BTN]["disabled"]) == (1, "// RESTORING…", True)
     assert s2[_STATUS]["text"] == _PROGRESS, "a poll that reached motif again kept the lost-contact note"
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")
-def test_a_run_of_failed_polls_mid_run_says_since_when_contact_was_lost(tmp_path):
+def test_a_run_of_failed_polls_mid_run_says_since_when_contact_was_lost(tmp_path, ssr_running):
     blip = {"__throw": {"status": 502}}
     snaps = _page(tmp_path, [_PAGE, _RUNNING, blip, blip, blip, _RUNNING], ["tick", "tick", "tick", "tick"],
-                  ssr=_SSR_RUNNING)
+                  ssr=ssr_running)
     _s0, s1, s2, s3, s4 = snaps
     assert s1[_STATUS]["text"] == s2[_STATUS]["text"] == _PROGRESS, "one proxy blip must not read as lost contact"
     assert re.fullmatch(re.escape(_PROGRESS) + r" — lost contact since \d{2}:\d{2}", s3[_STATUS]["text"]), s3[_STATUS]
@@ -706,6 +747,7 @@ def test_a_run_of_failed_polls_mid_run_says_since_when_contact_was_lost(tmp_path
 
 
 @pytest.mark.skipif(not _NODE, reason="node not installed")
+# v0.51.344: N7 (drop && !restoreRunning) is equivalent — the running poll clears cutOffStartedAt first and START/CHECK disable each other
 def test_a_successful_check_quiets_the_cut_off_alarm_a_failed_one_leaves_it(tmp_path):
     missing = [_row(2002, "No Copy Title", None)]
     checked = {**_report(missing=missing, restorable=0), "check": {"checked": 5, "missing": 1, "skipped": 0},
@@ -812,10 +854,54 @@ def _trickling_plex():
     return srv, state
 
 
+def _stop_grace_premise(repo: Path) -> tuple[list, list, list]:
+    """What the deploy files set that changes docker stop's grace or signal: (compose, Dockerfile, Unraid)."""
+    # v0.51.344: parse the deploy files — a comment naming stop_grace_period tripped the old substring scan
+    services = (yaml.safe_load((repo / "docker-compose.yml").read_text()) or {}).get("services") or {}
+    compose = [f"{name}.{key}" for name, svc in services.items() for key in ("stop_grace_period", "stop_signal")
+               if key in (svc or {})]
+    dockerfile = [ln.strip() for ln in (repo / "Dockerfile").read_text().splitlines()
+                  if re.match(r"\s*STOPSIGNAL\b", ln, re.IGNORECASE)]
+    unraid = []
+    for xml in sorted((repo / "unraid").rglob("*.xml")):
+        # ElementTree refuses motif.xml: a comment there holds "--user"
+        text = re.sub(r"<!--.*?-->", "", xml.read_text(), flags=re.DOTALL)
+        for tag, args in re.findall(r"<(ExtraParams|PostArgs)>(.*?)</\1>", text, flags=re.DOTALL):
+            unraid += [f"{xml.name} {tag}: {flag}" for flag in ("--stop-timeout", "--stop-signal") if flag in args]
+    return compose, dockerfile, unraid
+
+
+def test_nothing_in_the_deploy_files_changes_dockers_stop_grace_or_signal():
+    assert _stop_grace_premise(REPO) == ([], [], []), "the exit test's 10 s grace and SIGTERM are not what docker sends"
+
+
+@pytest.mark.parametrize("edit, caught", [
+    ("compose-comment", False), ("compose-key", True), ("unraid-extraparams", True), ("dockerfile-stopsignal", True),
+])
+def test_the_stop_grace_premise_reads_settings_not_comments(tmp_path, edit, caught):
+    (tmp_path / "unraid").mkdir()
+    compose = (REPO / "docker-compose.yml").read_text()
+    docker = (REPO / "Dockerfile").read_text()
+    xml = (REPO / "unraid" / "motif.xml").read_text()
+    if edit == "compose-comment":
+        compose += "\n# stop_grace_period is left at docker's default on purpose\n"
+    elif edit == "compose-key":
+        compose = compose.replace("    restart: unless-stopped\n", "    restart: unless-stopped\n    stop_grace_period: 30s\n")
+    elif edit == "unraid-extraparams":
+        xml = xml.replace("<ExtraParams></ExtraParams>", "<ExtraParams>--stop-timeout 30</ExtraParams>")
+    else:
+        docker += "\nSTOPSIGNAL SIGINT\n"
+    assert (compose, docker, xml) != ((REPO / "docker-compose.yml").read_text(), (REPO / "Dockerfile").read_text(),
+                                      (REPO / "unraid" / "motif.xml").read_text()), "premise: the edit applied"
+    (tmp_path / "docker-compose.yml").write_text(compose)
+    (tmp_path / "Dockerfile").write_text(docker)
+    (tmp_path / "unraid" / "motif.xml").write_text(xml)
+    found = _stop_grace_premise(tmp_path)
+    assert (found != ([], [], [])) is caught, found
+
+
 def test_a_motif_stopped_while_a_restore_request_hangs_exits_inside_dockers_stop_grace(tmp_path):
-    for p in [REPO / "docker-compose.yml", REPO / "Dockerfile", *(REPO / "unraid").rglob("*")]:
-        if p.is_file():
-            assert "stop_grace_period" not in p.read_text(errors="replace"), f"premise: {p} sets its own stop grace"
+    assert _stop_grace_premise(REPO) == ([], [], []), "premise: a deploy file sets its own stop grace or signal"
     from app.core.auth import create_admin, init_auth_schema
     cfg, data, themes = tmp_path / "config", tmp_path / "data", tmp_path / "themes"
     cfg.mkdir()
@@ -863,8 +949,9 @@ def test_a_motif_stopped_while_a_restore_request_hangs_exits_inside_dockers_stop
     text = log_path.read_text(errors="replace")
     assert f"child imports {REPO / 'app' / 'core' / 'canonical_health.py'}" in text, "the child ran another tree"
     assert proc.returncode == 0, text[-4000:]
-    assert "RESTORE FROM PLEX was still finishing its in-flight Plex fetches" in text, \
-        "exit did not name the restore it left in flight"
+    # v0.51.344: the deadline closes publishing — the restore left waiting on Plex can start no write exit would cut
+    assert "RESTORE FROM PLEX was still waiting on Plex" in text and "no new write starts" in text, \
+        "exit did not name the restore it left in flight, or did not close its writes"
     assert took < _DOCKER_STOP_GRACE_S, \
         f"exit took {took:.2f} s after SIGTERM — past docker stop's {_DOCKER_STOP_GRACE_S:.0f} s grace, so it is SIGKILLed"
     assert json.loads((cfg / "canonical_health" / "restore_from_plex.json").read_text())["status"] == "running", \

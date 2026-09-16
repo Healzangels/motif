@@ -23,7 +23,7 @@ import uvicorn
 
 from . import __version__
 from .config import get_settings
-from .core.canonical_health import forget_canonical_checks
+from .core.canonical_health import forget_canonical_checks, forget_unmarked_checks
 from .core.db import init_db
 from .core.auth import init_auth_schema, cleanup_expired_sessions
 from .core.events import log_event
@@ -41,6 +41,8 @@ _LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 # sync day still fits without an operator ever needing to prune by hand.
 _LOG_FILE_MAX_BYTES = 10 * 1024 * 1024
 _LOG_FILE_BACKUPS = 5
+# v0.51.344: exit's RESTORE FROM PLEX wait, then 0.5 s to close publishing and 0.5 s to flush — inside docker's 10 s grace
+_RESTORE_EXIT_WAIT_S = 8.0
 
 
 def configure_logging(level: str, config_dir: Path | None = None) -> None:
@@ -351,6 +353,20 @@ def main() -> int:
         except sqlite3.Error as e:
             log.error("Canonical health: could not clear the restored database's check results (%s) — CHANGED "
                       "shows the backup's results until the next check", e)
+    else:
+        # v0.51.344: a rolled-back build (.341) stamps checks with no CHANGED candidates, and no migration re-runs on return.
+        try:
+            n, mark = forget_unmarked_checks(settings.db_path)
+            if n:
+                log.warning("Canonical health: set aside %d check stamp(s) written after the last check this build "
+                            "recorded (%s) — a build without CHANGED candidates wrote them; CANONICAL HEALTH reads "
+                            "'Not checked yet' for them until the next check", n, mark or "none recorded yet")
+            else:
+                log.info("Canonical health: no check stamp is newer than the last check this build recorded (%s)",
+                         mark or "none recorded yet")
+        except sqlite3.Error as e:
+            log.error("Canonical health: could not look for check stamps a build without CHANGED candidates wrote "
+                      "(%s) — CHANGED can miss a file that build saw change until the next check", e)
 
     # Seed motif.yaml on first run if missing (also handles v1.3.x migration)
     _bootstrap_config_file(settings)
@@ -806,7 +822,7 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             log.warning("could not cancel RESTORE FROM PLEX at shutdown — exit waits for its Plex fetches: %s", e)
         # v0.51.342: docker stop SIGKILLs 10 s after SIGTERM — a 10 s join from here (~0.6 s in) exited at 10.6 s.
-        restore_by = time.monotonic() + 8.0
+        restore_by = time.monotonic() + _RESTORE_EXIT_WAIT_S
         stop_event.set()
         for _t in worker_threads:
             _t.join(timeout=10.0)
@@ -814,8 +830,26 @@ def main() -> int:
             # v0.51.342: its in-flight fetches publish and stamp first — exit froze the daemon job mid-write (a file, no stamp).
             restore_job.join(timeout=max(0.0, restore_by - time.monotonic()))
             if restore_job.is_alive():
-                log.warning("RESTORE FROM PLEX was still finishing its in-flight Plex fetches after 8 s — exit may cut "
-                            "its last write; RUN CHECK after the restart")
+                try:
+                    # v0.51.344: a fetch Plex answers after this deadline must not start a write the interpreter freezes
+                    from .core.canonical_health import close_publishing
+                    closed = close_publishing(0.5)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("could not close RESTORE FROM PLEX's writes at exit: %s", e)
+                    closed = False
+                if closed:
+                    log.warning("RESTORE FROM PLEX was still waiting on Plex after %g s — no new write starts; the rows "
+                                "it had not written stay broken", _RESTORE_EXIT_WAIT_S)
+                else:
+                    log.warning("RESTORE FROM PLEX still had a write in progress %g s into exit — exit may cut it; "
+                                "RUN CHECK after the restart", _RESTORE_EXIT_WAIT_S + 0.5)
+            try:
+                # v0.51.344: the job's last event is queued after the SIGTERM handler's drain — ≤0.8 s, inside the 10 s grace
+                from .core.events import flush_events
+                flush_events(timeout=0.5)
+            except Exception as e:  # noqa: BLE001
+                log.warning("events.flush_events() after the RESTORE FROM PLEX join raised: %s — its last event "
+                            "may be lost", e)
         log.info("motif stopped")
     return 0
 

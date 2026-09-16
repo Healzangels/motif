@@ -24,7 +24,7 @@ from tests.test_v0_51_339_bundle_staging_boot import _H, LIVE_YAML, _bundle
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 _NODE = shutil.which("node")
-_UPLOAD = re.compile(r"motif-bundle-upload-([0-9]{8}-[0-9]{6})\.tar\.gz")
+_UPLOAD = re.compile(r"motif-bundle-upload-([0-9]{8}-[0-9]{6})(?:-[0-9]+)?\.tar\.gz")  # v0.51.344: a same-second upload's -N
 
 if os.environ.get("MOTIF_REQUIRE_NODE") and not _NODE:
     raise RuntimeError("MOTIF_REQUIRE_NODE=1 but node is not on PATH — the backup list render would silently not run")
@@ -100,7 +100,8 @@ def test_an_upload_is_filed_by_its_upload_time_and_outlives_a_nightly_at_retenti
     name = pv["name"]
     m = _UPLOAD.fullmatch(name)
     assert m and before <= m.group(1) <= after, (name, before, after)
-    assert pv["manifest"]["created_at"] == manifest_created_at, "the preview still shows the manifest's own stamp"
+    # v0.51.344: a full-width stamp is no date datetime reads — the preview shows it as unknown (test_v0_51_344_restore_card_words)
+    assert pv["manifest"]["created_at"] == (None if created == "full-width" else manifest_created_at), "the preview still shows the manifest's own stamp"
     rows = _listed(client)
     assert (rows[name]["kind"], rows[name]["retained"]) == ("bundle", False)
     assert rows[older.name]["retained"] is True
@@ -110,6 +111,7 @@ def test_an_upload_is_filed_by_its_upload_time_and_outlives_a_nightly_at_retenti
     monkeypatch.setattr(sched, "log_event", lambda *a, **k: said.append(k.get("message") or ""))
     sched._scheduled_database_backup(SimpleNamespace(
         db_path=settings.db_path, config_dir=cd, cookies_file=None, themes_dir=None,
+        config_file=SimpleNamespace(path=cd / "motif.yaml"),  # v0.51.344: create_bundle_for reads the loaded config file's path
         db_backup_enabled=True, db_backup_retention=1, db_backup_bundle=True))
     rows = _listed(client)
     made = [n for n, row in rows.items() if row["retained"]]
@@ -127,10 +129,11 @@ def test_an_upload_is_filed_by_its_upload_time_and_outlives_a_nightly_at_retenti
     assert name not in _listed(client)
 
 
-# ── 2. the same-second name check ─────────────────────────────────────
+# ── 2. an upload into an occupied second ─────────────────────────────
 
 @pytest.mark.parametrize("already", ["equal bytes", "different bytes"])
-def test_the_same_second_name_check_dedups_equal_bytes_and_refuses_different_ones(api, tmp_path, already):
+def test_an_upload_into_an_occupied_second_takes_its_own_name_and_leaves_the_held_file(api, tmp_path, already):
+    # v0.51.344: retargeted from "dedups equal bytes, 409s different ones" — a same-second upload takes the next free name (decision e)
     client, cd, _ = api
     data = _bundle(tmp_path / "mk").read_bytes()
     held = data if already == "equal bytes" else bytes(len(data))
@@ -142,11 +145,11 @@ def test_the_same_second_name_check_dedups_equal_bytes_and_refuses_different_one
     for n in window:
         (bdir / n).write_bytes(held)
     r = client.post("/api/admin/database-restore/upload", headers=_H, files={"file": ("x.tar.gz", data, "application/gzip")})
-    if already == "equal bytes":
-        assert r.status_code == 200 and r.json()["preview"]["name"] in window, r.text
-    else:
-        assert r.status_code == 409 and "already exists" in r.json()["detail"], r.text
-    assert {p.name for p in bdir.iterdir()} == window, "no second copy, no temp file left behind"
+    assert r.status_code == 200, r.text
+    name = r.json()["preview"]["name"]
+    assert name not in window and _UPLOAD.fullmatch(name) and (bdir / name).read_bytes() == data, name
+    assert _listed(client)[name]["retained"] is False
+    assert {p.name for p in bdir.iterdir()} == window | {name}, "one new file — no temp file or empty claim left behind"
     assert all((bdir / n).read_bytes() == held for n in window)
 
 
@@ -264,7 +267,7 @@ def test_the_list_words_outside_retention_exactly_where_the_json_says_retained_f
             assert row["label"] == "BUNDLE", row
 
     # v0.51.343: the JSON's retained is what retention does — at 1, every retained-false row and the newest retained row survive
-    db_backup.prune_backups(cd, 1)
+    db_backup.prune_backups(cd, 1, now_stamp=_stamp())  # v0.51.344: prune sets aside a stamp after now
     survivors = {b.name for b in db_backup.list_backups(cd)}
     rows = listing["backups"]
     assert survivors == {b["name"] for b in rows if not b["retained"]} | {next(b["name"] for b in rows if b["retained"])}

@@ -226,10 +226,17 @@ def test_motif_shutdown_cancels_the_running_job_which_reads_cut_off_not_cancelle
     assert json.loads(_marker(settings).read_text()) == {"status": "running", "started_at": started,
                                                          "actor": "testadmin"}, \
         "the marker must still say running, so the next start reports the run cut off"
-    assert _messages(events) == [] and [e for e in events if e.get("level") == "WARNING"] == []
+    # v0.51.344: flipped — the rows a cut-off run restored are committed, so it leaves an audit row and a WARNING event
+    warned = [e["message"] for e in events if e.get("level") == "WARNING"]
+    assert _messages(events) == warned and len(warned) == 1, events
+    assert "cut off by a motif shutdown after 2 restored" in warned[0], warned
     with sqlite3.connect(settings.db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM audit_events "
-                            "WHERE action = 'canonical_restore_from_plex'").fetchone()[0] == 0
+        audits = conn.execute("SELECT actor, details FROM audit_events "
+                              "WHERE action = 'canonical_restore_from_plex'").fetchall()
+    assert len(audits) == 1 and audits[0][0] == "testadmin", audits
+    details = json.loads(audits[0][1])
+    assert (details["status"], details["restored"], details["not_attempted"]) == ("interrupted", 2, 7), details
+    assert "skipped" not in details, "the audit row carries the counts, not the list"
     assert any("cut off by a motif shutdown" in r.getMessage() for r in caplog.records)
     assert api_mod.canon_restore_shutdown() is None, "with no run, the exit path has nothing to join"
     _reset_job()
@@ -269,10 +276,118 @@ def test_a_pool_that_refuses_new_work_is_a_cut_off_only_while_motif_shuts_down(e
         assert "cannot schedule new futures" in st["error"]
         assert len(warned) == 1 and "cannot schedule new futures after interpreter shutdown" in warned[0]
         return
-    assert (st["status"], marker["status"], warned) == ("interrupted", "running", []), \
+    assert (st["status"], marker["status"]) == ("interrupted", "running"), \
         "a refusal from interpreter shutdown was reported as a failure"
+    # v0.51.344: its one WARNING is the cut-off's, never 'failed after'
+    assert len(warned) == 1 and "cut off by a motif shutdown" in warned[0] and "failed after" not in warned[0], warned
+    with sqlite3.connect(settings.db_path) as conn:
+        (details,) = [json.loads(d) for (d,) in conn.execute(
+            "SELECT details FROM audit_events WHERE action = 'canonical_restore_from_plex'")]
+    assert (details["status"], details["restored"]) == ("interrupted", st["restored_sidecar"] + st["restored_store"])
+    assert "cannot schedule new futures" in details["how"], details
     _reset_job()
     assert _status(client) == {**marker, "status": "interrupted", "first_report": True}
+
+
+class WindingDown:
+    """Restores 3, sees the cancel, then keeps finishing its in-flight rows until `wound` is set."""
+    def __init__(self, fail=None):
+        self.entered, self.saw_cancel, self.wound = threading.Event(), threading.Event(), threading.Event()
+        self.fail = fail
+
+    def __call__(self, db_path, themes_dir, plex_client, *, cancel_check=None, progress_cb=None, **_kw):
+        progress_cb(3, 10, {"restored_sidecar": 1, "restored_store": 2, "skipped_count": 0})
+        self.entered.set()
+        while not cancel_check():
+            if self.wound.wait(0.01):
+                break
+        else:
+            self.saw_cancel.set()
+        self.wound.wait(10)
+        if self.fail is not None:
+            raise self.fail
+        return {"broken": 10, "restored_sidecar": 1, "restored_store": 2, "restored": 3, "skipped": [],
+                "cancelled": True, "not_attempted": 7, "plex_unreachable": False}
+
+
+def _audit_rows(settings):
+    with sqlite3.connect(settings.db_path) as conn:
+        return [json.loads(d) for (d,) in conn.execute(
+            "SELECT details FROM audit_events WHERE action = 'canonical_restore_from_plex'")]
+
+
+def test_a_user_cancel_still_winding_down_when_motif_shuts_down_reads_cancelled(env, monkeypatch):
+    client, settings, tmp_path, events = env
+    from app.web import api as api_mod
+    run = WindingDown()
+    monkeypatch.setattr(ch, "restore_from_plex", run)
+    assert client.post(START, headers=AUTH).json()["started"] is True
+    assert run.entered.wait(10)
+    try:
+        assert client.post(CANCEL, headers=AUTH).json() == {"ok": True, "cancelling": True}
+        assert run.saw_cancel.wait(10), "premise: the run saw the operator's cancel and is winding down"
+        assert "user_cancel" not in _status(client), "who cancelled is the runner's to know, not the page's"
+        job = api_mod.canon_restore_shutdown()
+        assert job is not None, "premise: motif began exiting while the cancelled run was still going"
+    finally:
+        run.wound.set()
+    job.join(10)
+    assert not job.is_alive()
+    st = _status(client)
+    # v0.51.344: the operator cancelled it before exit began — a cancel, not a restart's cut-off
+    assert (st["status"], json.loads(_marker(settings).read_text())["status"]) == ("cancelled", "cancelled"), st
+    assert "user_cancel" not in st
+    assert [a["cancelled"] for a in _audit_rows(settings)] == [True]
+    (message,) = _messages(events)
+    assert message.endswith(" — cancelled, 7 not tried") and [e["level"] for e in events] == ["INFO"], events
+    _reset_job()
+    after = _status(client)
+    assert after["status"] == "cancelled" and "first_report" not in after, after
+
+
+def test_a_user_cancelled_run_that_fails_keeps_who_cancelled_out_of_its_marker(env, monkeypatch):
+    client, settings, tmp_path, events = env
+    run = WindingDown(fail=RuntimeError("disk vanished"))
+    monkeypatch.setattr(ch, "restore_from_plex", run)
+    assert client.post(START, headers=AUTH).json()["started"] is True
+    assert run.entered.wait(10)
+    try:
+        assert client.post(CANCEL, headers=AUTH).json()["cancelling"] is True
+        assert run.saw_cancel.wait(10)
+    finally:
+        run.wound.set()
+    st = _wait(client, lambda s: s["status"] != "running", "the run to end")
+    _join_job()
+    assert st["status"] == "failed" and "user_cancel" not in st, st
+    # v0.51.344: a restart reads the marker straight onto the page — who cancelled stays the runner's
+    assert "user_cancel" not in json.loads(_marker(settings).read_text())
+    _reset_job()
+    assert "user_cancel" not in _status(client)
+
+
+def test_a_run_that_raises_while_motif_shuts_down_keeps_its_traceback_and_audits_what_it_restored(env, monkeypatch,
+                                                                                                   caplog):
+    client, settings, tmp_path, events = env
+    from app.web import api as api_mod
+    run = WindingDown(fail=RuntimeError("database disk image is malformed"))
+    monkeypatch.setattr(ch, "restore_from_plex", run)
+    assert client.post(START, headers=AUTH).json()["started"] is True
+    assert run.entered.wait(10)
+    with caplog.at_level(logging.WARNING):
+        try:
+            job = api_mod.canon_restore_shutdown()
+            assert run.saw_cancel.wait(10)
+        finally:
+            run.wound.set()
+        job.join(10)
+    assert _status(client)["status"] == "interrupted"
+    (rec,) = [r for r in caplog.records if "cut off by a motif shutdown" in r.getMessage()]
+    # v0.51.344: a real failure that coincides with exit reads as a cut-off — its traceback is the only trace of it
+    assert rec.exc_info is not None and "database disk image is malformed" in str(rec.exc_info[1]), rec.exc_info
+    (details,) = _audit_rows(settings)
+    assert (details["status"], details["restored"]) == ("interrupted", 3) and "RuntimeError" in details["how"]
+    (message,) = _messages(events)
+    assert "cut off by a motif shutdown after 3 restored" in message, message
 
 
 # ── 2, in a real motif: SIGTERM mid-restore ──────────────────────────
@@ -432,6 +547,14 @@ def test_a_motif_stopped_mid_restore_finishes_its_in_flight_rows_and_the_next_st
     on_disk = {int(p.parent.name) for p in themes.rglob("theme.mp3")}
     assert on_disk == stamped, "exit left a canonical written without its stamp"
     assert len(stamped) == ch.RESTORE_PLEX_WORKERS, "the rows Plex was already answering were not all restored"
+    with sqlite3.connect(db) as conn:
+        cut_events = conn.execute("SELECT level FROM events WHERE message LIKE "
+                                  "'Canonical restore from Plex by testadmin was cut off%'").fetchall()
+        cut_audits = [json.loads(d) for (d,) in conn.execute(
+            "SELECT details FROM audit_events WHERE action = 'canonical_restore_from_plex'")]
+    # v0.51.344: the cut-off's event is queued after the SIGTERM handler's drain — main's post-join flush lands it
+    assert cut_events == [("WARNING",)], text[-4000:]
+    assert [(a["status"], a["restored"]) for a in cut_audits] == [("interrupted", len(stamped))], cut_audits
     marker = json.loads((cfg / "canonical_health" / "restore_from_plex.json").read_text())
     assert marker["status"] == "running", "the run must read cut off on the next start, not cancelled or done"
     monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")

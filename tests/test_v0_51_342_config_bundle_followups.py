@@ -195,7 +195,7 @@ def test_the_restore_endpoint_names_the_long_integer_by_key_and_stages_its_datab
 
 # ── 2. // CREATE BUNDLE NOW over a cap ───────────────────────────────
 
-@pytest.mark.parametrize("member, words", [(bundle.MEMBER_DB, "the database snapshot is "),
+@pytest.mark.parametrize("member, words", [(bundle.MEMBER_DB, "the database is about "),  # v0.51.344: a 16-byte cap is refused before the VACUUM, by the estimate
                                            (bundle.MEMBER_MANIFEST, "the bundle manifest is ")], ids=["database", "manifest"])
 def test_create_bundle_now_answers_an_over_cap_refusal_in_words_and_writes_nothing(api, tmp_path, monkeypatch, member, words):
     client, cd = api

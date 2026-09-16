@@ -44,6 +44,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from _slice_helpers import slice_between
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -109,7 +110,7 @@ def test_backup_banner_text_unchanged():
 
 def test_promote_button_visible_whenever_intent_is_backup():
     """The PROMOTE TO ACTIVE button must show whenever the row
-    has intent='backup'. Pre-v1.18.78 the outer guard was
+    has intent='backup' and the item is in Plex (v0.51.344). Pre-v1.18.78 the outer guard was
     `if (overrideIntent && data.plex_resolved)` — for a
     locally_resolved backup row, plex_resolved=false → button
     hidden."""
@@ -125,22 +126,10 @@ def test_promote_button_visible_whenever_intent_is_backup():
         "be `if (overrideIntent)` — backup-intent rows should "
         "always see PROMOTE TO ACTIVE"
     )
-    # And the inner backup branch is unconditional (no extra
-    # plex_resolved gate).
-    # v1.19.39: widened from 800 → 2200 chars. The v1.19.39
-    # synthetic-override tooltip branch added a comment block
-    # + isSynthetic/promoteTip variable declarations between
-    # the `if (overrideIntent === 'backup') {` line and the
-    # promote-to-active button — the original 800-char window
-    # no longer reaches back to the if.
-    # v1.19.86: widened 2200 → 2900 — the PROMOTE tone-class
-    # (promoteSourceKind / promoteToneClass) comment + decls added
-    # another ~450 chars before the button.
-    promote_idx = block.index("data-act=\"promote-to-active\"")
-    pre_promote = block[max(0, promote_idx - 2900):promote_idx]
-    # The promote branch is `if (overrideIntent === 'backup')` —
-    # no additional gate.
-    assert "overrideIntent === 'backup'" in pre_promote
+    # And the inner backup branch carries no plex_resolved gate.
+    # v0.51.344: sliced from the branch to the button (the 2900-char window was widened twice); the not-in-Plex gate is rendered in test_v0_51_343_infocard_builders.py
+    pre_promote = slice_between(block, "if (overrideIntent === 'backup') {", "data-act=\"promote-to-active\"")
+    assert "plex_resolved" not in pre_promote
 
 
 def test_mark_as_backup_still_gated_on_plex_resolved():

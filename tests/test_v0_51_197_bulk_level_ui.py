@@ -83,10 +83,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
     monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
-    # v0.51.197: pin the target to the config default (-18) — other loudness tests set
-    # MOTIF_LOUDNESS_TARGET in os.environ without cleanup, and a leaked value would move
-    # the outlier count out from under this test's -18 assumption.
-    monkeypatch.delenv("MOTIF_LOUDNESS_TARGET", raising=False)
     from app.config import Settings
     from app.core.auth import create_admin, init_auth_schema
     from app.web.api import create_app

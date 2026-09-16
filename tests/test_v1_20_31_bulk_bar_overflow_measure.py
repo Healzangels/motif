@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _slice_helpers import slice_between
+
 
 REPO = Path(__file__).resolve().parent.parent
 JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
@@ -48,12 +50,16 @@ def test_overflow_helper_uses_bounding_rect_not_scrollwidth():
 def test_layout_uses_helper_for_both_checks():
     """_layoutBulkBar's early-return AND per-button loop must both use
     the new helper, and the old scrollWidth comparison must be gone."""
-    anchor = JS.index("function _layoutBulkBar()")
-    body = JS[anchor:anchor + 2200]
-    assert body.count("_barHasOverflow(bar)") >= 2, (
-        "both the early-return and the loop must use the helper"
+    # v0.51.344: the whole function up to the observer after it — the wrap and label-observer lines pushed the loop's check past 2200 chars
+    body = slice_between(JS, "function _layoutBulkBar()", "const _bulkBarObserver = ")
+    # v0.51.344: the wrap line is a third helper call, so a call count passed with either check gone — pin each site by its shape
+    assert "if (!_barHasOverflow(bar)) return;" in body, (
+        "the early-return must use the helper"
     )
-    assert "bar.scrollWidth <= bar.clientWidth" not in body, (
+    assert "if (!_barHasOverflow(bar)) break;" in body, (
+        "the per-button loop must use the helper"
+    )
+    assert "scrollWidth" not in body, (
         "v1.20.31: the unreliable scrollWidth check must be removed"
     )
 

@@ -144,7 +144,7 @@ def _blk(anchor: str, end: str) -> str:
 
 def test_full_card_plex_theme_row_gate_and_placement():
     # v0.51.341: the rk gate is digits-only now — tests/test_v0_51_341_ui_residuals_2.py renders it per key.
-    b = _blk("const plexThemeBlock = (data.plex_has_theme === 1 && ", "      : '';")
+    b = _blk("const plexThemeBlock = ", "      : '';")  # v0.51.344: the gate is computeQuickPlay's, rendered per cell in test_v0_51_343_infocard_builders.py
     # v0.51.343: when the row shows and the URL it plays are rendered per payload — test_v0_51_343_infocard_builders.py, test_v0_51_341_ui_residuals_2.py
     assert 'preload="none"' in b, "nothing is fetched until play (IDS-friendly)"
     assert 'data-plex-theme="1"' in b

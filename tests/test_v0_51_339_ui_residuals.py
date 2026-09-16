@@ -224,7 +224,7 @@ def _headline_fns():
 def test_backup_headline_says_plex_serves_exactly_when_the_row_plays_plex(tmp_path, source_kind):
     """A backup_only row across every (plex_has_theme, plex_theme_verified_ok)
     cell the payload can carry: the headline names Plex as serving iff the row's
-    ▶ plays what Plex serves; otherwise it says Plex no longer serves and names
+    ▶ plays what Plex serves; otherwise it says Plex serves no theme and names
     the one action that deploys motif's copy — unless there is no plex_items row
     at all (v0.51.341: the item is not in Plex, so there is nothing to deploy into)."""
     cells = [(has, ok) for has in (None, 0, 1) for ok in (None, 0, 1)]
@@ -251,7 +251,8 @@ def test_backup_headline_says_plex_serves_exactly_when_the_row_plays_plex(tmp_pa
             assert "PROMOTE" not in label and "Plex serves" not in label, ((has, ok), label)
         else:
             assert "Plex serves its own theme" not in label, ((has, ok), label)
-            assert "Plex no longer serves a theme" in label and "PROMOTE TO ACTIVE" in label, ((has, ok), label)
+            # v0.51.344: "serves no theme" — nothing records that Plex once served, so never "no longer"
+            assert "Plex serves no theme" in label and "no longer" not in label and "PROMOTE TO ACTIVE" in label, ((has, ok), label)
     # the verdict's sticky cells: has_theme dropped to 0, and a verify 404 under has_theme 1
     assert plays[(0, None)] == "file" and plays[(1, 0)] == "file"
     assert plays[(1, None)] == "plex" and plays[(1, 1)] == "plex"

@@ -44,10 +44,6 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("MOTIF_NORMALIZE_ON_DOWNLOAD", raising=False)
-    # v0.51.201: another test leaks MOTIF_LOUDNESS_TARGET via os.environ (persists past
-    # its run); without clearing it, settings.loudness_target_lufs clamps to the floor and
-    # norm_target lands at -31 not the -18 default. Same env-leak class as v0.51.197.
-    monkeypatch.delenv("MOTIF_LOUDNESS_TARGET", raising=False)
     from app.config import Settings
     settings = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
     settings._cfg.paths.themes_dir = str(tmp_path / "themes")

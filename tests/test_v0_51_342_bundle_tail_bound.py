@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import gzip
+import logging
 import os
 import signal
 import sqlite3
@@ -87,19 +88,21 @@ def test_a_measured_tail_shape_is_refused_fast_by_the_raw_budget(tmp_path, how):
         c = bundle.inspect_bundle(bad)
     # v0.51.342: removing _TAIL_RAW_BUDGET makes each of these a VALID gzip stream again → ok flips True (the mutation signal)
     assert c.ok is False and c.error.startswith("not a motif bundle:") and c.error.count("not a motif bundle:") == 1, c.error
-    assert "after the archive's end" in c.error and str(bundle._TAIL_RAW_BUDGET) in c.error, c.error
+    assert "padding or empty gzip members" in c.error and str(bundle._TAIL_RAW_BUDGET) in c.error, c.error  # v0.51.344: the raw budget's words, true inside the archive too
 
 
-def test_zeros_inflated_past_end_of_archive_are_refused_by_the_inflate_budget(tmp_path):
+def test_zeros_inflated_past_end_of_archive_are_refused_by_the_inflate_budget(tmp_path, caplog):
     b = _bundle(tmp_path / "mk")
     db, cd = _live(tmp_path)
     over = bundle._TAIL_INFLATE_BUDGET + 4 * MiB  # compresses to a few KB of raw, so only the inflate budget can catch it
     bad = _place(cd, NAME, gzip.compress(_tar_bytes(b) + bytes(over)))
-    with _within(TAIL_BOUND):
+    with _within(TAIL_BOUND), caplog.at_level(logging.WARNING, logger=bundle.log.name):
         c = bundle.inspect_bundle(bad)
     # v0.51.342: removing _TAIL_INFLATE_BUDGET makes this a VALID gzip stream again → ok flips True (the mutation signal)
     assert c.ok is False and c.error.startswith("not a motif bundle:") and c.error.count("not a motif bundle:") == 1, c.error
     assert "after the archive's end" in c.error and str(bundle._TAIL_INFLATE_BUDGET) in c.error, c.error
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert [m for m in warned if bad.name in m and str(bundle._TAIL_INFLATE_BUDGET) in m], f"v0.51.344: the refusal leaves a breadcrumb: {warned}"
 
 
 def test_a_refused_tail_shape_stages_nothing_and_frees_the_lock(tmp_path):
@@ -114,18 +117,41 @@ def test_a_refused_tail_shape_stages_nothing_and_frees_the_lock(tmp_path):
     assert not list(cd.glob(".bundle-*")) and not list(cd.glob("*.tmp"))
 
 
-@pytest.mark.parametrize("how", ["a raw tail just under the raw budget", "an inflated tail just under the inflate budget"])
-def test_a_tail_just_under_budget_still_restores(tmp_path, how):
+def _inflate_pad(tmp_path: Path, monkeypatch, b: Path) -> int:
+    tar, fed, real = _tar_bytes(b), [], bundle._TarFeed.read
+
+    def read(self, size=-1):
+        data = real(self, size)
+        fed.append(len(data))
+        return data
+    monkeypatch.setattr(bundle._TarFeed, "read", read)
+    sizing = tmp_path / "sizing.tar.gz"
+    sizing.write_bytes(gzip.compress(tar + bytes(bundle._TAIL_INFLATE_BUDGET)))
+    assert bundle.inspect_bundle(sizing).ok, "the premise: the sizing copy drains under the budget"
+    monkeypatch.setattr(bundle._TarFeed, "read", real)
+    return bundle._TAIL_INFLATE_BUDGET + sum(fed) - len(tar)  # v0.51.344: what tarfile fetched is not drained — this pad drains exactly the budget; the old tail sat 1.59 MiB under it
+
+
+@pytest.mark.parametrize("how", ["a raw tail just under the raw budget", "an inflated tail exactly at the inflate budget"])
+def test_a_tail_just_under_budget_still_restores(tmp_path, monkeypatch, how):
     b = _bundle(tmp_path / "mk")
     db, cd = _live(tmp_path)
     if how == "a raw tail just under the raw budget":
-        # trailing zero padding a real writer can leave, read inside the one raw allowance the archive's last fetch and the drain share
+        # trailing zero padding a real writer can leave, read inside the one raw allowance the archive's last fetch and the drain share (measured 44 KiB from its boundary, under one 128 KiB gzip raw read)
         data = b.read_bytes() + bytes(bundle._TAIL_RAW_BUDGET - 64 * 1024)
     else:
-        data = gzip.compress(_tar_bytes(b) + bytes(bundle._TAIL_INFLATE_BUDGET - MiB))
+        data = gzip.compress(_tar_bytes(b) + bytes(_inflate_pad(tmp_path, monkeypatch, b)))
     ok = _place(cd, NAME, data)
     assert bundle.inspect_bundle(ok).ok, how
     assert bundle.stage_bundle_restore(db, cd, ok, keep_config=False).staged == ["database", "config", "cookies"]
+
+
+def test_an_inflated_tail_one_byte_over_the_inflate_budget_is_refused(tmp_path, monkeypatch):
+    b = _bundle(tmp_path / "mk")
+    _, cd = _live(tmp_path)
+    bad = _place(cd, NAME, gzip.compress(_tar_bytes(b) + bytes(_inflate_pad(tmp_path, monkeypatch, b) + 1)))
+    c = bundle.inspect_bundle(bad)
+    assert c.ok is False and c.error.count("not a motif bundle:") == 1 and str(bundle._TAIL_INFLATE_BUDGET) in c.error, c.error
 
 
 def test_a_real_bundle_still_passes_and_stages(tmp_path):
@@ -142,18 +168,19 @@ def _split_tails(b: Path) -> dict[str, bytes]:
     return {
         # empty members with 1 MiB of inflated zeros between them: each drain read stayed under a per-read raw cap
         "empty members then 1 MiB of zeros, 8 times": raw + (empties(budget * 37 // 40) + zeros) * 8,
-        "1 MiB of zeros then 80k empty members, 8 times": raw + (zeros + _EMPTY_MEMBER * 80_000) * 8,
-        "1 MiB of zeros then 80k empty members, 3 times": raw + (zeros + _EMPTY_MEMBER * 80_000) * 3,
+        "1 MiB of zeros then 4/5 of a budget of empty members, 8 times": raw + (zeros + empties(budget * 4 // 5)) * 8,
+        "1 MiB of zeros then 4/5 of a budget of empty members, 3 times": raw + (zeros + empties(budget * 4 // 5)) * 3,
         # over one allowance of empty members in all, split across the archive's last fetch and the drain
         "empty members split around 1 MiB of zeros": raw + empties(budget * 3 // 4) + zeros + empties(budget * 2 // 5),
     }
 
 
 @pytest.mark.parametrize("how", ["empty members then 1 MiB of zeros, 8 times",
-                                 "1 MiB of zeros then 80k empty members, 8 times",
-                                 "1 MiB of zeros then 80k empty members, 3 times",
+                                 "1 MiB of zeros then 4/5 of a budget of empty members, 8 times",
+                                 "1 MiB of zeros then 4/5 of a budget of empty members, 3 times",
                                  "empty members split around 1 MiB of zeros"])
-def test_a_tail_split_by_inflated_data_is_refused_by_the_raw_budget_and_stages_nothing(tmp_path, how):
+def test_a_tail_split_by_inflated_data_is_refused_by_the_raw_budget_and_stages_nothing(tmp_path, monkeypatch, how):
+    monkeypatch.setattr(bundle, "_TAIL_RAW_BUDGET", bundle._STREAM_BUF)  # v0.51.344: one fetch's worth of raw budget refuses these in a third of the time and still kills a per-read or pre-drain reset
     b = _bundle(tmp_path / "mk")
     db, cd = _live(tmp_path)
     bad = _place(cd, NAME, _split_tails(b)[how])
@@ -161,7 +188,7 @@ def test_a_tail_split_by_inflated_data_is_refused_by_the_raw_budget_and_stages_n
         c = bundle.inspect_bundle(bad)
     # v0.51.342: a fresh raw allowance per drain read ran these to the inflate budget, or restored them, after seconds of parsing
     assert c.ok is False and c.error.count("not a motif bundle:") == 1, c.error
-    assert "after the archive's end" in c.error and str(bundle._TAIL_RAW_BUDGET) in c.error, c.error
+    assert "padding or empty gzip members" in c.error and str(bundle._TAIL_RAW_BUDGET) in c.error, c.error
     with _within(TAIL_BOUND), pytest.raises(ValueError) as refused:
         bundle.stage_bundle_restore(db, cd, bad, keep_config=False)
     assert str(bundle._TAIL_RAW_BUDGET) in str(refused.value), refused.value

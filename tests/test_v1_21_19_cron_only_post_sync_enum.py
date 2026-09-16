@@ -104,18 +104,13 @@ def test_manual_metadata_only_keeps_trigger_and_flag(tmp_path, monkeypatch):
 
 # ── config field plumbing ───────────────────────────────────
 
-def test_config_field_default_off_and_env_override():
-    import os, tempfile
+def test_config_field_default_off_and_env_override(tmp_path, monkeypatch):
     from app.core.config_file import MotifConfig
     assert MotifConfig().sync.auto_enum_after_cron_sync is False
-    os.environ["MOTIF_AUTO_ENUM_AFTER_CRON_SYNC"] = "true"
-    try:
-        from app.config import Settings
-        d = Path(tempfile.mkdtemp())
-        s = Settings(config_dir=d, data_dir=d / "data")
-        assert s.sync_auto_enum_after_cron_sync is True
-    finally:
-        os.environ.pop("MOTIF_AUTO_ENUM_AFTER_CRON_SYNC", None)
+    monkeypatch.setenv("MOTIF_AUTO_ENUM_AFTER_CRON_SYNC", "true")  # v0.51.344: monkeypatch; the finally-pop deleted a prior value instead of restoring it
+    from app.config import Settings
+    s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
+    assert s.sync_auto_enum_after_cron_sync is True
 
 
 # ── UI surface (source pins) ────────────────────────────────

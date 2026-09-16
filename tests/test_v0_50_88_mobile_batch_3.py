@@ -33,7 +33,10 @@ testing) + one accessibility fix found via browser console.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from _slice_helpers import slice_between
 
 REPO = Path(__file__).resolve().parent.parent
 APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
@@ -195,7 +198,14 @@ def test_info_audio_fills_the_play_row():
 
 def test_info_play_row_dd_wraps_the_audio_and_download_link():
     assert '<dt class="info-ctl-label info-ctl-label-play">motif file' in APP_JS  # v0.51.340: badge in the <dt>
-    assert '<dd class="info-play-row"><audio controls preload="auto"' in APP_JS
+    block = slice_between(APP_JS, "const audioBlock = lf", "      : '';")  # v0.51.344: the dd opens on a gated player const, so resolve it
+    dd = re.search(r'<dd class="info-play-row">(?:\$\{(?P<ref>\w+)\}|(?P<tag><[a-z][^>]*>))', block)
+    assert dd, "the motif file row's value is the info-play-row"
+    head = dd.group("tag")
+    if dd.group("ref"):
+        const = re.search(rf"\bconst {dd.group('ref')} = [^`;]*`(<[a-z][^>]*>)", block)
+        head = const and const.group(1)
+    assert head and head.startswith('<audio controls preload="auto" ') and 'class="info-audio"' in head, head
     assert "class=\"info-audio\"" in APP_JS
 
 

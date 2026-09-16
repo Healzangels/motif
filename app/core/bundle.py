@@ -29,6 +29,7 @@ import tempfile
 import threading
 import time
 import zlib
+from datetime import datetime
 from pathlib import Path
 
 from . import db_backup
@@ -50,12 +51,36 @@ CENSUS_TABLES = ("plex_items", "themes", "local_files", "placements",
                  "user_overrides", "saved_filters", "previous_urls")
 
 
-def bundle_name(now_stamp: str) -> str:
-    return f"motif-bundle-{now_stamp}.tar.gz"
+def bundle_name(now_stamp: str, *, partial: bool = False) -> str:
+    return f"motif-bundle-{'partial-' if partial else ''}{now_stamp}.tar.gz"  # v0.51.344: partial = a member left out over its cap (db_backup._PARTIAL_RE)
 
 
-def uploaded_bundle_name(now_stamp: str) -> str:
-    return f"motif-bundle-upload-{now_stamp}.tar.gz"  # v0.51.343: db_backup's retained-False shape — an upload never takes a retention slot
+def uploaded_bundle_name(now_stamp: str, n: int = 1) -> str:
+    return f"motif-bundle-upload-{now_stamp}{f'-{n}' if n > 1 else ''}.tar.gz"  # v0.51.343: db_backup's retained-False shape — an upload never takes a retention slot
+
+
+def file_upload(tmp: Path, bdir: Path, now_stamp: str) -> Path:
+    """v0.51.344: rename a checked upload into bdir under a name no other upload holds — each candidate gated, claimed O_EXCL, then renamed onto."""
+    import os
+    for n in range(1, 100):
+        name = uploaded_bundle_name(now_stamp, n)
+        if not db_backup.is_backup_name(name):  # v0.51.344: create_bundle's gate — a name outside the table was os.replace'd in, invisible to the API
+            raise ValueError(f"invalid backup stamp in {name!r}")
+        dest = bdir / name
+        try:
+            os.close(os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))  # v0.51.344: exists() then os.replace let a same-second upload overwrite one already previewed
+        except FileExistsError:
+            continue
+        try:
+            os.replace(tmp, dest)
+        except BaseException:
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError as e:
+                log.warning("bundle upload: could not remove the empty claim %s (%s) — delete it from the backup list", name, e)
+            raise
+        return dest
+    raise FileExistsError(f"every upload name for {now_stamp} is taken")
 
 
 def _sha256_file(path: Path) -> str:
@@ -146,14 +171,20 @@ def build_manifest(*, created_at: str, motif_version: str, schema_version: int,
     return out
 
 
+class BundleOverCap(ValueError):
+    """v0.51.344: a bundle refused for a member over its cap — a plain snapshot can still be taken."""
+
+
 def create_bundle(db_path: Path, config_dir: Path, *,
                   config_file: Path | None, cookies_file: Path | None,
                   themes_dir: Path | None, now_stamp: str,
                   motif_version: str, schema_version: int) -> db_backup.BackupFile:
-    """Write motif-bundle-<stamp>.tar.gz into the backups dir. Raises
-    FileNotFoundError if the DB is missing, FileExistsError on a same-second
-    collision, ValueError on a malformed stamp; sqlite / OS errors propagate
-    after the temp dir is cleaned."""
+    """Write bundle_name(now_stamp) into the backups dir, its partial shape when
+    a member is left out over its cap. Raises FileNotFoundError if the DB is
+    missing, FileExistsError on a same-second collision with either shape,
+    BundleOverCap (a ValueError) when the database or manifest is over its cap,
+    ValueError on a malformed stamp; sqlite / OS errors propagate after the
+    temp dir is cleaned."""
     if not db_path.exists():
         raise FileNotFoundError(f"database not found: {db_path}")
     name = bundle_name(now_stamp)
@@ -162,9 +193,19 @@ def create_bundle(db_path: Path, config_dir: Path, *,
     bdir = db_backup.backups_dir(config_dir)
     bdir.mkdir(parents=True, exist_ok=True)
     dest = bdir / name
-    if dest.exists():
+    if dest.exists() or (bdir / bundle_name(now_stamp, partial=True)).exists():  # v0.51.344: one bundle a second, whichever shape it took
         raise FileExistsError(f"backup already exists: {name}")
     created_at = db_backup._iso_from_stamp(now_stamp)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")
+        about = ((conn.execute("PRAGMA page_count").fetchone()[0] - conn.execute("PRAGMA freelist_count").fetchone()[0])
+                 * conn.execute("PRAGMA page_size").fetchone()[0])
+    finally:
+        conn.close()
+    if about > _MEMBER_CAP[MEMBER_DB] * 21 // 20:  # v0.51.344: the whole VACUUM (time + disk) was paid before this refusal; 5% over the estimate's measured 4% error
+        raise BundleOverCap(f"the database is about {about} bytes, over the {_MEMBER_CAP[MEMBER_DB]}-byte cap a bundle's "
+                            "database may be — no bundle was written; take a plain snapshot instead")
     # Same filesystem as the destination, so the final rename is atomic.
     tmp = Path(tempfile.mkdtemp(prefix=".bundle-", dir=bdir))
     try:
@@ -172,8 +213,8 @@ def create_bundle(db_path: Path, config_dir: Path, *,
         db_backup.vacuum_into(db_path, db_member)
         db_size = db_member.stat().st_size
         if db_size > _MEMBER_CAP[MEMBER_DB]:  # v0.51.342: written without complaint, then every restore refused it
-            raise ValueError(f"the database snapshot is {db_size} bytes, over the {_MEMBER_CAP[MEMBER_DB]}-byte cap a "
-                             "bundle's database may be — no bundle was written; take a plain snapshot instead")
+            raise BundleOverCap(f"the database snapshot is {db_size} bytes, over the {_MEMBER_CAP[MEMBER_DB]}-byte cap a "
+                                "bundle's database may be — no bundle was written; take a plain snapshot instead")
         members: dict[str, dict] = {
             MEMBER_DB: {"size": db_size, "sha256": _sha256_file(db_member)},
         }
@@ -190,6 +231,9 @@ def create_bundle(db_path: Path, config_dir: Path, *,
             if arcname == MEMBER_CONFIG:
                 members[arcname]["secrets"] = "as-is"
             parts.append((arcname, src))
+        if left_out:  # v0.51.344: its own name — the manifest is the LAST tar member, so prune could not tell partial from complete without inflating
+            name = bundle_name(now_stamp, partial=True)
+            dest = bdir / name
         manifest = build_manifest(
             created_at=created_at, motif_version=motif_version,
             schema_version=schema_version, members=members,
@@ -199,8 +243,8 @@ def create_bundle(db_path: Path, config_dir: Path, *,
         )
         payload = json.dumps(manifest, indent=1, sort_keys=True).encode("utf-8")
         if len(payload) > _MEMBER_CAP[MEMBER_MANIFEST]:  # v0.51.342: the census grows with the library, and inspect refuses a manifest over its cap
-            raise ValueError(f"the bundle manifest is {len(payload)} bytes, over the {_MEMBER_CAP[MEMBER_MANIFEST]}-byte "
-                             "cap a manifest may be — no bundle was written; take a plain snapshot instead")
+            raise BundleOverCap(f"the bundle manifest is {len(payload)} bytes, over the {_MEMBER_CAP[MEMBER_MANIFEST]}-byte "
+                                "cap a manifest may be — no bundle was written; take a plain snapshot instead")
         part = tmp / (name + ".part")
         # v0.51.339: dereference — a symlinked motif.yaml/cookies.txt was archived as a 0-byte SYMTYPE (its target path leaked) and every restore refused it.
         with tarfile.open(part, "w:gz", dereference=True) as tar:
@@ -225,7 +269,16 @@ def create_bundle(db_path: Path, config_dir: Path, *,
         log_event(db_path, level="WARNING", component="backup", message=msg,  # v0.51.342: no member name as a key — the scrubber redacts a "cookies.txt" key's value
                   detail={"name": name, "left_out": [{"member": n, **m} for n, m in left_out.items()]})
     return db_backup.BackupFile(name=name, size=st.st_size, created_at=created_at,
-                                kind="bundle")
+                                kind="bundle", partial=bool(left_out))
+
+
+def create_bundle_for(settings, now_stamp: str) -> db_backup.BackupFile:
+    """v0.51.344: one spelling of a live install's bundle — the scheduler and the API each hand-kept eight kwargs."""
+    from .. import __version__
+    from .db import CURRENT_SCHEMA_VERSION
+    return create_bundle(settings.db_path, settings.config_dir, config_file=settings.config_file.path,
+                         cookies_file=settings.cookies_file, themes_dir=settings.themes_dir, now_stamp=now_stamp,
+                         motif_version=__version__, schema_version=CURRENT_SCHEMA_VERSION)
 
 
 def read_manifest(path: Path) -> dict:
@@ -286,6 +339,47 @@ def _parse_error_summary(e: Exception) -> str:
     return type(e).__name__ + (f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else "")
 
 
+_UNREADABLE_WORDS = {"tag:yaml.org,2002:int": "an integer too long to read", "tag:yaml.org,2002:timestamp": "a date that does not exist"}
+
+
+def _unreadable_scalar(text: str) -> str | None:
+    """The dotted key of the first scalar YAML's safe loader cannot build, in words — never its value — or None."""
+    import yaml
+    loader, builder = yaml.SafeLoader(text), yaml.SafeLoader("")
+    try:
+        root = loader.get_single_node()
+    except yaml.YAMLError as e:
+        log.info("bundle restore: the motif.yaml does not compose (%s) — its parse error is named by type", type(e).__name__)
+        return None
+    finally:
+        loader.dispose()
+    seen: set[int] = set()
+
+    def walk(node, path: str) -> str | None:
+        if id(node) in seen:
+            return None
+        seen.add(id(node))
+        if isinstance(node, yaml.MappingNode):
+            for k, v in node.value:
+                name = k.value if isinstance(k, yaml.ScalarNode) else "?"
+                if found := walk(v, f"{path}.{name}" if path else str(name)):
+                    return found
+            return None
+        if isinstance(node, yaml.SequenceNode):
+            return next((found for v in node.value if (found := walk(v, path))), None)
+        try:
+            builder.construct_object(node)
+        except ValueError:
+            return f"{path or 'its top level'} holds {_UNREADABLE_WORDS.get(node.tag, 'a value YAML cannot read')}"
+        except Exception as e:  # v0.51.344: a tag the safe loader refuses is not the ValueError being named — look on
+            log.info("bundle restore: %s does not build either (%s)", path or "its top level", type(e).__name__)
+        return None
+    try:
+        return walk(root, "") if root is not None else None
+    finally:
+        builder.dispose()
+
+
 def flatten_config(text: str | bytes, *, side: str) -> tuple[dict[str, object], str | None]:
     """motif.yaml text (bytes decode as strict UTF-8, as the boot read does) →
     ({dotted.key: scalar-or-list}, None), or ({}, why) when it does not parse to
@@ -294,7 +388,8 @@ def flatten_config(text: str | bytes, *, side: str) -> tuple[dict[str, object], 
     try:
         raw = yaml.safe_load(text.decode("utf-8") if isinstance(text, bytes) else text) or {}
     except Exception as e:  # v0.51.339: was a silent {} — a full false diff, then a staged file that crashed the next boot
-        err = _parse_error_summary(e)
+        # v0.51.344: a bare ValueError (an integer past Python's text limit, a date that does not exist) read only "ValueError"; a UnicodeDecodeError keeps its summary
+        err = (_unreadable_scalar(text.decode("utf-8") if isinstance(text, bytes) else text) if type(e) is ValueError else None) or _parse_error_summary(e)
         log.warning("bundle restore: the %s motif.yaml does not parse (%s) — no config diff", side, err)
         return {}, err
     if not isinstance(raw, dict):
@@ -374,13 +469,23 @@ def _loader_contract_error(raw: dict) -> str | None:
     return None
 
 
+def _too_long_to_show(v) -> str | None:
+    if isinstance(v, int) and not isinstance(v, bool):
+        try:
+            str(v)
+        except ValueError:  # v0.51.344: a hex literal past Python's int-to-text limit loads, then config_diff's str() 422'd the preview in Python's words
+            log.info("bundle restore: a %d-bit integer is too long to show in the config diff", v.bit_length())
+            return f"(a {v.bit_length()}-bit integer, too long to show)"
+    return None
+
+
 def _plain(v):
     # v0.51.341: a YAML date or a non-string key inside a list was a json.dumps TypeError — a preview 500
     if isinstance(v, dict):
         return {str(k): _plain(x) for k, x in v.items()}
     if isinstance(v, list):
         return [_plain(x) for x in v]
-    return v if v is None or isinstance(v, (str, int, float, bool)) else str(v)
+    return (_too_long_to_show(v) or v) if v is None or isinstance(v, (str, int, float, bool)) else str(v)
 
 
 def _render(v) -> str:
@@ -388,7 +493,7 @@ def _render(v) -> str:
         return "(unset)"
     if isinstance(v, (list, dict)):
         return json.dumps(_plain(v), sort_keys=True)
-    return str(v)
+    return _too_long_to_show(v) or str(v)
 
 
 def _diff_rows(live: dict, other: dict) -> list[dict]:
@@ -435,8 +540,9 @@ class _TailGuard:
     def read(self, size=-1):
         data = self._f.read(size)
         self._n += len(data)
-        if self._n > _TAIL_RAW_BUDGET:
-            raise _BundleTail(f"not a motif bundle: over {_TAIL_RAW_BUDGET} bytes of data after the archive's end")
+        if self._n > _TAIL_RAW_BUDGET:  # v0.51.344: the allowance spans the whole stream, so a trip inside the archive read "after the archive's end"
+            raise _BundleTail(f"not a motif bundle: over {_TAIL_RAW_BUDGET} bytes of its gzip stream were read for too little data — "
+                              "padding or empty gzip members")
         return data
 
     def readable(self) -> bool:
@@ -444,6 +550,26 @@ class _TailGuard:
 
     def __getattr__(self, name):  # seek/tell/seekable/mode/name fall through to the real file, exactly as the bare fileobj did
         return getattr(self._f, name)
+
+
+_EXT_HEADER_CAP = 64 << 10
+_EXT_TYPES = (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE)
+
+
+class _BoundedTarInfo(tarfile.TarInfo):
+    def _proc_member(self, tar):
+        if self.type == tarfile.XGLTYPE:  # v0.51.344: a 'g' header's keys ride every later header and member as a copy — create_bundle never writes one
+            raise ValueError("not a motif bundle: a global pax header, which motif never writes")
+        if self.type == tarfile.GNUTYPE_SPARSE:  # v0.51.344: its extended blocks are read whole before the member gate refuses it — a 437 KiB file held 300 MiB
+            raise ValueError("not a motif bundle: a GNU sparse header, which motif never writes")
+        if self.type in _EXT_TYPES:  # v0.51.344: tarfile holds an L/K/x payload whole before any member gate — a 522 KiB file declaring 512 MiB took 1.3 GiB
+            tar.motif_ext_bytes = getattr(tar, "motif_ext_bytes", 0) + tarfile.BLOCKSIZE + self._block(self.size)
+            if tar.motif_ext_bytes > _EXT_HEADER_CAP:  # v0.51.344: one budget for the whole stream — 250 headers under a per-header cap still held 383 MiB
+                raise ValueError(f"not a motif bundle: over {_EXT_HEADER_CAP} bytes of extension headers")
+        return super()._proc_member(tar)
+
+    def _proc_gnusparse_10(self, *_):  # v0.51.344: a pax sparse 1.0 map is read from the member's data, unbounded, before any member gate — a 142 KiB upload held 392 MiB and STAGING_LOCK for 15 s
+        raise ValueError("not a motif bundle: a GNU sparse member, which motif never writes")
 
 
 class _TarFeed:
@@ -480,6 +606,12 @@ class ExtractionWriteError(Exception):
         self.out_of_space = out_of_space
 
 
+def _write_refused(e: OSError, name: str, beside: str) -> ExtractionWriteError:
+    return ExtractionWriteError(f"could not write the extraction beside {beside} ({e.strerror or type(e).__name__}) — "
+                                f"{name} was not judged; free space or fix permissions there, then try again",
+                                out_of_space=e.errno in (errno.ENOSPC, errno.EDQUOT))
+
+
 def _extract_database(src, dest: Path) -> None:
     try:
         # v0.51.342: born owner-only — the database holds the admin bcrypt hash and the session / API-token hashes, and took the umask's 0644 / 0664
@@ -491,14 +623,22 @@ def _extract_database(src, dest: Path) -> None:
             view = memoryview(chunk)
             while view:
                 try:
-                    view = view[_os.write(fd, view):]
+                    n = _os.write(fd, view)
+                    if n == 0:  # v0.51.344: a 0-byte write never advanced the view — the loop spun forever under STAGING_LOCK
+                        raise OSError(errno.EIO, "the write made no progress")
+                    view = view[n:]
                 except OSError as e:
                     raise _DiskRefused(e) from e
-    finally:
+    except BaseException:
         try:
             _os.close(fd)
-        except OSError as e:
-            raise _DiskRefused(e) from e
+        except OSError as e:  # v0.51.344: raised, a close fault replaced the read fault in flight — a corrupt bundle read as a disk fault
+            log.warning("bundle check: could not close the extraction %s (%s) — the fault already in flight is the one reported", dest.name, e)
+        raise
+    try:
+        _os.close(fd)
+    except OSError as e:
+        raise _DiskRefused(e) from e
 
 
 def _over_cap(name: str, size: int) -> str:
@@ -531,7 +671,7 @@ def _inspect_into(path: Path, workdir: Path, *, beside: str = "the bundle") -> B
     try:
         # v0.51.342: ONE forward pass — getmembers() then extractfile() inflated the archive twice per open, and a flow opened it 2-5 times
         with open(path, "rb") as raw, gzip.GzipFile(fileobj=(guard := _TailGuard(raw)), mode="rb") as gz:
-            with tarfile.open(fileobj=_TarFeed(gz, guard), mode="r|", bufsize=_STREAM_BUF) as tar:
+            with tarfile.open(fileobj=_TarFeed(gz, guard), mode="r|", bufsize=_STREAM_BUF, tarinfo=_BoundedTarInfo) as tar:
                 for m in tar:
                     why = _member_refusal(m, shas)
                     if why:
@@ -553,17 +693,18 @@ def _inspect_into(path: Path, workdir: Path, *, beside: str = "the bundle") -> B
             while chunk := gz.read(_STREAM_BUF):
                 drained += len(chunk)
                 if drained > _TAIL_INFLATE_BUDGET:
-                    return BundleCheck(False, f"not a motif bundle: over {_TAIL_INFLATE_BUDGET} bytes of data after the archive's end")
+                    words = f"not a motif bundle: over {_TAIL_INFLATE_BUDGET} bytes of data after the archive's end"
+                    log.warning("bundle check: %s refused after the archive's end (%s)", path.name, words)  # v0.51.344: the one read-time refusal that left no breadcrumb (class 9)
+                    return BundleCheck(False, words)
     except _DiskRefused as refused:  # v0.51.342: was caught below — a 422 "not a motif bundle: [Errno 28] No space left on device" for a good bundle
         e = refused.err
         log.error("bundle check: could not write the extracted database into %s (%s) — the disk refused it; %s was not judged",
                   workdir, e, path.name)
-        raise ExtractionWriteError(f"could not write the extraction beside {beside} ({e.strerror or type(e).__name__}) — "
-                                   f"{path.name} was not judged; free space or fix permissions there, then try again",
-                                   out_of_space=e.errno in (errno.ENOSPC, errno.EDQUOT)) from e
+        raise _write_refused(e, path.name, beside) from e
     except (tarfile.TarError, OSError, ValueError, EOFError, zlib.error, IndexError, RecursionError, _BundleTail) as e:  # v0.51.342: zlib.error — a deflate fault past the first 1 MiB is read through extractfile, where tarfile does not wrap it; IndexError (a GNU sparse 'S' extended header at end of stream) + RecursionError (a ~400-deep chain of 'g'/'x'/'L' headers) crash tarfile's parser before any gate; _BundleTail bounds the archive's tail
-        msg = str(e)  # v0.51.339: refusals carry the prefix once — never "not a motif bundle: not a motif bundle:"
-        log.warning("bundle check: %s refused while reading the archive (%s: %s)", path.name, type(e).__name__, msg)
+        # v0.51.344: an OSError's str names the absolute path, which reached the browser; BadGzipFile has no strerror and keeps its words
+        msg = f"{type(e).__name__}: {e.strerror}" if getattr(e, "strerror", None) else str(e)  # v0.51.339: refusals carry the prefix once — never "not a motif bundle: not a motif bundle:"
+        log.warning("bundle check: %s refused while reading the archive (%s: %s)", path.name, type(e).__name__, e)
         return BundleCheck(False, msg if msg.startswith("not a motif bundle:") else f"not a motif bundle: {msg}")
     if MEMBER_MANIFEST not in shas or MEMBER_DB not in shas:
         return BundleCheck(False, "not a motif bundle: manifest.json or motif.db missing")
@@ -618,7 +759,11 @@ def inspect_bundle(path: Path) -> BundleCheck:
     member's sha256 matching the manifest, and a DB member that passes the
     snapshot restore checks. Raises only ExtractionWriteError (the disk
     refused the extraction)."""
-    tmp = Path(tempfile.mkdtemp(prefix=".bundle-inspect-", dir=path.parent))
+    try:
+        tmp = Path(tempfile.mkdtemp(prefix=".bundle-inspect-", dir=path.parent))
+    except OSError as e:  # v0.51.344: mkdtemp sat outside the mapping — an ENOSPC was a wordless 500 the page blamed on a proxy
+        log.error("bundle check: could not make the extraction directory beside %s (%s) — %s was not judged", path, e, path.name)
+        raise _write_refused(e, path.name, "the bundle") from e
     try:
         return _replace(_inspect_into(path, tmp), db_source=None)  # v0.51.342: the extraction dies with tmp — never hand out a token to a deleted file
     finally:
@@ -651,15 +796,22 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
         if not (parse_error["live"] or parse_error["bundle"]):
             diff = _diff_rows(live, other)
         # v0.51.341: boot reads settings.cookies_file from the config this bundle swaps in — the live path only when it carries none
-        cookies_at = None if parse_error["bundle"] else _cookies_file_after_swap(bundle_bytes, live_config)
+        cookies_at = None if parse_error["bundle"] else _cookies_file_after_swap(bundle_bytes)
     census, counts = m.get("themes_census"), m.get("counts")
+    created = m.get("created_at")
+    try:
+        datetime.fromisoformat(created)
+    except (TypeError, ValueError):
+        log.info("bundle preview: %s has no usable created_at (a %s) — shown as unknown", path.name, type(created).__name__)
+        created = None
     left_out = _left_out(m, check)
     cookies_why = left_out.get(MEMBER_COOKIES)
     return {
         "name": path.name,
         "manifest": {
             "format": m.get("format"), "motif_version": m.get("motif_version"),
-            "schema_version": m.get("schema_version"), "created_at": m.get("created_at"),
+            "schema_version": m.get("schema_version"),
+            "created_at": created,  # v0.51.344: a foreign manifest's stamp is guarded like census_rows — the upload's name no longer reads it
             "census_rows": len(census) if isinstance(census, list) else 0,  # v0.51.339: a non-list census was a TypeError 500
             "counts": counts if isinstance(counts, dict) else {},
         },
@@ -691,14 +843,10 @@ def _left_out(manifest: dict, check: BundleCheck) -> dict[str, str]:
     return out
 
 
-def _cookies_file_after_swap(config_bytes: bytes, live_config: Path | None) -> str | None:
-    """settings.cookies_file as the boot that swaps this parsed motif.yaml in reads it: hydrated, then env overrides."""
-    import yaml
+def _cookies_file_after_swap(config_bytes: bytes) -> str | None:
+    """settings.cookies_file as the boot that swaps this parsed motif.yaml in reads it."""
     from . import config_file as cf
-    cfg = cf.MotifConfig()
-    cf._hydrate_dataclass(cfg, yaml.safe_load(config_bytes.decode("utf-8")) or {})
-    cf.ConfigFile(live_config or Path(MEMBER_CONFIG))._apply_env_overrides(cfg)  # v0.51.341: MOTIF_COOKIES_FILE wins, as load() applies it after hydration
-    v = cfg.paths.cookies_file
+    v = cf.load_config_text(config_bytes.decode("utf-8")).paths.cookies_file  # v0.51.344: load()'s own pipeline, env overrides included — a hand-kept copy of its order drifts when load() gains a step
     if not isinstance(v, str):
         log.warning("bundle restore: the bundle's paths.cookies_file is a %s, not a path — no cookies target named",
                     type(v).__name__)
@@ -707,6 +855,7 @@ def _cookies_file_after_swap(config_bytes: bytes, live_config: Path | None) -> s
 
 
 _IN_PLACE_ERRNOS = frozenset({errno.EBUSY, errno.EXDEV, errno.EPERM})
+_FSYNC_UNSUPPORTED = frozenset({errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP})
 # v0.51.341: every stage and cancel runs whole under this — interleaved, one staging's database sat beside another's config
 STAGING_LOCK = threading.Lock()
 
@@ -723,6 +872,8 @@ class _InPlaceWriteFailed(OSError):
 def _stage_file(data: bytes, pending: Path) -> None:
     tmp = pending.with_name(pending.name + ".tmp")
     try:
+        if not tmp.is_dir():  # v0.51.344: O_TRUNC kept a crashed staging's 0644 tmp at 0644 while the token went in; a directory keeps open's EISDIR (unlink says EPERM on macOS)
+            tmp.unlink(missing_ok=True)
         # v0.51.342: the checksum-verified bytes, never re-read from disk; born 0600, so a chmod-refusing share never leaves the token group-readable
         fd = _os.open(tmp, _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC, 0o600)
         with open(fd, "wb") as f:
@@ -791,12 +942,24 @@ def _unstage_after_swap(db_path: Path, config_dir: Path, staged: list[str], memb
         except OSError as e:
             log.error("bundle restore: could not unstage %s (%s) — it still applies at restart", paths[word].name, e)
             stays[paths[word].name] = _cause(e)
+            if word == "database":  # v0.51.344: its partners stay with it — unlinked, the database applied at boot beside the live motif.yaml
+                break
     earlier = []
     if dropped:
         earlier.append(f"{' and '.join(dropped)} {'was' if len(dropped) == 1 else 'were'} already dropped")
     if replaced_db:
         earlier.append("the database it staged was already replaced")
     said = f"; from the earlier restore, {', and '.join(earlier)}" if earlier else ""
+    if paths["database"].name in stays:
+        live = "your live motif.yaml" if member == MEMBER_CONFIG else "your live cookies file"
+        kept = [w for w in staged if w != "database"]
+        beside = " and ".join([f"the staged {w}" for w in kept] + [live])
+        # v0.51.344: the remedy names every pending the break kept — the database removed alone, its config applied at boot beside the live database
+        alone = f" — removing {paths['database'].name} alone lets {' and '.join(f'the staged {w}' for w in kept)} apply by itself" if kept else ""
+        return StagingError(
+            f"not staged: {member} could not be staged ({_cause(err)}), and {paths['database'].name} could not be removed "
+            f"({_named_failures(stays)}) — a restart applies it with {beside}{said}; "
+            f"remove {' and '.join(paths[w].name for w in ['database', *kept])} by hand, then stage again{alone}")
     if stays:
         return StagingError(
             f"not staged: {member} could not be staged ({_cause(err)}), and {', '.join(stays)} could not be removed "
@@ -816,7 +979,11 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
     then unstaged whole), ExtractionWriteError when the disk refuses the
     extraction. Nothing live changes until the next boot."""
     with STAGING_LOCK:
-        tmp = Path(tempfile.mkdtemp(prefix=".bundle-stage-", dir=db_path.parent))  # v0.51.342: beside the pending file, so the checked database MOVES into place
+        try:
+            tmp = Path(tempfile.mkdtemp(prefix=".bundle-stage-", dir=db_path.parent))  # v0.51.342: beside the pending file, so the checked database MOVES into place
+        except OSError as e:  # v0.51.344: mkdtemp sat outside the mapping — an ENOSPC was a wordless 500 the page blamed on a proxy
+            log.error("bundle restore: could not make the extraction directory beside %s (%s) — %s was not judged", db_path, e, bundle_path.name)
+            raise _write_refused(e, bundle_path.name, db_path.name) from e
         try:
             check = _inspect_into(bundle_path, tmp, beside=db_path.name)  # v0.51.342: one pass + one integrity_check — was inspect_bundle, a second extraction, then stage_restore's own re-check
             if not check.ok:
@@ -851,9 +1018,9 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
                     if not isinstance(e, Exception):
                         raise
                     raise undone from e
-                if MEMBER_COOKIES in check.oversize:
-                    check.left_as_is[MEMBER_COOKIES] = (f"{_over_cap(MEMBER_COOKIES, check.oversize[MEMBER_COOKIES])} — "
-                                                        "it is not restored, and your cookies file is left as it is")
+                for member, why in _left_out(check.manifest or {}, check).items():  # v0.51.344: left out when made, too — a partial bundle answered that nothing was left as it is
+                    live = "motif.yaml" if member == MEMBER_CONFIG else "cookies file"
+                    check.left_as_is[member] = f"{why} — it is not restored, and your {live} is left as it is"
         finally:
             _remove_tree(tmp)
         log.info("bundle restore staged from %s: %s; applies on next restart",
@@ -991,8 +1158,16 @@ def _rewrite_fd(fd: int, data: bytes) -> None:
     _os.ftruncate(fd, 0)
     view = memoryview(data)
     while view:
-        view = view[_os.write(fd, view):]
-    _os.fsync(fd)
+        n = _os.write(fd, view)
+        if n == 0:  # v0.51.344: a 0-byte write never advanced the view — the loop spun forever at boot
+            raise OSError(errno.EIO, "the write made no progress")
+        view = view[n:]
+    try:
+        _os.fsync(fd)
+    except OSError as e:
+        if e.errno not in _FSYNC_UNSUPPORTED:
+            raise
+        log.warning("bundle restore: this mount cannot fsync the file (%s) — its %d bytes are written, not synced", e, len(data))  # v0.51.344: was "partly written" over whole bytes, and every boot retried and failed
 
 
 def apply_pending_config(config_dir: Path, *, now_stamp: str) -> dict | None:
