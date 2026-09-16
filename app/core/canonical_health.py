@@ -84,7 +84,7 @@ def _broken_rows(conn) -> list:
     return conn.execute(
         "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
         "       lf.file_path, lf.source_kind, lf.file_size, lf.file_sha256, "
-        # v0.51.342: the worker's section-then-global override (worker.py:1646) in the row — was up to 2 SELECTs per row.
+        # v0.51.342: the worker's section-then-global override (worker.py:1646) in the row — was 2 SELECTs a row.
         "       COALESCE((SELECT uo.youtube_url FROM user_overrides uo "
         "                 WHERE uo.media_type = lf.media_type AND uo.tmdb_id = lf.tmdb_id "
         "                   AND uo.section_id = lf.section_id AND uo.edition_key = lf.edition_key), "
@@ -329,7 +329,7 @@ def _run_conn(db_path: Path, conn):
     return nullcontext(conn) if conn is not None else get_conn(db_path)
 
 
-# v0.51.342: every canonical writer holds its path's lock from the guard to the stamp — two restores of one row raced its tmp.
+# v0.51.342: every canonical writer holds its path's lock from guard to stamp — two restores of one row raced its tmp.
 _CANON_WRITE_LOCKS: "weakref.WeakValueDictionary[str, threading.Lock]" = weakref.WeakValueDictionary()
 _CANON_WRITE_LOCKS_GUARD = threading.Lock()
 
@@ -392,18 +392,14 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
     """After bytes landed at the canonical path: re-hash, stamp size / sha /
     downloaded_at / canonical_present=1, and record the placement kind when the
     restore changed it (a hardlink that had to fall back to a copy)."""
-    import hashlib
+    from .canonical import hash_file
     from .db import transaction
     from .events import now_iso
     from .worker import _cond_columns
     rehash_failed = False  # v0.51.338: unknown bytes were written — clear the anchors rather than keep them
     try:
         size = canonical.stat().st_size
-        h = hashlib.sha256()
-        with canonical.open("rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                h.update(chunk)
-        sha = h.hexdigest()
+        sha, _ = hash_file(canonical)  # v0.51.344: the shared streaming hash; size stays the stat's, as before
     except OSError as e:
         log.warning("restore: re-hash failed for %s/%s section=%s: %s — keeping prior size/sha",
                     r["media_type"], r["tmdb_id"], r["section_id"], e)
@@ -485,7 +481,7 @@ def restore_from_placement(db_path: Path, themes_dir: Path, r, *, conn=None) -> 
     from .placement import _safe_link_or_copy
     from .plex_enum import _candidate_local_paths
     canonical = themes_dir / r["file_path"]
-    # v0.51.342: guard → stage → replace → stamp under the path's lock — the job and an INFO restore staged one row at once.
+    # v0.51.342: guard, stage, replace, stamp under the path's lock — the job and an INFO restore staged one row at once
     with _canonical_write_lock(canonical):
         try:
             if canonical.is_file() and canonical.stat().st_size > 0:
@@ -521,8 +517,8 @@ def restore_from_placement(db_path: Path, themes_dir: Path, r, *, conn=None) -> 
         prior = _stamp_incoming(db_path, r, size=size, sha=sha, conn=conn) if sha != r["file_sha256"] else None
         try:
             canonical.parent.mkdir(parents=True, exist_ok=True)
-            # v0.51.338: placement's link — any OSError (EPERM on SMB/FUSE) copies, staged so a dead copy leaves no partial.
-            kind = _safe_link_or_copy(src, canonical, unique_tmp=True)  # v0.51.342: its own tmp, removed only by this call
+            # v0.51.338: placement's link; any OSError (SMB/FUSE EPERM) copies via a tmp — a dead copy leaves no partial
+            kind = _safe_link_or_copy(src, canonical, unique_tmp=True)  # v0.51.342: a tmp only this call removes
         except OSError as e:
             log.warning("restore-canonical: %s/%s section=%s failed: %s",
                         r["media_type"], r["tmdb_id"], r["section_id"], e)
@@ -656,7 +652,7 @@ def _broken_rows_with_placement(conn) -> list[dict]:
 
 
 class _PlexGate:
-    """The store fetches' stop rule: back off while Plex gives no answer, stop asking once it has given none for a while."""
+    """The store fetches' stop rule: back off while Plex gives no answer, stop once it has given none for a while."""
 
     def __init__(self, clock=time.monotonic, sleep=None):
         self._lock = threading.Lock()
@@ -665,7 +661,7 @@ class _PlexGate:
         self._alive_at = None  # v0.51.344: when Plex last answered — a no-answer sent before it says nothing about Plex now
         self.tripped = False
         self.cancelled = threading.Event()
-        # v0.51.342: the serial tail's only — the pool's loop sees the cancel and wakes its backoffs; a worker never asks.
+        # v0.51.342: the serial tail's only — the pool's loop sees the cancel and wakes its backoffs; workers never ask.
         self.cancel_check = None
         # v0.51.342: the default backoff is a wait the cancel ends — a cancelled run never sleeps one out.
         self._clock, self._sleep = clock, sleep if sleep is not None else self._wait
@@ -675,7 +671,7 @@ class _PlexGate:
             self.cancelled.wait(s)
             return
         end = time.monotonic() + s
-        # v0.51.342: the shared-path tail backs off on the one thread that polls the cancel — the wait asks, or nothing wakes it.
+        # v0.51.342: the shared-path tail backs off on the thread polling the cancel — its wait asks or nothing wakes it
         while not self.cancelled.wait(max(0.0, min(end - time.monotonic(), _PLEX_CANCEL_POLL_S))):
             if self.cancel_check():
                 self.cancelled.set()
@@ -727,7 +723,7 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_clie
     with get_conn(db_path) as conn:
         rows = _broken_rows_with_placement(conn)
         total = len(rows)
-        # v0.51.342: rows sharing a canonical path run serially after the pool, in report order — the serial run's winner.
+        # v0.51.342: rows on one canonical path run serially after the pool, in report order — the serial run's winner.
         shared = {p for p, n in Counter(str(r["file_path"]).casefold() for r in rows).items() if n > 1}
         log.info("restore from plex: %d broken rows (%d on a shared canonical path), %d Plex worker(s), Plex %s",
                  total, sum(1 for r in rows if str(r["file_path"]).casefold() in shared), n_workers,
@@ -857,7 +853,7 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_clie
                     if refilling and cancel_check is not None and cancel_check():
                         refilling, cancelled = False, True
                         gate.cancelled.set()
-                        # v0.51.342: a queued fetch still asked a hung Plex after the cancel — drop it; running ones publish.
+                        # v0.51.342: a queued fetch asked a hung Plex after the cancel — drop it; running ones publish.
                         pending = {f for f in pending if not f.cancel()}
             except BaseException:
                 gate.cancelled.set()  # v0.51.344: a publish that raised left the backoffs to sleep out, then ask Plex for bytes nobody writes
@@ -934,7 +930,7 @@ def changed_canonicals(conn, themes_dir: Path) -> list[dict]:
         "FROM local_files lf "
         "LEFT JOIN themes t ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id "
         "LEFT JOIN plex_sections ps ON ps.section_id = lf.section_id "
-        # v0.51.342: only verify's candidates — the live stat below still decides, so a writer's restamp clears a row at once.
+        # v0.51.342: only verify's candidates — the live stat below decides, so a writer's restamp clears a row at once.
         "WHERE lf.canonical_changed_candidate = 1 "
         "  AND COALESCE(lf.canonical_present, 1) = 1 AND COALESCE(lf.file_size, 0) > 0 "
         "ORDER BY lf.media_type, t.title, lf.tmdb_id, lf.section_id, lf.edition_key"

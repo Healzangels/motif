@@ -827,7 +827,7 @@ def main() -> int:
         for _t in worker_threads:
             _t.join(timeout=10.0)
         if restore_job is not None:
-            # v0.51.342: its in-flight fetches publish and stamp first — exit froze the daemon job mid-write (a file, no stamp).
+            # v0.51.342: in-flight fetches publish and stamp first — exit froze the job mid-write (a file, no stamp)
             restore_job.join(timeout=max(0.0, restore_by - time.monotonic()))
             if restore_job.is_alive():
                 try:

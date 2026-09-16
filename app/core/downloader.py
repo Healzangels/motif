@@ -13,7 +13,6 @@ needs manual override).
 from __future__ import annotations
 
 import enum
-import hashlib
 import logging
 import os
 import shutil
@@ -23,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+from .canonical import hash_file
 
 try:
     import yt_dlp  # type: ignore
@@ -566,11 +567,7 @@ def _opts(
 
 
 def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return hash_file(path)[0]  # v0.51.344: the shared streaming hash
 
 
 def download_theme(

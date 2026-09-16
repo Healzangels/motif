@@ -35,7 +35,6 @@ Concurrency:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -44,6 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from .canonical import hash_file
 from .db import get_conn
 from .events import log_event, now_iso
 from .nfo import find_nfo, parse_nfo
@@ -55,7 +55,6 @@ from .tmdb import TMDBClient
 log = logging.getLogger(__name__)
 
 THEME_FILE_NAME = "theme.mp3"
-HASH_BUFFER_SIZE = 1024 * 1024
 
 
 @dataclass
@@ -574,11 +573,4 @@ def _classify_orphan(ctx: ScanContext, media_type: str, parsed,
 
 
 def _sha256_of(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        while True:
-            chunk = f.read(HASH_BUFFER_SIZE)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
+    return hash_file(path)[0]  # v0.51.344: the shared streaming hash — this name stays the seam the race tests patch

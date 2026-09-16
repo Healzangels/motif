@@ -1769,8 +1769,8 @@ def maybe_recover_lost_adopts(
     but bounded — covered by the (media_type, tmdb_id) index on
     events.
     """
+    from .canonical import hash_file
     from .db import get_conn, transaction
-    import hashlib
 
     stats = {
         "detected": False,
@@ -1941,11 +1941,7 @@ def maybe_recover_lost_adopts(
                 )
                 continue
             try:
-                h = hashlib.sha256()
-                with disk_path.open("rb") as f:
-                    for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                        h.update(chunk)
-                on_disk_sha = h.hexdigest()
+                on_disk_sha, _ = hash_file(disk_path)  # v0.51.344: the shared streaming hash
             except OSError as e:
                 stats["file_missing"] += 1
                 log.warning(
@@ -2675,8 +2671,8 @@ def maybe_backfill_file_sha256(
     ~1-10MB each, ~1-2GB streamed total. Completes in seconds on
     SSD-backed storage; minutes on spinning disk over NFS.
     """
+    from .canonical import hash_file
     from .db import get_conn, transaction
-    import hashlib
 
     stats = {
         "detected": False,
@@ -2741,12 +2737,8 @@ def maybe_backfill_file_sha256(
             )
             continue
         try:
-            h = hashlib.sha256()
-            with disk_path.open("rb") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                    h.update(chunk)
             actions.append((
-                h.hexdigest(),
+                hash_file(disk_path)[0],  # v0.51.344: the shared streaming hash
                 r["media_type"], r["tmdb_id"], r["section_id"],
             ))
         except OSError as e:

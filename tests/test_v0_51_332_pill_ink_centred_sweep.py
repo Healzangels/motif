@@ -6,11 +6,9 @@ every page plus the INFO card and the glossary): every TRACKED family
 carried the v0.51.331 defect — letter-spacing is laid after the last
 glyph too, so a centred text box sits its ink half a tracking unit left
 of centre. The fix is one rule per family: right padding = left padding
-− letter-spacing. Since v0.51.343 each family declares one --track that
-its letter-spacing and its right-padding calc both read, and this test
-asserts that MECHANISM (left is read from the rule, not pinned), so a
-tracking or padding retyped as a literal, or a padding put back
-symmetric, fails here.
+− letter-spacing. This test parses each rule and asserts that MECHANISM
+(left is read from the rule, not pinned), so a tracking or padding
+retyped as a literal, or a padding put back symmetric, fails here.
 """
 from __future__ import annotations
 
@@ -27,7 +25,7 @@ APP_CSS = (STATIC / "app.css").read_text()
 OPS_CSS = (STATIC / "ops.css").read_text()
 APP_JS = (STATIC / "app.js").read_text()
 
-TRACK = "var(--track)"
+TRACK = "var(--track)"  # v0.51.343: each family's letter-spacing and right-padding calc read one --track
 # v0.51.343: split a shorthand on top-level spaces only; calc(12px - var(--track)) keeps its own
 _TOP_SPACE = re.compile(r"\s+(?![^()]*(?:\([^()]*\)[^()]*)*\))")
 
@@ -268,7 +266,7 @@ def test_the_owner_class_scan_reads_every_way_a_class_is_set():
 
 
 def test_inheriting_elements_carry_the_owner_class():
-    # v0.51.343: a .btn-tiny without .btn would read no --track, and its right padding would fall to 0
+    # v0.51.343: a bare .btn-tiny reads no --track, so its whole padding shorthand is invalid: all four sides go to 0
     files = sorted((REPO / "app" / "web" / "templates").glob("*.html")) + sorted(STATIC.glob("*.js")) + sorted(STATIC.glob("lib/*.js"))
     seen = 0
     for f in files:

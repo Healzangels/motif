@@ -24,8 +24,8 @@ def _in_flight_answer(client, settings, tmp_path, tmdb):
     return answer
 
 
-def test_a_row_whose_download_is_in_flight_reads_as_waiting_not_failed(env):
-    client, settings, tmp_path, events = env
+def test_a_row_whose_download_is_in_flight_reads_as_waiting_not_failed(env):  # noqa: F811 — the imported job-endpoint fixture
+    client, settings, tmp_path, _events = env
     answer = _in_flight_answer(client, settings, tmp_path, 1904)
     out = _run_library_loop(tmp_path / "library-loop", [_row(1904)], [answer])
     assert (out["calls"], out["left"]) == ([f"POST {_item(1904)}"], 0)
@@ -34,8 +34,8 @@ def test_a_row_whose_download_is_in_flight_reads_as_waiting_not_failed(env):
     assert _cols(settings.db_path, 1904, ("canonical_present",)) == (0,), "premise: the row was not touched"
 
 
-def test_restored_waiting_and_failed_are_each_counted_on_their_own(env):
-    client, settings, tmp_path, events = env
+def test_restored_waiting_and_failed_are_each_counted_on_their_own(env):  # noqa: F811 — the imported job-endpoint fixture
+    client, settings, tmp_path, _events = env
     _seed(settings.db_path, tmp_path / "plex", 1905)
     in_flight = _in_flight_answer(client, settings, tmp_path, 1904)
     restored = client.post(_item(1905), headers=AUTH).json()

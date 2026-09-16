@@ -246,11 +246,13 @@ def test_api_unplace_item_hashes_canonical_via_sha1():
     dedup). Pin the import + computation so a future refactor
     doesn't accidentally use md5 or sha256 (which wouldn't
     match Plex's entry hashes)."""
-    src = API_PY.read_text()
-    fn_idx = src.index("async def api_unplace_item(")
-    body = src[fn_idx:fn_idx + 28000]
-    assert "import hashlib" in body
-    assert "hashlib.sha1()" in body
+    # v0.51.344: the hash is canonical.hash_file's — read the handler's own _sha1_file by AST, not a 28000-char window
+    import ast
+    handler = next(n for n in ast.walk(ast.parse(API_PY.read_text()))
+                   if isinstance(n, ast.AsyncFunctionDef) and n.name == "api_unplace_item")
+    [sha1_file] = [n for n in ast.walk(handler) if isinstance(n, ast.FunctionDef) and n.name == "_sha1_file"]
+    calls = [c for c in ast.walk(sha1_file) if isinstance(c, ast.Call) and getattr(c.func, "id", None) == "hash_file"]
+    assert [[a.value for a in c.args[1:]] for c in calls] == [["sha1"]], "unplace must hash the canonical with SHA-1"
 
 
 # ── api_switch_placement bug fix ─────────────────────────────

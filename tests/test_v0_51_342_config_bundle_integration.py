@@ -259,8 +259,9 @@ def test_create_and_inspect_read_one_cap_table(tmp_path, monkeypatch, member):
     else:
         assert c.ok and c.oversize == {member: size}, "hashed, not refused, until something would stage it"
         again = _recreate(tmp_path / "mk")
-        assert member not in _sizes(again) and bundle.inspect_bundle(again).oversize == {}
-        assert bundle.read_manifest(again)["left_out"] == {member: {"size": size, "cap": size - 1}}
+        c = bundle.inspect_bundle(again)
+        assert member not in _sizes(again) and c.ok and c.oversize == {}, c.error
+        assert c.manifest["left_out"] == {member: {"size": size, "cap": size - 1}}
 
 
 @pytest.mark.parametrize("member", [bundle.MEMBER_CONFIG, bundle.MEMBER_COOKIES])
@@ -278,7 +279,9 @@ def test_create_leaves_an_over_cap_config_or_cookies_out_and_says_so(tmp_path, m
     with caplog.at_level(logging.WARNING, logger=bundle.log.name):
         b = _create_from(src)
     assert member not in _sizes(b) and other in _sizes(b)
-    assert bundle.read_manifest(b)["left_out"] == {member: {"size": 64, "cap": 63}}
+    c = bundle.inspect_bundle(b)
+    assert c.ok, c.error
+    assert c.manifest["left_out"] == {member: {"size": 64, "cap": 63}}
     said = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any(member in m and b.name in m for m in said), said
     assert [(e["level"], e["component"]) for e in seen] == [("WARNING", "backup")] and member in seen[0]["message"]

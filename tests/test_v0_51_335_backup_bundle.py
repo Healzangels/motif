@@ -108,7 +108,9 @@ def test_snapshot_inside_the_bundle_is_a_consistent_copy(tmp_path):
 
 def test_census_and_counts_mirror_local_files(tmp_path):
     bf, cd = _create(tmp_path)
-    m = bundle.read_manifest(cd / "backups" / bf.name)
+    c = bundle.inspect_bundle(cd / "backups" / bf.name)
+    assert c.ok, c.error
+    m = c.manifest
     assert m["counts"]["local_files"] == 2 and m["counts"]["placements"] == 1 and m["counts"]["themes"] == 1
     census = {c["path"]: c for c in m["themes_census"]}
     bebop = census["tv/Cowboy Bebop (1998)/theme.mp3"]
@@ -130,7 +132,9 @@ def test_config_secrets_travel_as_is_and_cookies_are_optional(tmp_path):
     bf2, _ = _create(tmp_path / "two", cookies_file=tmp_path / "two" / "missing.txt", now_stamp="20260912-050000")
     with tarfile.open(tmp_path / "two" / "backups" / bf2.name, "r:gz") as tar:
         assert bundle.MEMBER_COOKIES not in tar.getnames()
-    assert bundle.MEMBER_COOKIES not in bundle.read_manifest(tmp_path / "two" / "backups" / bf2.name)["members"]
+    c = bundle.inspect_bundle(tmp_path / "two" / "backups" / bf2.name)
+    assert c.ok, c.error
+    assert bundle.MEMBER_COOKIES not in c.manifest["members"]
 
 
 def test_same_second_never_clobbers_and_bad_stamp_refused(tmp_path):

@@ -12,9 +12,10 @@ Filesystem-illegal characters in titles are replaced with `-`.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
-from pathlib import Path  # noqa: F401  -- re-exported for callers
+from pathlib import Path  # re-exported for callers
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +83,20 @@ def download_theme_rel(media_type: str, themes_subdir: str, title: str, year: st
     # v0.51.344: the download worker and RESTORE FROM PLEX's in-flight check build this one path — they must not drift
     prefix = "collections/" if media_type == "collection" else ""
     return f"{prefix}{themes_subdir}/{canonical_theme_subdir(title, year, edition_key)}"
+
+
+_HASH_CHUNK = 1 << 20  # v0.51.344: bytes per read — the digest never depends on it, only the memory held does
+
+
+def hash_file(path: Path | str, algo: str = "sha256") -> tuple[str, int]:
+    """v0.51.344: (hex digest, bytes read) streamed in bounded reads — the one file hash; OSError is the caller's to log."""
+    h = hashlib.new(algo)
+    n = 0
+    with Path(path).open("rb") as f:  # v0.51.344: Path.open, as the loops it replaced — tests inject faults there
+        while chunk := f.read(_HASH_CHUNK):
+            h.update(chunk)
+            n += len(chunk)
+    return h.hexdigest(), n
 
 
 def _legacy_sanitize_pre_v1_14_94(s: str) -> str:

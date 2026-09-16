@@ -4473,7 +4473,7 @@ body.auth-page .auth-card { margin: 0; }
   justify-content: center;
   font-size: var(--t-micro);
   font-weight: 600;
-  --track: 0.15em;
+  --track: 0.15em; /* v0.51.343: the letter-spacing and the padding calc below read this one --track */
   letter-spacing: var(--track);
   line-height: 1;
   /* v0.51.331: the operator saw AT / A sit left of centre. Letter-spacing
@@ -4481,8 +4481,7 @@ body.auth-page .auth-card { margin: 0; }
      dead space on its right and the ink lands ~half of that left of
      centre. The v1.12.30 .link-glyph idiom: give the trailing spacing back
      through the right padding. The SRC key buttons take this same
-     padding (.src-key-btn declares none); since v0.51.343 the calc and
-     the letter-spacing read the same --track. */
+     padding (.src-key-btn declares none). */
   padding: 2px calc(6px - var(--track)) 2px 6px;
   border: 1px solid;
   border-radius: 0;

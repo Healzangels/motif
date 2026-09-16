@@ -38,6 +38,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .canonical import hash_file
+
 log = logging.getLogger("motif.loudness_apply")
 
 # mp3gain moves audio in units of the MP3 spec's global_gain field: 1 step ≈ 1.505 dB.
@@ -109,11 +111,7 @@ def mp3gain_version() -> str | None:
 
 
 def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return hash_file(path)[0]  # v0.51.344: the shared streaming hash — api.py's measure-one imports this name
 
 
 def apply_gain(path: Path | str, steps: int, timeout: int = _TIMEOUT_S) -> bool:

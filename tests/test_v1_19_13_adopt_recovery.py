@@ -120,10 +120,10 @@ def test_adopt_recovery_verifies_sha_before_reclassifying():
     fn_start = src.index("def maybe_recover_lost_adopts(")
     next_def = src.find("\ndef ", fn_start + 1)
     body = src[fn_start:next_def if next_def > 0 else len(src)]
-    assert "hashlib" in body, (
+    # v0.51.344: the on-disk sha256 comes from canonical.hash_file; test_walker_leaves_sha_drift_row_as_themerrdb proves the compare
+    assert "hash_file(disk_path)" in body, (
         "v1.19.13: walker must compute sha256 from disk"
     )
-    assert "sha256()" in body
     # Mismatch branch leaves classification alone.
     assert "sha_mismatch" in body, (
         "v1.19.13: stats must surface sha drift count so the "

@@ -3282,7 +3282,7 @@ def _widen_check_constraint(
     # n=0, raise "couldn't locate CHECK clause" → confusing diagnostic
     # for what's really "already done."
     new_values_check_re = r"\s*,\s*".join(
-        rf"['\"]" + re.escape(v) + rf"['\"]" for v in new_values
+        r"['\"]" + re.escape(v) + r"['\"]" for v in new_values
     )
     already_widened_re = re.compile(
         rf"CHECK\s*\(\s*{re.escape(column)}\s+IN\s*\(\s*"
@@ -3316,7 +3316,7 @@ def _widen_check_constraint(
     # NOT contain another `(`, which covers OR/AND-style clauses
     # but stops short of nested parens.
     values_re = r"\s*,\s*".join(
-        rf"['\"]" + re.escape(v) + rf"['\"]" for v in old_values
+        r"['\"]" + re.escape(v) + r"['\"]" for v in old_values
     )
     pattern = re.compile(
         rf"CHECK\s*\(\s*{re.escape(column)}\s+IN\s*\(\s*{values_re}\s*\)([^)]*)\)",

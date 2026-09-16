@@ -31,7 +31,6 @@ ADOPT button on /movies, /tv, /anime row actions.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -39,6 +38,9 @@ import shutil
 from pathlib import Path
 
 from .canonical import canonical_theme_subdir
+
+# v0.51.344: the shared streaming hash, kept as _hash_file — plex_enum and canonical_health import it, tests patch it
+from .canonical import hash_file as _hash_file
 from .db import get_conn, transaction
 from .editions import edition_key_for_folder
 from .events import log_event, now_iso
@@ -58,22 +60,6 @@ class AdoptError(Exception):
 # populate scan_findings. The scan workflow still works as before — these
 # primitives are an additional code path for the inline row buttons.
 # ---------------------------------------------------------------------------
-
-_SHA_BUFSIZE = 1024 * 1024  # 1 MiB
-
-def _hash_file(path: Path) -> tuple[str, int]:
-    """Return (sha256_hex, file_size). Streams to keep memory bounded."""
-    h = hashlib.sha256()
-    size = 0
-    with path.open("rb") as f:
-        while True:
-            chunk = f.read(_SHA_BUFSIZE)
-            if not chunk:
-                break
-            h.update(chunk)
-            size += len(chunk)
-    return h.hexdigest(), size
-
 
 def adopt_folder(
     db_path: Path, *,

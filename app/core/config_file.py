@@ -709,7 +709,7 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
         if cfg.downloads.rate_per_hour < 1:
             errors.append(f"downloads.rate_per_hour must be >= 1, got {cfg.downloads.rate_per_hour}")
         if cfg.downloads.rate_per_hour > 600:
-            errors.append(f"downloads.rate_per_hour > 600 risks YouTube bot detection")
+            errors.append("downloads.rate_per_hour > 600 risks YouTube bot detection")
         if cfg.downloads.rate_mode not in ("fixed", "adaptive"):
             errors.append(
                 f"downloads.rate_mode must be 'fixed' or 'adaptive', "
@@ -723,7 +723,7 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
             errors.append(f"downloads.concurrency must be 1-8, got {cfg.downloads.concurrency}")
 
         if cfg.downloads.audio_quality < 0 or cfg.downloads.audio_quality > 9:
-            errors.append(f"downloads.audio_quality must be 0-9 (LAME -V scale)")
+            errors.append("downloads.audio_quality must be 0-9 (LAME -V scale)")
 
         # v1.13.53: bypass option validation. geo_bypass_country is
         # optional; if provided, must be a 2-letter ISO country code.
@@ -760,7 +760,7 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
                 )
 
         if cfg.matching.plus_mode not in ("separator", "literal"):
-            errors.append(f"matching.plus_mode must be 'separator' or 'literal'")
+            errors.append("matching.plus_mode must be 'separator' or 'literal'")
 
         parts = cfg.sync.cron.split()
         if len(parts) != 5:
@@ -773,7 +773,7 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
             )
 
         if cfg.runtime.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
-            errors.append(f"runtime.log_level must be DEBUG, INFO, WARNING, or ERROR")
+            errors.append("runtime.log_level must be DEBUG, INFO, WARNING, or ERROR")
 
         # v1.23.16: scheduled-backup validation.
         if len(cfg.database_backup.cron.split()) != 5:

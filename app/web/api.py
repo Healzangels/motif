@@ -255,7 +255,7 @@ def _apply_partial_config(cfg, body: dict) -> None:
                 if v is None:
                     setattr(section, k, "")
                     continue
-            # v0.51.343: a USERINFO_URL_KEYS value (sync URLs v1.21.17/v1.23.69, plex.url v0.51.341) still masked takes its stored secrets back; host/path edits kept.
+            # v0.51.343: a still-masked USERINFO_URL_KEYS value takes its stored secrets back; host/path edits kept
             from ..core.config_file import USERINFO_URL_KEYS, unmask_url_credentials
             if f"{section_name}.{k}" in USERINFO_URL_KEYS and isinstance(v, str):  # v0.51.344: unmask decides what a mask is — this gate missed .342's "#secret=x?token=***" and wrote it
                 stored_url = getattr(section, k)
@@ -5660,7 +5660,7 @@ def _bulk_lps_run(
             db_path, OP_ID,
             stage="unplace",
             stage_label=(
-                f"Unplacing themes (targets with verified-alive recovery URL)"
+                "Unplacing themes (targets with verified-alive recovery URL)"
             ),
             stage_total=n_targets,
             processed_est=n_targets,
@@ -17895,14 +17895,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         else:
                             # v1.22.69: chunked multi-MB hash froze the loop — offload.
                             def _sha1_file(p=canonical):
-                                import hashlib
-                                h = hashlib.sha1()
-                                with p.open("rb") as fh:
-                                    for chunk in iter(
-                                        lambda: fh.read(65536), b"",
-                                    ):
-                                        h.update(chunk)
-                                return h.hexdigest()
+                                from ..core.canonical import hash_file
+                                return hash_file(p, "sha1")[0]  # v0.51.344: the shared streaming hash
                             try:
                                 motif_hash = await run_in_threadpool(_sha1_file)
                             except OSError as e:
@@ -27927,8 +27921,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "be written: %s", actor, e)
 
     def _canon_restore_run(db_path: Path, themes_dir: Path, plex_cfg, plus_mode, actor: str) -> None:
-        """v0.51.342: the RESTORE FROM PLEX thread — progress into the page state, the
-        summary into the state + marker, then the audit row and the event."""
+        """v0.51.342: the RESTORE FROM PLEX thread — progress, then summary into state + marker, audit row, event."""
         from ..core.canonical_health import restore_from_plex
         t0 = time.monotonic()
         with _CANON_RESTORE_LOCK:
@@ -28091,8 +28084,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/admin/canonical-health/restore-from-plex/status")
     async def api_admin_canonical_health_restore_from_plex_status(request: Request):
-        """v0.51.342: the running job's progress, or the last run's summary — from memory,
-        else from the marker a previous process left (a 'running' marker there was cut off)."""
+        """v0.51.342: job progress, else the last summary — memory, then an old marker (a running one was cut off)."""
         _require_admin(request)
         st = _canon_restore_view()
         if st.get("status") != "idle":

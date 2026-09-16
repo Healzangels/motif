@@ -81,7 +81,7 @@ def _with_config(root: Path, yaml_text: str) -> Path:
 
 
 def _node(script: str, payload: dict):
-    r = subprocess.run([_NODE, "-e", script], input=json.dumps(payload), capture_output=True, text=True, timeout=60, cwd=REPO)
+    r = subprocess.run([_NODE, "-e", script], input=json.dumps(payload), capture_output=True, text=True, timeout=60, cwd=REPO, check=False)
     assert r.returncode == 0, r.stderr[-1500:]
     return json.loads(r.stdout)
 
@@ -239,7 +239,7 @@ const { gw, btn, cases } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 
 @needs_node
 def test_the_settings_page_shows_the_refusals_words_not_its_json(api, monkeypatch):
-    client, cd = api
+    client, _cd = api
     monkeypatch.setattr(bundle, "_MEMBER_CAP", {**bundle._MEMBER_CAP, bundle.MEMBER_DB: 16})
     r = client.post("/api/admin/database-backup?kind=bundle", headers=_H)
     assert r.status_code == 422, r.text
@@ -273,7 +273,9 @@ def _left_out_bundle(root: Path, monkeypatch, member: str) -> Path:
 @pytest.mark.parametrize("member", [bundle.MEMBER_CONFIG, bundle.MEMBER_COOKIES])
 def test_the_preview_names_a_member_left_out_at_create_with_its_size_and_cap(tmp_path, monkeypatch, member):
     b = _left_out_bundle(tmp_path / "mk", monkeypatch, member)
-    assert bundle.read_manifest(b)["left_out"] == {member: {"size": 64, "cap": 63}}, "the premise: create noted it"
+    c = bundle.inspect_bundle(b)
+    assert c.ok, c.error
+    assert c.manifest["left_out"] == {member: {"size": 64, "cap": 63}}, "the premise: create noted it"
     db, cd = _live(tmp_path)
     p = bundle.preview(b, cd / "motif.yaml")
     words = f"{member} was left out when the bundle was made (64 bytes, over its 63-byte cap)"
@@ -307,7 +309,7 @@ def test_a_foreign_manifests_left_out_note_is_guarded_never_trusted(tmp_path, le
     b = _bundle(tmp_path / "mk", cookies=False)
     _rewrite_manifest(b, left_out)
     assert bundle.inspect_bundle(b).ok
-    db, cd = _live(tmp_path)
+    _db, cd = _live(tmp_path)
     p = bundle.preview(b, cd / "motif.yaml")
     assert p["left_out"] == {} and p["cookies"] == "not in bundle" and p["config_in_bundle"] is True, p
 

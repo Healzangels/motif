@@ -57,8 +57,9 @@ def test_the_scheduled_bundle_holds_the_loaded_config_file_and_this_builds_versi
     run()
     [made] = db_backup.list_backups(cd)
     assert _config_member(cd / "backups" / made.name) == MOUNTED.encode(), "settings.config_file.path, never config_dir/motif.yaml"
-    m = bundle.read_manifest(cd / "backups" / made.name)
-    assert (m["motif_version"], m["schema_version"]) == (__version__, CURRENT_SCHEMA_VERSION)
+    c = bundle.inspect_bundle(cd / "backups" / made.name)
+    assert c.ok, c.error
+    assert (c.manifest["motif_version"], c.manifest["schema_version"]) == (__version__, CURRENT_SCHEMA_VERSION)
 
 
 def test_create_bundle_now_holds_the_loaded_config_file_and_this_builds_versions(api, tmp_path, monkeypatch):
@@ -68,8 +69,9 @@ def test_create_bundle_now_holds_the_loaded_config_file_and_this_builds_versions
     assert r.status_code == 200, r.text
     name = r.json()["backup"]["name"]
     assert _config_member(cd / "backups" / name) == MOUNTED.encode(), "settings.config_file.path, never config_dir/motif.yaml"
-    m = bundle.read_manifest(cd / "backups" / name)
-    assert (m["motif_version"], m["schema_version"]) == (__version__, CURRENT_SCHEMA_VERSION)
+    c = bundle.inspect_bundle(cd / "backups" / name)
+    assert c.ok, c.error
+    assert (c.manifest["motif_version"], c.manifest["schema_version"]) == (__version__, CURRENT_SCHEMA_VERSION)
 
 
 # ── PB-052: refused before the VACUUM, and the nightly's snapshot ────

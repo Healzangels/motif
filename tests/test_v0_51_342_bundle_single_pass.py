@@ -562,7 +562,7 @@ def test_a_config_staging_that_fails_leaves_no_tmp_behind(tmp_path, monkeypatch)
 
     def refuse(*a, **k):
         raise OSError(errno.EXDEV, "Invalid cross-device link")
-    monkeypatch.setattr(bundle._os, "replace", refuse)
+    monkeypatch.setattr(bundle.os, "replace", refuse)
     with pytest.raises(OSError):
         bundle._stage_file(b"plex:\n  token: BUNDLE-TOKEN\n", pending)
     monkeypatch.undo()

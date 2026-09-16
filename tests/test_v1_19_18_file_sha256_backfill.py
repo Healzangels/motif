@@ -66,18 +66,31 @@ def test_walker_queries_null_sha_rows():
     assert "file_sha256 IS NULL OR file_sha256 = ''" in body
 
 
-def test_walker_uses_streaming_hash():
-    """Streaming hash (1MB chunks) keeps RAM bounded for large
+def test_walker_uses_streaming_hash(tmp_path, monkeypatch):
+    """Streaming hash keeps RAM bounded for large
     libraries — never load whole files at once."""
-    src = RECOVERY_PY.read_text()
-    fn_start = src.index("def maybe_backfill_file_sha256(")
-    next_def = src.find("\ndef ", fn_start + 1)
-    body = src[fn_start:next_def if next_def > 0 else len(src)]
-    assert "hashlib" in body
-    assert "1024 * 1024" in body, (
-        "v1.19.18: streaming hash with 1MB chunks per the "
-        "v1.19.13 walker pattern"
+    # v0.51.344: the walker hashes through canonical.hash_file, whose bounded reads test_v0_51_344_shared_hash_file proves
+    from app.core import canonical
+    db_path, themes_dir = _seed(tmp_path)
+    payload = b"streamed-theme-bytes"
+    _seed_row(db_path, themes_dir, tmdb_id=4000, file_bytes=payload, file_sha256=None)
+    hashed = []
+    real = canonical.hash_file
+
+    def counted(path, algo="sha256"):
+        hashed.append(Path(path))
+        return real(path, algo)
+
+    monkeypatch.setattr(canonical, "hash_file", counted)
+    from app.core.recovery_v55 import maybe_backfill_file_sha256
+    stats = maybe_backfill_file_sha256(db_path, themes_dir)
+    assert stats["backfilled"] == 1
+    assert hashed == [themes_dir / "movies/Movie 4000 (2020)/theme.mp3"], (
+        "v1.19.18: streaming hash per the v1.19.13 walker pattern"
     )
+    with sqlite3.connect(db_path) as conn:
+        sha = conn.execute("SELECT file_sha256 FROM local_files WHERE tmdb_id=4000").fetchone()[0]
+    assert sha == hashlib.sha256(payload).hexdigest()
 
 
 def test_walker_update_scopes_to_null_to_avoid_race():

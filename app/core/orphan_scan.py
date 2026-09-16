@@ -40,10 +40,11 @@ existing UI actions).
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from pathlib import Path
 from typing import Any
+
+from .canonical import hash_file
 
 log = logging.getLogger(__name__)
 
@@ -72,11 +73,7 @@ def _hash_file(path: Path) -> str | None:
     if not path.is_file():
         return None
     try:
-        h = hashlib.sha1()
-        with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        return hash_file(path, "sha1")[0]  # v0.51.344: the shared streaming hash
     except OSError as e:
         log.debug("_hash_file: %s unreadable: %s", path, e)
         return None

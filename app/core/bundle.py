@@ -22,6 +22,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import shutil
 import sqlite3
 import tarfile
@@ -29,10 +30,13 @@ import tempfile
 import threading
 import time
 import zlib
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
 from . import db_backup
+from .canonical import hash_file
+from .config_file import SECRET_MASK, is_secret_config_key, mask_config_value
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +65,6 @@ def uploaded_bundle_name(now_stamp: str, n: int = 1) -> str:
 
 def file_upload(tmp: Path, bdir: Path, now_stamp: str) -> Path:
     """v0.51.344: rename a checked upload into bdir under a name no other upload holds — each candidate gated, claimed O_EXCL, then renamed onto."""
-    import os
     for n in range(1, 100):
         name = uploaded_bundle_name(now_stamp, n)
         if not db_backup.is_backup_name(name):  # v0.51.344: create_bundle's gate — a name outside the table was os.replace'd in, invisible to the API
@@ -84,11 +87,7 @@ def file_upload(tmp: Path, bdir: Path, now_stamp: str) -> Path:
 
 
 def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return hash_file(path)[0]  # v0.51.344: the shared streaming hash — this name stays the seam the single-pass tests patch
 
 
 def table_counts(db_path: Path) -> dict[str, int]:
@@ -281,20 +280,6 @@ def create_bundle_for(settings, now_stamp: str) -> db_backup.BackupFile:
                          motif_version=__version__, schema_version=CURRENT_SCHEMA_VERSION)
 
 
-def read_manifest(path: Path) -> dict:
-    """The manifest of a bundle on disk, by member name only (no archived
-    paths are honoured)."""
-    with tarfile.open(path, "r:gz") as tar:
-        try:
-            member = tar.getmember(MEMBER_MANIFEST)
-        except KeyError:
-            raise ValueError("not a motif bundle: no manifest.json")
-        f = tar.extractfile(member)
-        if f is None:
-            raise ValueError("not a motif bundle: manifest.json is not a file")
-        return json.loads(f.read().decode("utf-8"))
-
-
 # ── restore from a bundle (v0.51.336, tag 2) ──────────────────────────
 # The DB member stages through db_backup.stage_restore exactly as a bare
 # snapshot does; motif.yaml and cookies.txt stage next to it as
@@ -305,18 +290,13 @@ def read_manifest(path: Path) -> dict:
 # anything is staged, and the operator may keep the live config.
 # v0.51.339: boot applies the DB first; apply_pending_config then apply_pending_cookies (settings.cookies_file) follow only a DB that applied.
 
-import os as _os
-from dataclasses import dataclass as _dataclass, field as _field, replace as _replace
-
-from .config_file import SECRET_MASK, is_secret_config_key, mask_config_value
-
 CONFIG_PENDING = "motif.yaml" + db_backup.RESTORE_PENDING_SUFFIX
 COOKIES_PENDING = "cookies.txt" + db_backup.RESTORE_PENDING_SUFFIX
 # v0.51.339: the preview masks through GET /api/config's rule (config_file.mask_config_value), never a second regex.
 MASK = SECRET_MASK
 
 
-@_dataclass
+@dataclass
 class BundleCheck:
     ok: bool
     error: str | None = None
@@ -324,13 +304,13 @@ class BundleCheck:
     db: "db_backup.RestoreCheck | None" = None
     has_config: bool = False
     has_cookies: bool = False
-    staged: list[str] = _field(default_factory=list)
+    staged: list[str] = field(default_factory=list)
     # v0.51.342: what the one pass verified, handed on instead of re-read — repr=False: the config carries the Plex token
-    config_bytes: bytes | None = _field(default=None, repr=False)
-    cookies_bytes: bytes | None = _field(default=None, repr=False)
-    db_source: db_backup.VerifiedSource | None = _field(default=None, repr=False)
-    oversize: dict[str, int] = _field(default_factory=dict)  # v0.51.342: config/cookies over their cap — hashed, never held
-    left_as_is: dict[str, str] = _field(default_factory=dict)  # v0.51.342: a member this staging leaves live, and why
+    config_bytes: bytes | None = field(default=None, repr=False)
+    cookies_bytes: bytes | None = field(default=None, repr=False)
+    db_source: db_backup.VerifiedSource | None = field(default=None, repr=False)
+    oversize: dict[str, int] = field(default_factory=dict)  # v0.51.342: config/cookies over their cap — hashed, never held
+    left_as_is: dict[str, str] = field(default_factory=dict)  # v0.51.342: a member this staging leaves live, and why
 
 
 def _parse_error_summary(e: Exception) -> str:
@@ -615,7 +595,7 @@ def _write_refused(e: OSError, name: str, beside: str) -> ExtractionWriteError:
 def _extract_database(src, dest: Path) -> None:
     try:
         # v0.51.342: born owner-only — the database holds the admin bcrypt hash and the session / API-token hashes, and took the umask's 0644 / 0664
-        fd = _os.open(dest, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except OSError as e:
         raise _DiskRefused(e) from e
     try:
@@ -623,7 +603,7 @@ def _extract_database(src, dest: Path) -> None:
             view = memoryview(chunk)
             while view:
                 try:
-                    n = _os.write(fd, view)
+                    n = os.write(fd, view)
                     if n == 0:  # v0.51.344: a 0-byte write never advanced the view — the loop spun forever under STAGING_LOCK
                         raise OSError(errno.EIO, "the write made no progress")
                     view = view[n:]
@@ -631,12 +611,12 @@ def _extract_database(src, dest: Path) -> None:
                     raise _DiskRefused(e) from e
     except BaseException:
         try:
-            _os.close(fd)
+            os.close(fd)
         except OSError as e:  # v0.51.344: raised, a close fault replaced the read fault in flight — a corrupt bundle read as a disk fault
             log.warning("bundle check: could not close the extraction %s (%s) — the fault already in flight is the one reported", dest.name, e)
         raise
     try:
-        _os.close(fd)
+        os.close(fd)
     except OSError as e:
         raise _DiskRefused(e) from e
 
@@ -765,7 +745,7 @@ def inspect_bundle(path: Path) -> BundleCheck:
         log.error("bundle check: could not make the extraction directory beside %s (%s) — %s was not judged", path, e, path.name)
         raise _write_refused(e, path.name, "the bundle") from e
     try:
-        return _replace(_inspect_into(path, tmp), db_source=None)  # v0.51.342: the extraction dies with tmp — never hand out a token to a deleted file
+        return replace(_inspect_into(path, tmp), db_source=None)  # v0.51.342: the extraction dies with tmp — never hand out a token to a deleted file
     finally:
         _remove_tree(tmp)
 
@@ -875,11 +855,11 @@ def _stage_file(data: bytes, pending: Path) -> None:
         if not tmp.is_dir():  # v0.51.344: O_TRUNC kept a crashed staging's 0644 tmp at 0644 while the token went in; a directory keeps open's EISDIR (unlink says EPERM on macOS)
             tmp.unlink(missing_ok=True)
         # v0.51.342: the checksum-verified bytes, never re-read from disk; born 0600, so a chmod-refusing share never leaves the token group-readable
-        fd = _os.open(tmp, _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC, 0o600)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with open(fd, "wb") as f:
             f.write(data)
         _owner_only(tmp)
-        _os.replace(tmp, pending)
+        os.replace(tmp, pending)
     except BaseException:
         try:
             tmp.unlink()
@@ -1027,7 +1007,7 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
                  bundle_path.name, ", ".join(check.staged))
         for words in check.left_as_is.values():
             log.warning("bundle restore from %s: %s", bundle_path.name, words)
-        return _replace(check, db_source=None, config_bytes=None, cookies_bytes=None)  # v0.51.342: the token's file is gone and the caller never needs the bytes
+        return replace(check, db_source=None, config_bytes=None, cookies_bytes=None)  # v0.51.342: the token's file is gone and the caller never needs the bytes
 
 
 def stage_snapshot_restore(db_path: Path, config_dir: Path, source_path: Path) -> db_backup.RestoreCheck:
@@ -1122,7 +1102,7 @@ def _prerestore_copy(live: Path, pending: Path, now_stamp: str) -> Path | None:
 def _replace_or_write_in_place(src: Path, dest: Path) -> bool:
     """os.replace(src, dest), or — when dest is a mount point a rename cannot land on — src's bytes written into it. True when in place."""
     try:
-        _os.replace(src, dest)
+        os.replace(src, dest)
         return False
     except OSError as e:
         if e.errno not in _IN_PLACE_ERRNOS or not dest.is_file():
@@ -1131,7 +1111,7 @@ def _replace_or_write_in_place(src: Path, dest: Path) -> bool:
         log.warning("bundle restore: %s cannot be replaced by a rename (%s) — writing the restored bytes into it in place",
                     dest, e)
     data = src.read_bytes()
-    fd = _os.open(dest, _os.O_RDWR)  # never truncates on open: a refusal here leaves the live file whole
+    fd = os.open(dest, os.O_RDWR)  # never truncates on open: a refusal here leaves the live file whole
     try:
         with open(fd, "rb", closefd=False) as f:
             original = f.read()  # v0.51.342: what the truncate destroys — a partial file was left, and the next boot's undo copy was of it
@@ -1149,21 +1129,21 @@ def _replace_or_write_in_place(src: Path, dest: Path) -> bool:
             failed.restored = True
             raise failed from e
     finally:
-        _os.close(fd)
+        os.close(fd)
     return True
 
 
 def _rewrite_fd(fd: int, data: bytes) -> None:
-    _os.lseek(fd, 0, _os.SEEK_SET)
-    _os.ftruncate(fd, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.ftruncate(fd, 0)
     view = memoryview(data)
     while view:
-        n = _os.write(fd, view)
+        n = os.write(fd, view)
         if n == 0:  # v0.51.344: a 0-byte write never advanced the view — the loop spun forever at boot
             raise OSError(errno.EIO, "the write made no progress")
         view = view[n:]
     try:
-        _os.fsync(fd)
+        os.fsync(fd)
     except OSError as e:
         if e.errno not in _FSYNC_UNSUPPORTED:
             raise
@@ -1215,7 +1195,7 @@ def apply_pending_cookies(config_dir: Path, live: Path, *, now_stamp: str) -> di
     tmp: Path | None = None
     in_place = False
     try:
-        dest = Path(_os.path.realpath(live))  # v0.51.339: a symlinked cookies file is restored through its link, never replaced by a plain file
+        dest = Path(os.path.realpath(live))  # v0.51.339: a symlinked cookies file is restored through its link, never replaced by a plain file
         tmp = dest.with_name(dest.name + ".restore-tmp")
         if dest.exists():
             keep = _prerestore_copy(dest, pending, now_stamp)  # v0.51.341: one undo copy per staged pending, however many boots retry

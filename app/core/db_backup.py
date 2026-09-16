@@ -19,7 +19,6 @@ dir by validated filename; the API layer serves downloads.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import re
@@ -27,6 +26,8 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+
+from .canonical import hash_file
 
 log = logging.getLogger(__name__)
 
@@ -335,11 +336,7 @@ class VerifiedSource:
 
 
 def _sha256_of(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while chunk := f.read(1 << 20):
-            h.update(chunk)
-    return h.hexdigest()
+    return hash_file(path)[0]  # v0.51.344: the shared streaming hash
 
 
 def stage_restore(db_path: Path, source_path: Path, *, before_swap=None,
@@ -449,7 +446,7 @@ def apply_pending_restore(db_path: Path, config_dir: Path, *,
                 bf = create_backup(db_path, config_dir,
                                    now_stamp=now_stamp, prerestore=True)
                 safety = bf.name
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — any safety-copy failure aborts the restore, never the boot
                 # v1.23.18 (code review): ABORT the restore rather than
                 # destroy the live db with no undo. Pre-fix this proceeded
                 # to os.replace, irreversibly clobbering the prior database
@@ -493,7 +490,7 @@ def apply_pending_restore(db_path: Path, config_dir: Path, *,
                     check.schema_version, safety or "(none)")
         return {"applied": True, "schema_version": check.schema_version,
                 "safety_backup": safety}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — boot-time restore: log and keep the current database
         log.error("apply_pending_restore failed (%s) — current database "
                   "left in place", e)
         return {"applied": False, "error": str(e)}

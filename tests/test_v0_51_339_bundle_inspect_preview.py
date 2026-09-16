@@ -113,8 +113,9 @@ def test_symlinked_config_and_cookies_archive_their_bytes_and_restore(tmp_path):
         assert all(m.isfile() and not m.issym() and not m.linkname for m in members.values())
         assert tar.extractfile("motif.yaml").read() == GOOD_YAML.encode()
         assert tar.extractfile("cookies.txt").read() == b"# linked cookies\n"
-    assert str(real).encode() not in b.read_bytes() and str(real) not in json.dumps(bundle.read_manifest(b))
-    assert bundle.inspect_bundle(b).ok
+    c = bundle.inspect_bundle(b)
+    assert c.ok, c.error
+    assert str(real).encode() not in b.read_bytes() and str(real) not in json.dumps(c.manifest)
     ldb, cd = _live(tmp_path)
     assert bundle.stage_bundle_restore(ldb, cd, b, keep_config=False).staged == ["database", "config", "cookies"]
     assert (cd / bundle.COOKIES_PENDING).read_text() == "# linked cookies\n"
