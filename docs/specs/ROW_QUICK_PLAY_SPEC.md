@@ -71,11 +71,15 @@ plays the same thing, decided from the fields the row already has
 
 "Plex serves" is `plex_has_theme && verified ok`, the test `computeSrcLetter`
 uses for `P`. The INFO card headline's backup sentence uses the same test (v0.51.339):
-a backup row whose Plex theme dropped (has_theme 0) or failed verify
-(verified_ok 0) reads "… on disk as backup · Plex no longer serves a theme
-(PROMOTE TO ACTIVE deploys it)", and its row ▶ plays motif's file. A 204 from the Plex proxy (Plex claims a theme it will not
-serve, or Plex unreachable) reverts the glyph and the results status line
-says what the card says: "Plex reports a theme but it did not play".
+a backup row whose item has no Plex theme (has_theme 0) or whose theme failed
+verify (verified_ok 0) reads "… on disk as backup · Plex serves no theme
+(PROMOTE TO ACTIVE deploys it)" (v0.51.344; has_theme 0 does not record that
+Plex ever served), and its row ▶ plays motif's file. Since v0.51.344 the INFO
+card's Plex player (bare card, deep link, loaded row) renders exactly when
+`computeQuickPlay` returns kind `plex`. A 204 from the Plex proxy (Plex claims
+a theme it will not serve, or Plex unreachable) reverts the glyph and the
+results status line says what the card says: "Plex reports a theme but it did
+not play".
 
 ## 5. Player mechanics
 

@@ -52,6 +52,32 @@ Size: the DB is 49 MB on the July snapshot; a bundle compresses to roughly
 name-gate regex family, the same `prune_backups` window, bundles counted
 alongside snapshots).
 
+(v0.51.344) Names and retention, as `db_backup._KINDS` reads them:
+
+| Name | Kind | Counts toward retention |
+|---|---|---|
+| `motif-YYYYMMDD-HHMMSS.db` | snapshot | yes |
+| `motif-bundle-YYYYMMDD-HHMMSS.tar.gz` | bundle | yes |
+| `motif-bundle-partial-YYYYMMDD-HHMMSS.tar.gz` | bundle, partial | yes |
+| `motif-bundle-upload-YYYYMMDD-HHMMSS[-N].tar.gz` (N 2–99) | bundle | no — kept until deleted |
+| `motif-prerestore-YYYYMMDD-HHMMSS.db` | pre-restore | no — kept until deleted |
+
+A bundle that left `motif.yaml` or `cookies.txt` out over its cap is written
+under the partial shape: the manifest is the archive's LAST member, so only the
+name can say so without inflating the archive. `create_bundle` refuses a stamp
+that already has a bundle of either shape. The list rows carry `partial`.
+
+`prune_backups(config_dir, retention, now_stamp=, keep=)` runs after each
+scheduled backup. It keeps the newest `retention` names that count and deletes
+the older ones, with three exceptions: it never deletes `keep` (the file the
+job just wrote); a name stamped later than `now_stamp` (read after the create)
+is neither counted nor deleted, with a WARNING naming it; and while every
+bundle inside the window is partial, the newest complete bundle below the
+window is kept as well (logged). With no bundle inside the window (bundle mode
+off, or nightly fallback snapshots) that keep does not apply. A name whose
+stamp has non-ASCII digits matches no shape, so it is never listed, counted
+or pruned.
+
 Not in the bundle: the theme files. 13 GB of already-compressed MP3 is a job
 for the appdata / share backup tools the box already runs (or `rsync`); an
 in-app archive would fill `/config` and cannot be downloaded through a
@@ -110,12 +136,21 @@ BACKUPS` lists snapshots and bundles together, newest first, each row
 leading with a kind chip — `BUNDLE` (green), `SNAPSHOT` (dim), `PRE-RESTORE`
 (amber) — then the name, `size · date`, and the same `// DOWNLOAD` /
 `// RESTORE` / `// DELETE` trio (`bindDatabaseBackup` renders both kinds from
-one list endpoint; the name gate admits `motif-bundle-<stamp>.tar.gz`).
+one list endpoint; the name gate admits `motif-bundle-<stamp>.tar.gz`). An
+uploaded or a partial bundle keeps the `BUNDLE` chip; its tooltip says it sits
+outside retention, or that `motif.yaml` or `cookies.txt` was left out over its
+size cap when it was made (v0.51.344).
 
 **SCHEDULED BACKUPS.** One more checkbox under ENABLE: `WRITE A BUNDLE` —
 "each scheduled run writes a bundle (the snapshot is inside it) instead of a
 bare snapshot; retention counts both kinds." Off by default so an existing
-schedule keeps its behaviour until the operator opts in.
+schedule keeps its behaviour until the operator opts in. (v0.51.344) Both
+hints say uploaded bundles sit outside retention; the retention hint adds that
+pre-restore copies never count, that the newest complete bundle is kept while
+every kept bundle left a member out, and that a backup stamped later than now
+is neither counted nor deleted. The scheduler and `// CREATE BUNDLE NOW` both
+call `bundle.create_bundle_for(settings, now_stamp)`, the one spelling of a
+live install's `create_bundle` arguments.
 
 **RESTORE.** `// RESTORE FROM FILE` accepts `.db` and `.tar.gz`. Choosing a
 bundle (from the list or an upload) runs the checks and, before anything is
@@ -132,6 +167,16 @@ staged, shows a **restore preview** card:
 - (v0.51.339) when either `motif.yaml` does not parse there is no diff: the card
   names the side (`config_parse_error`), and a bundle config that does not
   parse forces KEEP MY CURRENT CONFIG — staging it without that is a 422.
+  (v0.51.344) A value YAML cannot build is named by its dotted key — `<key>
+  holds an integer too long to read` / `a date that does not exist` — never by
+  its value; a diff value past Python's int-to-text limit shows as `(a N-bit
+  integer, too long to show)`.
+- (v0.51.344) a manifest `created_at` that is not an ISO stamp comes back null
+  and the line reads `date unknown` (an upload's name never reads it); the
+  cookies line names `cookies_target` whenever it is known, so a cookies file
+  the restore leaves as it is is named too; the STAGE confirm names only the
+  members the restore replaces, with one "stays as it is" clause for each it
+  leaves live.
 
 `// STAGE RESTORE` then stages the DB (as today) plus the config and cookies;
 the pending banner reads "A restore is staged (database + config)". At boot
@@ -149,6 +194,28 @@ file is written in place: the cookies file keeps the mode the host gave it,
 `motif.yaml` ends 0600, and a write that fails part-way puts the original
 bytes back.
 
+(v0.51.344) When that unstaging cannot remove the staged database, it stops
+there: the staged config and cookies stay with the database they were staged
+with, and the refusal names every pending file to remove by hand before
+staging again. A staged file's `.tmp` left by a crashed staging is unlinked
+before the new bytes go in, so they are born 0600. An in-place write that
+completes but whose `fsync` the mount refuses (EINVAL / ENOTSUP / EOPNOTSUPP)
+is logged as written, not synced, instead of failing; a write that makes no
+progress raises EIO instead of looping.
+
+(v0.51.344) The restore answer and its event carry what the staging left
+live. A confirm that does not keep the config fills `left_as_is` for each
+member over its cap in this bundle, or noted in the manifest as left out when
+the bundle was made: `<member> is N bytes, over its C-byte cap` or `<member>
+was left out when the bundle was made (N bytes, over its C-byte cap)`, then `—
+it is not restored, and your motif.yaml | cookies file is left as it is`. The
+response's `left_as_is` is a list of `{member, why}` (a `cookies.txt` key
+would be redacted by the events scrubber), its `message` — the restore card's
+line — ends with each `why` as a sentence, and the WARNING event reads
+`…; applies on restart.` plus the same sentences (a restore that leaves
+nothing live keeps its message byte-identical), with `left_as_is` in its
+detail.
+
 (v0.51.342) Create and restore read one member-cap table: database 4 GiB,
 manifest 64 MiB, `motif.yaml` 1 MiB, `cookies.txt` 16 MiB. An over-cap
 database or manifest writes no bundle (take a plain snapshot). An over-cap
@@ -160,6 +227,20 @@ loader coerces lossless spellings — an unquoted number in a text setting, a
 quoted number in a number setting — and the preview and staging judge the
 same coerced values, so a config motif runs on is never refused for its
 spelling.
+
+(v0.51.344) Before its VACUUM, `create_bundle` estimates the database from its
+live pages — `(page_count − freelist_count) × page_size` — and refuses it when
+that is more than 5% over the database cap, so an over-cap database no longer
+pays the whole VACUUM first; the snapshot is still measured against the cap
+after it. Free pages never count, but pages left part-full by deletes do, so a
+database whose snapshot would sit just under the cap can be refused. Every
+over-cap refusal (database estimate, database snapshot, manifest) raises
+`BundleOverCap`, a `ValueError`: `// CREATE BUNDLE NOW` answers it as a 422 in
+words, and a scheduled run takes a plain snapshot instead with a WARNING event
+("Scheduled backup bundle not written (…) — a plain database snapshot was
+taken instead"). That snapshot counts toward retention like any other. An
+over-cap `motif.yaml` or `cookies.txt` left out at create gives the bundle the
+partial name (§ 2).
 
 **THEMES CHECK (tag 3, optional).** A block below RESTORE: `// CHECK THEMES`
 walks the newest bundle's census (or an uploaded one) against `themes_dir`
@@ -208,6 +289,30 @@ Mirrors the four snapshot endpoints under one list:
   second call with `{"confirm": true, "keep_config": false}` stages;
 - tag 3: `POST /api/admin/themes-check` (+ the two re-fetch actions).
 
+(v0.51.344) What the endpoints now carry:
+
+- The create response and the list rows carry `partial` (the list rows also
+  `retained`, v0.51.343). A confirmed bundle restore answers `members` and
+  `left_as_is` (§ 5).
+- An uploaded bundle is checked in a temp file, then filed by
+  `bundle.file_upload` under `motif-bundle-upload-<upload's UTC time>.tar.gz`,
+  or `-2` … `-99` when that second's earlier names are taken. Each candidate
+  passes the name gate, is claimed with `O_EXCL`, and only then is the checked
+  upload renamed onto it. Two uploads in one second get two names — the 409
+  "delete it first" is gone, and an upload already previewed is never
+  replaced — and identical bytes uploaded twice are two files. With all 99
+  names of a second taken the answer is a 503 ending "try the upload again".
+- A disk fault before a bundle is judged is a 507 (ENOSPC / EDQUOT) or a 500 in
+  words, never a wordless 500: the extraction directory for a check or a
+  staging — `could not write the extraction beside the bundle | motif.db
+  (<strerror>) — <name> was not judged; free space or fix permissions there,
+  then try again` — and saving an upload — `could not save the upload in the
+  backups directory | the config directory (<strerror>) — nothing was kept;
+  free space or fix permissions there, then try again`. A refusal read from
+  the archive names the error type and `strerror`, and a snapshot that cannot
+  be opened reads `unreadable: <strerror>`: the absolute path goes to the log
+  only.
+
 ## 8. Tests
 
 - `bundle.py` (pure, clock-injected like `db_backup`): builds a bundle into
@@ -247,6 +352,25 @@ Mirrors the four snapshot endpoints under one list:
   one 2 MiB raw allowance shared by the last tar fetch and the trailer read,
   and 4 MiB inflated. Empty gzip members parse in a loop inside one
   `read()`, so only a raw-byte budget on the file stops a flood of them.
+  (v0.51.344) tarfile reads an extension header's whole payload before it
+  hands back the member the gate judges, so extension headers are judged
+  first, in `_BoundedTarInfo._proc_member`, before their payloads are read:
+  L / K / x / X headers share one 64 KiB budget per archive (each charged its
+  header block plus its payload rounded to a block — `over 65536 bytes of
+  extension headers`), and a global pax header (`g`), a GNU sparse header
+  (`S`) or a pax sparse 1.0 member is refused on sight (`…, which motif never
+  writes`). motif writes none of those kinds, and its own pax headers are far
+  under the budget. On .343 a 510 KiB upload whose `L` header declared 512 MiB
+  held 1.3 GiB before any gate. The raw guard is in force over the whole read,
+  not only past the archive's end (its allowance is still refreshed by each
+  tarfile fetch), so a trip inside the archive no longer names an end it never
+  reached: the refusal reads `over 2097152 bytes of its gzip stream were read
+  for too little data — padding or empty gzip members`. The inflate budget,
+  which runs only in the drain after the tar loop, keeps its "after the
+  archive's end" words; that refusal logs a WARNING like every other read-time
+  refusal; a failed close of the extracted database is logged and never
+  replaces the read fault already in flight, so a corrupt bundle is never
+  reported as a disk fault.
 - **Bind mounts.** Docker refuses a rename over a single-file bind mount
   (EBUSY/EXDEV/EPERM), so the boot writes those files in place after a
   `.prerestore-<stamp>` copy. The cookies file keeps the mode the host gave
