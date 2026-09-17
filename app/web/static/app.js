@@ -413,6 +413,8 @@
       ['motif_exiting', 'motif was shutting down — not written'],
       // v0.51.344: Plex answered but reading the answer raised — a failed fetch, not "no Plex copy".
       ['plex_error:', 'Plex fetch failed'],
+      // v0.51.344: an edition swap re-keyed the row mid-run — its stamp went nowhere, so it is not a restore.
+      ['row_moved', 'its canonical moved mid-run — not restored'],
     ];
     const text = String(reason || '');
     const hit = SKIP_WORDS.find(([prefix]) => text.startsWith(prefix));
@@ -7304,12 +7306,14 @@
           const kind = (b.kind === 'bundle' || b.kind === 'prerestore') ? b.kind : 'snapshot';
           // v0.51.343: a member absent or over its cap is left out of a bundle; an upload is dated by its upload and sits outside retention
           const holds = 'the database snapshot + a themes census, plus motif.yaml and cookies.txt unless one was absent or over its size cap — // RESTORE previews what it holds';
+          // v0.51.344: R1-F21 — a retained row stamped after now sits at the top of the list; retention neither counts nor deletes it, and only the container log said so
+          const future = b.future ? 'stamped after now — retention neither counts nor deletes it; delete it here if it is not wanted. ' : '';
           const chipTip = kind === 'bundle'
-            ? (b.retained === false ? 'uploaded bundle, dated by its upload — kept outside retention until you delete it: ' + holds
+            ? future + (b.retained === false ? 'uploaded bundle, dated by its upload — kept outside retention until you delete it: ' + holds
               : b.partial ? 'partial bundle (motif-bundle-partial-…): the database snapshot + a themes census, but motif.yaml or cookies.txt was left out over its size cap when it was made — // RESTORE previews which'  // v0.51.344: its own name shape, so retention can keep a complete bundle beside it
               : 'bundle: ' + holds)
             : kind === 'prerestore' ? 'pre-restore safety copy — kept outside retention'
-            : 'database snapshot';
+            : future + 'database snapshot';
           const chip = `<span class="tier-badge tier-badge-${kind}" title="${chipTip}">`
             + (kind === 'prerestore' ? 'PRE-RESTORE' : kind.toUpperCase()) + '</span>';
           const restoreBtn = `<button type="button" class="btn btn-tiny btn-warn" `
@@ -7364,6 +7368,7 @@
         ? `✓ database: real SQLite, integrity ok, schema v${pv.db.schema_version}`
         : '✗ database: failed validation');
       const diff = pv.config_diff || [];
+      const envRows = diff.filter((d) => d.env_override);  // v0.51.344: R3-F9 — rows the restore writes but env keeps overriding at boot
       // v0.51.339: a bundle motif.yaml that does not parse would crash the boot that swaps it in — no diff, and the config stays.
       const perr = pv.config_parse_error || {};
       const leftOut = pv.left_out || {};  // v0.51.342: a member left out at create, or over its cap here — named with its size and cap
@@ -7371,19 +7376,24 @@
         ? `config: not in bundle — ${leftOut['motif.yaml'] ? leftOut['motif.yaml'] + '; ' : ''}motif.yaml stays as it is`
         : perr.bundle ? `✗ config: the bundle's motif.yaml could not be parsed (${perr.bundle}) — only the database can be restored; your motif.yaml and cookies.txt stay`
         : perr.live ? `config: your live motif.yaml could not be parsed (${perr.live}) — no diff to show`
-        : diff.length ? `config: ${diff.length} key${diff.length === 1 ? '' : 's'} differ from the live motif.yaml`
+        : diff.length ? `config: ${diff.length} key${diff.length === 1 ? '' : 's'} differ from the live motif.yaml${envRows.length ? ` (${envRows.length} under an env override — the file changes, the running value does not)` : ''}`  // v0.51.344: R3-F9
           : 'config: identical to the live motif.yaml');
       const diffEl = document.getElementById('restore-preview-diff');
       if (diffEl) {
         diffEl.innerHTML = diff.map((d) => '<div class="restore-diff-row">'
-          + `<div class="restore-diff-key">${htmlEscape(d.key)}${d.secret && d.live === d.bundle ? ' <span class="muted">(secret — differs, masked)</span>' : ''}</div>`
+          + `<div class="restore-diff-key">${htmlEscape(d.key)}${d.secret && d.live === d.bundle ? ' <span class="muted">(secret — differs, masked)</span>' : ''}`
+          // v0.51.344: R3-F9 — the settings page's badge for the same keys: env wins at boot, so the file changes and the running value does not
+          + `${d.env_override ? ` <span class="form-env-badge" title="${htmlEscape(d.env_override)} is set — the file changes, the running value does not">// ENV OVERRIDE</span>` : ''}</div>`
           + `<div class="restore-diff-del">− ${htmlEscape(d.live)}</div>`
           + `<div class="restore-diff-add">+ ${htmlEscape(d.bundle)}</div>`
           + '</div>').join('');
         diffEl.hidden = !diff.length || !!perr.bundle || !!perr.live;
       }
       // v0.51.341: restored cookies land on settings.cookies_file (v0.51.339) — name that path, not the member
-      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' && !perr.bundle ? ` — will replace ${pv.cookies_target || 'yours'} unless you keep your config` : pv.cookies_target ? ` (the cookies file at ${pv.cookies_target})` : ''}`);  // v0.51.344: the file left as it is gets its path too
+      // v0.51.344: R1-F14 — the file that stays as it is is the LIVE one (cookies_live); the post-swap path is named only when it differs
+      const cookiesLive = pv.cookies_live || pv.cookies_target;
+      const swapNote = pv.cookies_target && cookiesLive && pv.cookies_target !== cookiesLive ? ` — motif will read ${pv.cookies_target} after the swap unless you keep your config` : '';
+      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' && !perr.bundle ? ` — will replace ${pv.cookies_target || 'yours'} unless you keep your config` : cookiesLive ? ` (your cookies file at ${cookiesLive})${swapNote}` : ''}`);  // v0.51.344: the file left as it is gets its path too
       const keep = document.getElementById('database-restore-keep-config');
       if (keep) { keep.checked = !!perr.bundle; keep.disabled = !!perr.bundle; }
       previewEl.dataset.cookiesStay = pv.cookies === 'in bundle' ? '' : '1';  // v0.51.342: the confirm names cookies.txt only when the restore writes it
@@ -7811,6 +7821,8 @@
     let repairing = false;
     // v0.51.342: the last answered poll's started_at (undefined: none answered) — a 502 START is judged against it.
     let lastSeenStartedAt;
+    // v0.51.344: the started_at of the run the page saw RUNNING (undefined: none) — a finished marker of another run is not its result.
+    let lastRunningStartedAt;
     let startUnconfirmed = null;
     // v0.51.342: failed polls in a row mid-run and since when — a stale progress line must not read as live.
     let lostPolls = 0;
@@ -7969,10 +7981,17 @@
 
     function restoreWords(st) {
       const skipped = st.skipped || [];
+      // v0.51.344: exit's record of a run left on Plex carries a skipped count but no rows — the count still shows
+      const nSkipped = skipped.length || st.skipped_count || 0;
       return `restored ${fmt(st.restored)} (${fmt(st.restored_sidecar)} from Plex folders, `
         + `${fmt(st.restored_store)} from Plex's store)`
-        + (skipped.length ? ` · ${fmt(skipped.length)} skipped (${skipWords(skipped)})` : '')
+        + (nSkipped ? ` · ${fmt(nSkipped)} skipped${skipped.length ? ` (${skipWords(skipped)})` : ''}` : '')
         + (st.not_attempted ? ` · ${fmt(st.not_attempted)} not tried` : '');
+    }
+
+    // v0.51.344: a cut-off run's marker carries its counts — the rows exit refused are named by their skip reason
+    function cutOffWords(st) {
+      return st.restored === undefined ? '' : ` · ${restoreWords(st)}`;
     }
 
     // v0.51.342: a run is this 502 START's only if it started after what the page saw (none seen: the click, a minute's skew).
@@ -8017,6 +8036,7 @@
       const prevStartedAt = lastSeenStartedAt;  // v0.51.344: the run an idle answer lost is the one the last poll saw
       lastSeenStartedAt = st.started_at || null;
       if (st.status === 'running') {
+        lastRunningStartedAt = st.started_at || null;
         cutOffStartedAt = null;
         setRestoreBusy(true);
         restoreWatching = true;
@@ -8048,7 +8068,14 @@
       const watched = restoreWatching && !neverRan;
       restoreWatching = watched;
       setRestoreBusy(false);
-      const lastRun = watched ? '' : `last run ${fmtRelativePast(st.finished_at) || st.finished_at}: `;
+      const ranStartedAt = lastRunningStartedAt;
+      lastRunningStartedAt = undefined;
+      // v0.51.344: the run the page saw going wrote no marker (its start write failed) and the restart serves an earlier run's.
+      const lostRun = watched && st.status !== 'idle' && ranStartedAt != null && (st.started_at || null) !== ranStartedAt;
+      const thisRun = watched && !lostRun;
+      const lastRun = thisRun ? '' : `last run ${fmtRelativePast(st.finished_at) || st.finished_at}: `;
+      const stoppedWords = '✗ the run stopped without a result — motif restarted before it could record one; '
+        + 'RUN CHECK, then RESTORE FROM PLEX restores what is left';
       let text = null;
       let cls = 'form-status';
       cutOffStartedAt = null;
@@ -8059,25 +8086,33 @@
         text = lastRun
           + `✗ restore failed — ${st.error || 'unknown error'} (${fmt(st.restored || 0)} restored before it stopped)`;
         cls = 'form-status form-status-fail';
-      } else if (st.status === 'interrupted' && (st.first_report || watched)) {
+      } else if (st.status === 'interrupted' && (st.first_report || thisRun)) {
         // v0.51.342: a staged database restore may be what restarted motif — so RUN CHECK first.
         restoreShown = true;
         missBlock.style.display = '';
         text = `✗ the run started ${fmtRelativePast(st.started_at) || st.started_at} was cut off `
-          + 'by a motif restart — RUN CHECK, then RESTORE FROM PLEX restores what is left';
+          + 'by a motif restart — RUN CHECK, then RESTORE FROM PLEX restores what is left' + cutOffWords(st);
         cls = 'form-status form-status-fail';
         cutOffStartedAt = st.started_at;
       } else if (st.status === 'interrupted') {
         // v0.51.342: reported once already — now a last run like any other, not an alarm on every visit.
-        text = `last run started ${fmtRelativePast(st.started_at) || st.started_at}: cut off by a motif restart`;
+        text = `last run started ${fmtRelativePast(st.started_at) || st.started_at}: cut off by a motif restart`
+          + cutOffWords(st);
       } else if (st.status === 'idle' && watched) {
         // v0.51.344: the watched run left no record — motif restarted before it could write one.
         restoreShown = true;
         missBlock.style.display = '';
-        text = '✗ the run stopped without a result — motif restarted before it could record one; '
-          + 'RUN CHECK, then RESTORE FROM PLEX restores what is left';
+        text = stoppedWords;
         cls = 'form-status form-status-fail';
         cutOffStartedAt = prevStartedAt;
+      }
+      if (lostRun) {
+        // v0.51.344: the idle answer's words and alarm; the marker rides along as the last run it is.
+        restoreShown = true;
+        missBlock.style.display = '';
+        text = stoppedWords + (text ? ` · ${text}` : '');
+        cls = 'form-status form-status-fail';
+        cutOffStartedAt = ranStartedAt;
       }
       if (neverRan) {
         text = '✗ the start never reached motif — nothing ran; press RESTORE FROM PLEX again' + (text ? ` · ${text}` : '');
@@ -8403,7 +8438,7 @@
         if (pollTimer) clearTimeout(pollTimer);
         poll();
       } catch (e) {
-        runStatus.textContent = '✗ ' + (e && e.message ? e.message : 'could not start');
+        runStatus.textContent = '✗ ' + failWords(e);  // v0.51.344: motif's worded START 500 (PB-024), not its JSON
         runStatus.className = 'form-status form-status-fail';
         runBtn.disabled = false;
       }
@@ -8581,7 +8616,7 @@
         await api('POST', '/api/admin/loudness-audit/start');
       } catch (e) {
         setBusy(false);
-        status.textContent = '✗ ' + (e && e.message ? e.message : 'failed to start');
+        status.textContent = '✗ ' + failWords(e);  // v0.51.344: motif's worded START 500 (PB-024), not its JSON
         status.className = 'form-status form-status-fail';
         return;
       }
@@ -14541,6 +14576,8 @@
 
   // v0.51.344: the bar's buttons in template order, captured before any pass moves one (PB-071).
   let _bulkBarOrder = null;
+  // v0.51.344: a layout asked for while // MORE was open — it runs at the close.
+  let _bulkBarLayoutDeferred = false;
 
   function _layoutBulkBar() {
     const bar = document.getElementById('library-bulk-bar');
@@ -14549,6 +14586,9 @@
     if (!overflowMenu) return;
     const panel = overflowMenu.querySelector('[data-bulk-overflow-panel]');
     if (!panel) return;
+    // v0.51.344: the reset empties an open // MORE mid-press (a lost click, focus to BODY, scrollTop to 0) — wait for its close.
+    if (overflowMenu.open) { _bulkBarLayoutDeferred = true; return; }
+    _bulkBarLayoutDeferred = false;
 
     // Reset: pull every panel child back into the bar (just before
     // the overflow menu so DOM order is preserved). This way a
@@ -14599,7 +14639,7 @@
     if (panel.children.length === 0) {
       overflowMenu.style.display = 'none';
     }
-    // v0.51.344: the primaries + // MORE still overflow one row (375px painted to 660px, PB-071) — wrap, never spill.
+    // v0.51.344: the primaries + // MORE still overflow one row (375px painted to about 660px, PB-071) — wrap, never spill.
     if (_barHasOverflow(bar)) bar.classList.add('is-wrapped');
   }
 
@@ -14627,6 +14667,9 @@
     if (_bulkBarObserver) _bulkBarObserver.observe(bar);
     // v0.51.344: subtree, so a button parked in the // MORE panel counts too.
     if (_bulkBarLabelObserver) _bulkBarLabelObserver.observe(bar, { childList: true, subtree: true });
+    const overflowMenu = document.getElementById('library-bulk-overflow-menu');
+    // v0.51.344: the layout a write deferred while // MORE was open runs at its close.
+    if (overflowMenu) overflowMenu.addEventListener('toggle', () => { if (!overflowMenu.open && _bulkBarLayoutDeferred) _layoutBulkBar(); });
   }
 
   // v1.22.95: collapsible filter drawer. The seven pill axes hide
@@ -18426,7 +18469,10 @@
         ${posterImgHtml}
         <div class="info-hero-meta">
           <h3 class="info-title">${title}${yr}${it.section_is_4k ? ' <span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}</h3>
-          <p class="info-hero-playback muted small">${it.plex_has_theme ? 'nothing on disk · Plex serves its own theme' : 'nothing on disk · no theme — Plex metadata only'}</p>
+          <p class="info-hero-playback muted small">${it.plex_has_theme && it.plex_theme_verified_ok === 0
+            // v0.51.344: verified_ok 0 is the player's "Plex serves nothing" (computeQuickPlay) — the line says the same, never "serves"
+            ? 'nothing on disk · Plex serves no theme (its last verify found none)'
+            : it.plex_has_theme ? 'nothing on disk · Plex serves its own theme' : 'nothing on disk · no theme — Plex metadata only'}</p>
         </div>
       </div>
       ${_qpBare && _qpBare.kind === 'plex'  // v0.51.341: digits-only rk, the proxy's own rule — an empty key built a keyless player URL
@@ -18646,15 +18692,21 @@
       if (_ambiguousCut) {
         return '(multiple cuts — pick one in the loudness section to see what plays)';
       }
-      if (!lf && data.plex_independent_theme === 1) {
+      // v0.51.344: the player's reading (has_theme 1 and verified_ok not 0) — the line never claims Plex serves when no player shows
+      const plexServes = _plexBackupState(data) === 'serves';
+      if (!lf && plexServes && data.plex_independent_theme === 1) {
         return 'nothing on disk · Plex serves its own theme';
       }
-      if (!lf && data.plex_has_theme === 1) {
+      if (!lf && plexServes) {
         // v0.51.37: the window right after UNMANAGE, before plex_enum's next
         // cycle sets plex_independent_theme. Nothing else on the card names
         // the way out, so the hint stays here.
         return 'nothing on disk · Plex is serving a theme motif no longer manages '
              + '(RE-DOWNLOAD TDB takes it over, PURGE clears it)';
+      }
+      // v0.51.344: a verify 404 under has_theme 1 — the backup surfaces' words, never "serves"
+      if (!lf && data.plex_has_theme === 1 && data.plex_theme_verified_ok === 0) {
+        return 'nothing on disk · Plex serves no theme (its last verify found none)';
       }
       if (!lf) return 'nothing on disk · no theme staged';
       // v0.51.329: an AnimeThemes pick (at- video id) names its source, not "user-URL"

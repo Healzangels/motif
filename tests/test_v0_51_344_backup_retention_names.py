@@ -266,7 +266,8 @@ def test_when_every_name_for_the_second_is_taken_nothing_is_kept_and_the_answer_
     for n in taken:
         (bdir / n).touch()
     r = _upload(client, _bundle(tmp_path / "mk").read_bytes())
-    assert r.status_code == 503 and "try the upload again" in r.json()["detail"], r.text
+    # v0.51.344: retargeted from 503 — R1-F10: the page reads any 502-504 as the reverse proxy timing out, so motif's own refusal is a 409
+    assert r.status_code == 409 and not 502 <= r.status_code <= 504 and "try the upload again" in r.json()["detail"], r.text
     assert {p.name for p in bdir.iterdir()} == taken, "no temp file and no claim left behind"
 
 

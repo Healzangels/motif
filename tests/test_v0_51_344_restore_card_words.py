@@ -51,13 +51,15 @@ def test_the_confirm_names_exactly_what_stages_and_the_cookies_line_names_the_fi
     client, cd = api
     name = _listed_copy(cd, _case(case, tmp_path, monkeypatch))
     pv = client.post("/api/admin/database-restore", json={"name": name}, headers=_H).json()["preview"]
-    assert pv["cookies_target"], "the premise: the server names the cookies file on every branch"
+    assert pv["cookies_target"] and pv["cookies_target"] == pv["cookies_live"], "the premise: this bundle's config names the live cookies path"
     slices = {"show": slice_between(APP_JS, *_SHOW), "hide": slice_between(APP_JS, *_HIDE),
               "stage": slice_between(APP_JS, *_STAGE), "pending": slice_between(APP_JS, *_PENDING)}
     card = _node(_CARD_HARNESS, {**slices, "pv": pv, "members": []})
     offered = 0
     for run in card["runs"]:
-        assert pv["cookies_target"] in run["cookies"], (case, run["cookies"])
+        # v0.51.344: retargeted from cookies_target on every branch — R1-F14: the file that stays is the LIVE one; the swap path only where cookies are restored
+        assert (pv["cookies_target"] if pv["cookies"] == "in bundle" else pv["cookies_live"]) in run["cookies"], (case, run["cookies"])
+        assert "after the swap" not in run["cookies"], (case, run["cookies"])
         if not run["offered"]:
             continue
         r = client.post("/api/admin/database-restore", json={"name": name, "confirm": True, "keep_config": run["keep"]}, headers=_H)
@@ -98,10 +100,12 @@ def test_the_stage_answer_and_its_event_say_what_the_restore_left_as_it_is(api, 
     for d in body["left_as_is"]:
         assert d["why"].startswith(left[d["member"]]) and "left as it is" in d["why"], d
         assert d["why"] in body["message"] and d["why"] in ev["message"], (d, body["message"], ev["message"])
-    head = f"Bundle restore staged from {name} ({' + '.join(body['members'])}; schema v{body['schema_version']}); applies on restart"
+    # v0.51.344: R3-F1 — the event now ends on the discard sentence the answer and the banner carry; the left-as-is words follow it
+    head = f"Bundle restore staged from {name} ({' + '.join(body['members'])}; schema v{body['schema_version']}); applies on restart. {bundle.STAGED_DISCARDS_NOTE}"
     said = "".join(f" {d['why']}." for d in body["left_as_is"])
     assert bool(said) is (case != "clean"), (case, body["left_as_is"])  # v0.51.344: the premise — only the clean bundle stages every member
-    assert ev["message"] == (head + "." + said if said else head), (case, ev["message"])  # v0.51.344: a sentence break before the words, and a clean restore's message byte-identical
+    assert ev["message"] == head + said, (case, ev["message"])  # v0.51.344: a clean restore's message ends on the discard sentence; the words follow it
+    assert bundle.STAGED_DISCARDS_NOTE in body["message"], body["message"]
 
 
 # ── PB-072: a manifest stamp nothing can read ────────────────────────

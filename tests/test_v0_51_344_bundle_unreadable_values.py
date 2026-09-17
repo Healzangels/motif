@@ -70,8 +70,13 @@ UNBUILDABLE = {
     "a date that does not exist": (lambda: "sync:\n  cron: 2026-13-45\n", "sync.cron holds a date that does not exist"),
     "past a tag the safe loader refuses": (lambda: f"a:\n  b: !unknown x\nextra: {_too_long()}\n",
                                            "extra holds an integer too long to read"),
-    "inside a list that holds itself": (lambda: f"a: &x [*x, {_too_long()}]\n", "a holds an integer too long to read"),  # v0.51.344: the walk meets its own node again
+    "inside a list that holds itself": (lambda: f"a: &x [*x, {_too_long()}]\n", "a is a YAML alias of a list or mapping, which motif never writes"),  # v0.51.344: R1-F9 — the alias gate answers first, by key; motif writes neither
 }
+
+
+def test_the_unreadable_walk_ends_on_a_list_that_holds_itself(int_text_limit):
+    # v0.51.344: R1-F9 — flatten_config refuses the alias before this walk runs; reached directly, its memo still meets its own node again and ends
+    assert bundle._unreadable_scalar(f"a: &x [*x, {_too_long()}]\n") == "a holds an integer too long to read"
 
 
 @pytest.mark.parametrize("case", list(UNBUILDABLE))

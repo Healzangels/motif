@@ -164,7 +164,7 @@ def test_do_download_routes_collections_under_collections_parent(tmp_path, monke
     instead of `themes/<section_subdir>/`. Keeps the staging tree
     legible — the user: 'collections folder then broken further
     into movies, tv, anime.'"""
-    # v0.51.344: runs the real _do_download — the nesting moved into canonical.download_theme_rel with the in-flight check
+    # v0.51.344: runs the real _do_download — the nesting moved into canonical.canonical_theme_rel with the in-flight check
     import json
     import sqlite3
     import threading

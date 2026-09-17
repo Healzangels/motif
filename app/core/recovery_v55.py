@@ -44,8 +44,8 @@ For each `themes` row T (canonical TDB or user URL):
 
   1. For each managed plex_sections row S, derive the expected
      canonical path:
-        themes_dir / S.themes_subdir / canonical_theme_subdir(
-            T.title, T.year) / theme.mp3
+        themes_dir / canonical_theme_rel(T.media_type,
+            S.themes_subdir, T.title, T.year) / theme.mp3
   2. If the file exists → INSERT into local_files with
      provenance/source_kind inferred from T.upstream_source
      ('themoviedb'/'imdb' → 'themerrdb', 'plex_orphan' → 'adopt'
@@ -98,14 +98,16 @@ def _expected_canonical_path(
     themes_subdir: str,
     title: str,
     year: str | None,
+    *,
+    media_type: str,
 ) -> Path:
     """Mirror worker._do_download's path construction so the
     recovery finds the exact file motif wrote pre-bug."""
-    from .canonical import canonical_theme_subdir
+    from .canonical import canonical_theme_rel
+    # v0.51.344: the one spelling every canonical writer uses — a collection's file nests under collections/
     return (
         themes_dir
-        / themes_subdir
-        / canonical_theme_subdir(title or "", year)
+        / canonical_theme_rel(media_type, themes_subdir, title or "", year)
         / "theme.mp3"
     )
 
@@ -420,7 +422,7 @@ def maybe_recover_post_v55_data_loss(
             # filter is sufficient.
             canonical_path = _expected_canonical_path(
                 themes_dir, s["themes_subdir"],
-                t["title"] or "", t["year"],
+                t["title"] or "", t["year"], media_type=t["media_type"],
             )
             if not canonical_path.is_file():
                 continue

@@ -89,15 +89,16 @@ def test_closing_waits_for_the_publish_already_writing_and_that_row_lands_whole(
 
 
 class _GateHeldOpenOnRead(threading.Event):
-    """The closed gate: its first read takes the state, then holds that answer until `resume` is set."""
+    """The closed gate: its first read under the publish lock takes the state, then holds that answer until `resume` is set."""
     def __init__(self):
         super().__init__()
         self.reading, self.resume = threading.Event(), threading.Event()
         self.resume_never_came = False
+        self.under_the_lock = lambda: True  # v0.51.344: the bulk's loop reads the gate outside the lock — those reads pass
 
     def is_set(self):
         seen = super().is_set()
-        if not self.reading.is_set():
+        if not self.reading.is_set() and self.under_the_lock():
             self.reading.set()
             self.resume_never_came = not self.resume.wait(10)
         return seen
@@ -138,7 +139,9 @@ def test_a_publish_reading_the_gate_open_as_exit_closes_writes_nothing_after_clo
     monkeypatch.setattr(ch, "_PUBLISH_CLOSED", gate)
     # a close that finds the lock held is waiting on this publish: only then does the gate's read answer, so the
     # publish reads "open" and runs on however it is placed against the lock, and the close sees whichever order it has
-    monkeypatch.setattr(ch, "_PUBLISH_LOCK", _LockReportingContention(gate.resume))
+    lock = _LockReportingContention(gate.resume)
+    gate.under_the_lock = lock._lock.locked
+    monkeypatch.setattr(ch, "_PUBLISH_LOCK", lock)
     out: dict = {}
     run = threading.Thread(target=lambda: out.update(res=ch.restore_from_plex(db, themes, FakePlex())), daemon=True)
     run.start()

@@ -34,13 +34,14 @@ import os
 import re
 import tempfile
 import threading
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .events import _URL_PARAM_SECRET_RE, _URL_QUERY_SECRET_RE  # v0.51.341: the events scrubber's sensitive query-param list — never a second one; v0.51.344: its fragment-aware regex too
+from .events import _URL_PARAM_SECRET_RE, _URL_QUERY_SECRET_RE, _URL_SCHEME_PREFIX_RE, _split_userinfo  # v0.51.341: the events scrubber's sensitive query-param list — never a second one; v0.51.344: its fragment-aware regex and the userinfo split the scrubber now shares
 
 log = logging.getLogger(__name__)
 
@@ -901,18 +902,6 @@ def _is_masked_apprise_url(url: str) -> bool:
     return suffix == _APPRISE_MASK
 
 
-_URL_SCHEME_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://")
-
-
-def _split_userinfo(url: str) -> tuple[str, str | None, str]:
-    # v0.51.341: userinfo runs to the LAST "@" — a "/" or "@" in the password, or a scheme-less user:pass@host, was shown in clear
-    m = _URL_SCHEME_PREFIX_RE.match(url)
-    prefix = m.group(0) if m else ""
-    body = url[len(prefix):]
-    at = re.split(r"[?#]", body, maxsplit=1)[0].rfind("@")  # v0.51.343: never past the query/fragment — ?email=a@b.com hid the host
-    return (prefix, None, body) if at < 0 else (prefix, body[:at], body[at + 1:])
-
-
 def _query_secret_value(m: "re.Match[str]") -> str:
     return m.group(0)[len(m.group(1)):]
 
@@ -929,19 +918,6 @@ def mask_url_credentials(url: str) -> str:
     prefix, userinfo, rest = _split_userinfo(url)
     rest = _URL_PARAM_SECRET_RE.sub(lambda m: f"{m.group(1)}{_APPRISE_MASK}", rest)  # v0.51.341: ?token= / ?api_key= values too
     return f"{prefix}{_APPRISE_MASK}@{rest}" if userinfo is not None else f"{prefix}{rest}"
-
-
-def _is_masked_url_credentials(url: str) -> bool:
-    """v1.21.17: True if `url` carries the masked-userinfo marker
-    `://***@`. PATCH treats a round-tripped value with this marker as
-    'keep the stored credential' (mirrors plex.token '***' = keep)."""
-    if not url or not isinstance(url, str):
-        return False
-    m = _URL_SCHEME_PREFIX_RE.match(url)
-    body = url[m.end():] if m else url
-    # v0.51.341: every shape mask_url_credentials emits — `***@` with or without a scheme, and a `name=***` secret param
-    return body.startswith(_APPRISE_MASK + "@") or any(
-        _query_secret_value(q) == _APPRISE_MASK for q in _URL_PARAM_SECRET_RE.finditer(body))
 
 
 def _pre343_url_mask(url: str) -> str:
@@ -967,14 +943,28 @@ def unmask_url_credentials(submitted: str, stored: str) -> str:
     body = submitted[len(prefix):]
     _, stored_userinfo, stored_rest = _split_userinfo(stored or "")
     tail = body[len(_APPRISE_MASK) + 1:] if body.startswith(_APPRISE_MASK + "@") else body
-    pool = [(q.group(1)[1:-1], _query_secret_value(q)) for q in _URL_PARAM_SECRET_RE.finditer(stored_rest)]
-    wanted = [q.group(1)[1:-1] for q in _URL_PARAM_SECRET_RE.finditer(tail) if _query_secret_value(q) == _APPRISE_MASK]
+    stored_hash, tail_hash = stored_rest.find("#"), tail.find("#")  # v0.51.344: a param past the first "#" is the fragment's — ?TOKEN=***#token=*** took the query's deleted token for the fragment and lost its own
+    pool = [(q.start() >= stored_hash >= 0, q.group(1)[1:-1], _query_secret_value(q)) for q in _URL_PARAM_SECRET_RE.finditer(stored_rest)]
+    wanted = [(q.start() >= tail_hash >= 0, q.group(1)[1:-1]) for q in _URL_PARAM_SECRET_RE.finditer(tail) if _query_secret_value(q) == _APPRISE_MASK]
+
+    def key(tier: int, fragment: bool, name: str) -> tuple:  # v0.51.344: the exact spelling in its own segment binds first, then case-blind there, then either across segments — by position ?token=*** took ?TOKEN='s value
+        return (tier, fragment if tier < 2 else None, name if tier % 2 == 0 else name.casefold())
+
+    keyed: dict[tuple, deque[int]] = defaultdict(deque)  # v0.51.344: indexed, not scanned per name — 4,000 masked params held the event loop 2 s
+    for p, (fragment, name, _) in enumerate(pool):
+        for tier in range(4):
+            keyed[key(tier, fragment, name)].append(p)
+    taken = [False] * len(pool)
     fills: list[str | None] = [None] * len(wanted)
-    for fold in (str, str.casefold):  # v0.51.344: the exact spelling binds first, then case-blind as the (?i) mask folds — by position ?token=*** took ?TOKEN='s value
-        for i, name in enumerate(wanted):
-            at = None if fills[i] is not None else next((p for p, (n, _) in enumerate(pool) if fold(n) == fold(name)), None)
-            if at is not None:
-                fills[i] = pool.pop(at)[1]
+    for tier in range(4):
+        for i, (fragment, name) in enumerate(wanted):
+            found = keyed.get(key(tier, fragment, name)) if fills[i] is None else None
+            while found:
+                p = found.popleft()
+                if not taken[p]:
+                    taken[p] = True
+                    fills[i] = pool[p][2]
+                    break
     pending = iter(fills)
 
     def keep(q: "re.Match[str]") -> str:
@@ -1171,12 +1161,91 @@ class ConfigFile:
             log.info("Wrote motif.yaml (updated_by=%s)", updated_by)
 
 
+_UNREADABLE_WORDS = {"tag:yaml.org,2002:int": "an integer too long to read", "tag:yaml.org,2002:timestamp": "a date that does not exist"}
+
+
+def _collection_alias(root) -> str | None:
+    """The dotted key at which a composed motif.yaml aliases a list or mapping — motif never writes one, and a chain of them expands without bound — or None."""
+    import yaml
+    seen: set[int] = set()
+
+    def walk(node, path: str) -> str | None:
+        if not isinstance(node, (yaml.MappingNode, yaml.SequenceNode)):
+            return None  # a scalar alias repeats one value — bounded by the file
+        if id(node) in seen:  # v0.51.344: R1-F9 — the composer hands an alias back as the anchored node itself
+            return f"{path or 'its top level'} is a YAML alias of a list or mapping, which motif never writes"
+        seen.add(id(node))
+        if isinstance(node, yaml.MappingNode):
+            for k, v in node.value:
+                name = k.value if isinstance(k, yaml.ScalarNode) else "?"
+                if found := walk(v, f"{path}.{name}" if path else str(name)):
+                    return found
+            return None
+        return next((found for v in node.value if (found := walk(v, path))), None)
+    return walk(root, "") if root is not None else None
+
+def _composed_collection_alias(text: str) -> str | None:
+    # v0.51.344: compose only — construction is what an alias chain makes unbounded; a text that does not compose is judged by the caller's own parse
+    loader = yaml.SafeLoader(text)
+    try:
+        try:
+            node = loader.get_single_node()
+        except yaml.YAMLError:
+            return None
+        return _collection_alias(node)
+    finally:
+        loader.dispose()
+
+
+def _unreadable_scalar(text: str) -> str | None:
+    """The dotted key of the first scalar YAML's safe loader cannot build, in words — never its value — or None."""
+    # v0.51.344: moved from bundle.py — the boot's loader names the key the same way the restore preview does
+    loader, builder = yaml.SafeLoader(text), yaml.SafeLoader("")
+    try:
+        root = loader.get_single_node()
+    except yaml.YAMLError as e:
+        log.info("motif.yaml does not compose (%s) — its parse error is named by type", type(e).__name__)
+        return None
+    finally:
+        loader.dispose()
+    seen: set[int] = set()
+
+    def walk(node, path: str) -> str | None:
+        if id(node) in seen:
+            return None
+        seen.add(id(node))
+        if isinstance(node, yaml.MappingNode):
+            for k, v in node.value:
+                name = k.value if isinstance(k, yaml.ScalarNode) else "?"
+                if found := walk(v, f"{path}.{name}" if path else str(name)):
+                    return found
+            return None
+        if isinstance(node, yaml.SequenceNode):
+            return next((found for v in node.value if (found := walk(v, path))), None)
+        try:
+            builder.construct_object(node)
+        except ValueError:
+            return f"{path or 'its top level'} holds {_UNREADABLE_WORDS.get(node.tag, 'a value YAML cannot read')}"
+        except Exception as e:  # v0.51.344: a tag the safe loader refuses is not the ValueError being named — look on
+            log.info("motif.yaml: %s does not build either (%s)", path or "its top level", type(e).__name__)
+        return None
+    try:
+        return walk(root, "") if root is not None else None
+    finally:
+        builder.dispose()
+
+
 def load_config_text(text: str) -> MotifConfig:
     """ConfigFile.load()'s pipeline over motif.yaml text: parse, hydrate, then env overrides. Raises ConfigValidationError on bad YAML or a non-mapping."""
+    alias = _composed_collection_alias(text)  # v0.51.344: judged on the composer's graph before anything is built, as the restore preview does — an alias of a list or mapping expands without bound
+    if alias:
+        raise ConfigValidationError([f"motif.yaml: {alias}"])
     try:
         raw = yaml.safe_load(text) or {}
     except yaml.YAMLError as e:
         raise ConfigValidationError([f"motif.yaml is not valid YAML: {e}"]) from e
+    except ValueError as e:  # v0.51.344: a scalar that composes but cannot build (2026-13-45, a 4301-digit integer) stopped boot in Python's words, no key named
+        raise ConfigValidationError([f"motif.yaml: {_unreadable_scalar(text) or f'a value YAML cannot read ({type(e).__name__})'}"]) from e
     if not isinstance(raw, dict):
         raise ConfigValidationError(["motif.yaml top-level must be a mapping"])
     cfg = MotifConfig()

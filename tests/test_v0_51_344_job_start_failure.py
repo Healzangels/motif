@@ -70,8 +70,11 @@ def test_restore_from_plex_whose_thread_cannot_start_says_nothing_ran_and_locks_
     with caplog.at_level(logging.ERROR):
         _refused_with_words(loose.post(START, headers=AUTH))
     assert any("could not start" in r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
-    # v0.51.344: a start that never ran leaves neither a 'running' page nor a thread for exit to join
-    assert _status(loose) == {"status": "idle"}, "the page reads a run that never started"
+    # v0.51.344: a start that never ran reads failed in words — 'idle' told a watching tab motif had restarted mid-run —
+    # and leaves neither a 'running' page nor a thread for exit to join
+    st = _status(loose)
+    assert st["status"] == "failed" and REFUSED in st["error"] and "nothing ran" in st["error"], st
+    assert (st["restored"], bool(st["finished_at"])) == (0, True), st
     assert (loose.post(CHECK, headers=AUTH).status_code, loose.post(REPAIR, headers=AUTH).status_code) == (200, 200)
     assert api_mod.canon_restore_shutdown() is None, "exit would join a thread that never started"
     assert held.calls == []

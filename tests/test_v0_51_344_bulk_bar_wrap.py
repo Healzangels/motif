@@ -124,6 +124,7 @@ class El {
     return node;
   }
   contains(n) { for (let x = n; x; x = x.parent) if (x === this) return true; return false; }
+  addEventListener() {}  // v0.51.344: // MORE's toggle listener — this harness never opens the menu
   walk() { const out = []; const rec = (e) => { for (const c of e.children) { out.push(c); rec(c); } }; rec(this); return out; }
   querySelector(sel) { return this.walk().find((e) => matches(e, sel)) || null; }
   querySelectorAll(sel) { return this.walk().filter((e) => matches(e, sel)); }

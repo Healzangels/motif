@@ -177,20 +177,21 @@ _SHAPES = [
 
 @pytest.mark.parametrize("url, secrets, shown", _SHAPES)
 def test_every_credential_shape_masks_and_round_trips(url, secrets, shown):
-    from app.core.config_file import _is_masked_url_credentials, unmask_url_credentials
+    from app.core.config_file import unmask_url_credentials
     masked = mask_url_credentials(url)
     assert masked == shown
     assert not any(s in masked for s in secrets), masked
-    assert _is_masked_url_credentials(masked), "PATCH must recognise every masked shape"
+    with pytest.raises(ValueError):  # v0.51.344: PATCH reads every masked shape as a mask — refused with nothing stored behind it, never written
+        unmask_url_credentials(masked, "")
     assert unmask_url_credentials(masked, url) == url, "the stored credentials come back whole"
 
 
 @pytest.mark.parametrize("url", ["https://github.com/LizardByte/ThemerrDB.git", "http://plex.lan:32400",
                                  "https://host.example/x?page=2", ""])
 def test_credential_free_urls_pass_through_and_are_not_masked(url):
-    from app.core.config_file import _is_masked_url_credentials
+    from app.core.config_file import unmask_url_credentials
     assert mask_url_credentials(url) == url
-    assert not _is_masked_url_credentials(url)
+    assert unmask_url_credentials(url, "") == url, "v0.51.344: not a mask — PATCH writes it as typed"
 
 
 def test_a_masked_query_token_round_trips_through_patch_and_is_never_written(tmp_path, monkeypatch):

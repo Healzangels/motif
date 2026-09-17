@@ -178,13 +178,16 @@ def resolve_edition_swap(db_path: Path, themes_dir: Path, *, media_type: str,
                   / Path(old_rel).name)
     new_abs = themes_dir / new_rel
     if old_rel != new_rel:
+        from .canonical_health import _canonical_write_lock
         try:
             if not old_abs.exists():
                 return None               # canonical already gone: a real loss
             new_abs.parent.mkdir(parents=True, exist_ok=True)
-            if new_abs.exists():
-                return None               # never clobber an existing canonical
-            old_abs.replace(new_abs)
+            # v0.51.344: the survivor path's writer lock — a restore staging that canonical lands first and is kept
+            with _canonical_write_lock(new_abs):
+                if new_abs.exists():
+                    return None               # never clobber an existing canonical
+                old_abs.replace(new_abs)
         except OSError as e:
             log.warning(
                 "edition-swap: canonical move failed for %s/%s (%s → %s): %s — "

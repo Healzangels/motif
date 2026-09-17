@@ -277,19 +277,43 @@ _SCRUB_SUBSTRINGS = (
 #
 # Match shape: <scheme>://[<user>[:<pass>]]@<host>
 # We redact the userinfo segment (everything between `://` and
-# the first `@`) — keeps the scheme + host visible so the
+# the LAST `@` before the query/fragment — v0.51.344, one rule with
+# the settings mask) — keeps the scheme + host visible so the
 # event still names which service was involved.
+_URL_SCHEME_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://")
+
+
+def _split_userinfo(url: str) -> tuple[str, str | None, str]:
+    # v0.51.341: userinfo runs to the LAST "@" — a "/" or "@" in the password, or a scheme-less user:pass@host, was shown in clear
+    m = _URL_SCHEME_PREFIX_RE.match(url)
+    prefix = m.group(0) if m else ""
+    body = url[len(prefix):]
+    at = re.split(r"[?#]", body, maxsplit=1)[0].rfind("@")  # v0.51.343: never past the query/fragment — ?email=a@b.com hid the host
+    return (prefix, None, body) if at < 0 else (prefix, body[:at], body[at + 1:])
+
+
 _URL_CREDENTIALS_RE = re.compile(
-    r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+\-.]*://)"
-    r"(?P<userinfo>[^/@\s]+)@",
+    r"(?<![a-zA-Z0-9+\-.])(?P<lead>[0-9+\-.]*+)"  # v0.51.344: one try per run — every letter of a long run was a scheme start, quadratic
+    r"(?P<url>[a-zA-Z][a-zA-Z0-9+\-.]*+://[^\s?#]*+)",  # v0.51.344: one URL up to its ?/# — a whole-run match swallowed a credentialed URL nested past "?next=" and logged it in clear
 )
+
+
+def _redact_userinfo(m: "re.Match[str]") -> str:
+    prefix, userinfo, rest = _split_userinfo(m.group("url"))  # v0.51.344: one rule with config_file — "u:pa/TAIL@h" and "u:pa@TAIL@h" logged the tail
+    return m.group(0) if userinfo is None else f"{m.group('lead')}{prefix}***@{rest}"
+
+
+_URL_FIRST_AT_USERINFO_RE = re.compile(  # v0.51.344: the pre-.344 first-"@" rule kept as the LAST pass — the mask's rule alone showed "pa?ss@host" and hid nothing the settings mask never hid
+    r"(?<![a-zA-Z0-9+\-.])(?P<lead>[0-9+\-.]*+)(?P<scheme>[a-zA-Z][a-zA-Z0-9+\-.]*+://)(?P<userinfo>[^/@\s]++)@",
+)
+
 
 # v1.21.17 (security audit LOW): the userinfo regex above only catches the
 # `://user:pass@host` shape. Secrets also travel as query params —
-# `?X-Plex-Token=<tok>`, `?api_key=<tok>`, `?access_token=<tok>`. No code
-# path logs such a URL today (the Plex token rides an HTTP HEADER, never the
-# query string), but the scrubber is the last line of defense if a future
-# caller ever interpolates one into a message/detail — so redact the value
+# `?X-Plex-Token=<tok>`, `?api_key=<tok>`, `?access_token=<tok>`. The Plex
+# token rides an HTTP HEADER, never the query string, but sync.py logs the
+# configured sync URL on every successful run (v0.51.344: "git mirror acquired
+# from {git_url}" — a codeload ?token= travels there), so redact the value
 # while keeping the param name visible for diagnostics.
 #
 # v0.50.89 (audit MEDIUM): rebuilt from _SCRUB_SUBSTRINGS (the SAME list the
@@ -300,7 +324,7 @@ _URL_CREDENTIALS_RE = re.compile(
 # an asymmetry with the dict-key scrubber (which already does substring
 # containment). Sharing the word list also means a future addition to
 # _SCRUB_SUBSTRINGS automatically covers this regex too.
-_URL_SECRET_PARAM_NAME = r"[A-Za-z0-9_\-]*(?:" + "|".join(re.escape(_s) for _s in _SCRUB_SUBSTRINGS) + r")[A-Za-z0-9_\-]*="  # v0.51.344: one name list builds both regexes below — never a string replace
+_URL_SECRET_PARAM_NAME = r"(?=[A-Za-z0-9_\-]*(?:" + "|".join(re.escape(_s) for _s in _SCRUB_SUBSTRINGS) + r"))[A-Za-z0-9_\-]*+="  # v0.51.344: one name list builds both regexes below — never a string replace; a lookahead + possessive run reads a name once (two stars backtracked quadratically over "#" + "token" * 3200)
 _URL_QUERY_SECRET_RE = re.compile(r"(?i)([?&]" + _URL_SECRET_PARAM_NAME + r")[^&\s#\"']+")  # v0.51.344: the .342 query-only shape — config_file._pre343_url_mask's stale-tab oracle
 _URL_PARAM_SECRET_RE = re.compile(r"(?i)([?&#]" + _URL_SECRET_PARAM_NAME + r")[^&\s#\"']+")  # v0.51.344: the same names after "#" — a fragment's FIRST param (#access_token=) was logged in clear
 
@@ -330,11 +354,11 @@ def _redact_url_credentials(s: str) -> str:
     `https://user:pass@host` → `https://***@host`, and
     `...?token=abc` → `...?token=***`. Preserves the scheme /
     host / param-name for diagnostic value."""
-    s = _URL_CREDENTIALS_RE.sub(
-        lambda m: f"{m.group('scheme')}***@", s)
+    s = _URL_CREDENTIALS_RE.sub(_redact_userinfo, s)  # v0.51.344: userinfo to the last "@" before ?/#, as the settings mask
     s = _URL_PARAM_SECRET_RE.sub(lambda m: f"{m.group(1)}***", s)  # v0.51.344: query and fragment params, as the settings mask
     s = _URL_WEBHOOK_PATH_RE.sub(lambda m: f"{m.group(1)}***", s)
     s = _URL_SLACK_WEBHOOK_RE.sub(lambda m: f"{m.group(1)}***", s)
+    s = _URL_FIRST_AT_USERINFO_RE.sub(lambda m: f"{m.group('lead')}{m.group('scheme')}***@", s)  # v0.51.344: never less than .343 hid — after the param pass, so a masked #token=*** cannot hide the host
     return s
 
 

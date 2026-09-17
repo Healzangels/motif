@@ -341,6 +341,29 @@ def migrate_themes_subdirs_inplace(db_path: Path, themes_dir: Path) -> int:
                     old_dir, new_dir, e, r["section_id"],
                 )
                 continue
+        # v0.51.344 (R2-F8): a section's collection themes nest under collections/<subdir> — that tree moves with it
+        old_coll = themes_dir / "collections" / old_subdir
+        new_coll = themes_dir / "collections" / new_subdir
+        coll_rows = True
+        if old_coll.exists() and new_coll.exists():
+            log.warning(
+                "Themes subdir migration: would move %s → %s but the destination already exists; "
+                "section %s's collection themes stay on the old subdir",
+                old_coll, new_coll, r["section_id"],
+            )
+            coll_rows = False
+        elif old_coll.exists():
+            try:
+                new_coll.parent.mkdir(parents=True, exist_ok=True)
+                os.rename(str(old_coll), str(new_coll))
+                log.info("Themes subdir migrated on disk: %s → %s", old_coll, new_coll)
+            except OSError as e:
+                # v0.51.344: the section still migrates — its collection rows stay on the folder they are in
+                log.warning(
+                    "Themes subdir migration: rename %s → %s failed: %s; section %s's collection "
+                    "themes stay on the old subdir", old_coll, new_coll, e, r["section_id"],
+                )
+                coll_rows = False
 
         # DB updates: section row + every local_files.file_path with
         # the old prefix
@@ -349,6 +372,14 @@ def migrate_themes_subdirs_inplace(db_path: Path, themes_dir: Path) -> int:
                 "UPDATE plex_sections SET themes_subdir = ? WHERE section_id = ?",
                 (new_subdir, r["section_id"]),
             )
+            if coll_rows:
+                # v0.51.344: the collections/<old>/ rows follow their tree (the plain rewrite below never matches them)
+                conn.execute(
+                    "UPDATE local_files SET file_path = ? || substr(file_path, ?) "
+                    "WHERE file_path LIKE ?",
+                    ("collections/" + new_subdir + "/", len("collections/" + old_subdir) + 2,
+                     "collections/" + old_subdir + "/%"),
+                )
             # v0.51.11: substr offset is len(old_subdir) + 2, not + 1 — SQLite
             # substr is 1-indexed, so +1 lands ON the '/' separator and, since the
             # bound prefix already ends in '/', produced a double-slash path

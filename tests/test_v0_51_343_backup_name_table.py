@@ -226,7 +226,16 @@ def test_list_backups_matches_the_frozen_copy_on_disk(tmp_path):
     assert sorted(r.name for r in ups) == sorted(n for n in names if _upload_stamp(n)) and ups
     assert all((r.kind, r.retained, r.created_at) == ("bundle", False, db_backup._iso_from_stamp(_upload_stamp(r.name)))
                for r in ups)
-    assert rows == sorted(rows, key=lambda r: (_want(r.name)[2], r.name), reverse=True), "newest first across every shape"
+    # v0.51.344: retargeted from a (stamp, name) mirror of the sort key — R1-F22: newest first by stamp, and same-second uploads by their -N with the newest on top
+    stamps = [_want(r.name)[2] for r in rows]
+    assert stamps == sorted(stamps, reverse=True), "newest first across every shape"
+    def _n(name):
+        mid = name[len("motif-bundle-upload-"):-len(".tar.gz")]
+        return int(mid[16:]) if len(mid) > 15 else 1
+    by_stamp = {st: [_n(r.name) for r in rows if _upload_stamp(r.name) == st] for st in set(stamps)}
+    assert any(len(ns) > 1 for ns in by_stamp.values()), "the corpus holds same-second uploads"
+    for st, ns in by_stamp.items():
+        assert ns == sorted(ns, reverse=True) and len(set(ns)) == len(ns), (st, ns)
     assert {(r.kind, r.retained) for r in rows} == {("snapshot", True), ("prerestore", False), ("bundle", True), ("bundle", False)}
     # v0.51.344: partial rides the row exactly where the name is the partial shape, and it is a retained bundle
     assert [r.name for r in rows if r.partial] == [r.name for r in rows if _partial_stamp(r.name)] and any(r.partial for r in rows)

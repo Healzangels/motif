@@ -176,7 +176,8 @@ def test_a_move_that_fails_leaves_the_row_as_it_was_and_the_next_restore_lands_t
     with monkeypatch.context() as m:
         _on_the_move(m, canonical, instead=no_space)
         res = ch.restore_from_plex(db, themes, Plex(SAME_SIZE))
-    assert [s["reason"] for s in res["skipped"]] == [f"{FAILED[leg]}{full}"]
+    # v0.51.344 (R1-F16): the reason words the errno; the path stays in the log
+    assert [s["reason"] for s in res["skipped"]] == [f"{FAILED[leg]}{full.strerror}"]
     assert not canonical.exists()
     assert _row(db) == before, "a move that moved nothing still recorded the incoming bytes or voided the anchors"
     assert ch.restore_from_plex(db, themes, Plex(SAME_SIZE))["restored"] == 1

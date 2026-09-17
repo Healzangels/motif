@@ -200,6 +200,18 @@ def _can_hardlink(src: Path, dst_dir: Path) -> bool:
         return False
 
 
+def _stage_link_or_copy(src: Path, dst_tmp: Path) -> str:
+    """v0.51.344: the link-or-copy half of _safe_link_or_copy — a canonical restore hashes and stamps the staged inode before its move."""
+    if _can_hardlink(src, dst_tmp.parent):
+        try:
+            os.link(src, dst_tmp)
+            return "hardlink"
+        except OSError as e:
+            log.warning("Hardlink failed (%s), falling back to copy", e)
+    shutil.copy2(src, dst_tmp)
+    return "copy"
+
+
 def _safe_link_or_copy(src: Path, dst: Path, *, unique_tmp: bool = False) -> str:
     """Hardlink when possible, copy otherwise. Atomic via temp+rename."""
     if unique_tmp:
@@ -229,17 +241,7 @@ def _safe_link_or_copy(src: Path, dst: Path, *, unique_tmp: bool = False) -> str
             )
     kind: str
     try:
-        if _can_hardlink(src, dst.parent):
-            try:
-                os.link(src, dst_tmp)
-                kind = "hardlink"
-            except OSError as e:
-                log.warning("Hardlink failed (%s), falling back to copy", e)
-                shutil.copy2(src, dst_tmp)
-                kind = "copy"
-        else:
-            shutil.copy2(src, dst_tmp)
-            kind = "copy"
+        kind = _stage_link_or_copy(src, dst_tmp)  # v0.51.344: one link-or-copy — the canonical restore stages through it too
         os.replace(dst_tmp, dst)
     except BaseException:
         if unique_tmp:

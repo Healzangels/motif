@@ -1094,17 +1094,20 @@ def _sweep_placement_temps_job(settings: "Settings") -> None:
     hardlink-copy and the os.replace). Normally cleaned on the next placement to
     that folder, but a folder that never gets re-placed (edition drift, a switch
     to plex_upload) keeps the orphan. No-op when there are none."""
+    from .bundle import sweep_stale_bundle_temps
     from .plex_enum import sweep_stale_placement_temps
     db_path = settings.db_path
     try:
         # v0.51.344: themes_dir too — a killed canonical restore strands theme.mp3.part / theme.mp3.<hex>.motif-tmp there.
         removed = sweep_stale_placement_temps(db_path, themes_dir=settings.themes_dir)
+        # v0.51.344: R1-F20 — a killed bundle create / inspect / stage / upload stranded database-sized temps nothing swept.
+        removed += sweep_stale_bundle_temps(settings.config_dir, db_path)
     except Exception as e:  # noqa: BLE001 — a hygiene sweep must never crash the scheduler
         log.warning("Stale .motif-tmp sweep job failed: %s", e)
         return
     if removed:
         log_event(db_path, level="INFO", component="scheduler",
-                  message=f"Removed {removed} stale placement / canonical-restore temp(s)")
+                  message=f"Removed {removed} stale placement / canonical-restore / bundle temp(s)")
 
 
 def _daily_health_passes_job(settings: "Settings") -> None:
@@ -1303,19 +1306,23 @@ def _scheduled_database_backup(settings: "Settings") -> None:
     if not settings.db_backup_enabled:
         return
     from datetime import datetime, timezone
+    from . import bundle as bundle_mod
     from . import db_backup
+    try:
+        bundle_mod.rename_legacy_partials(settings.config_dir)  # v0.51.344: R1-F4 — once, before the first prune: a .342/.343 bundle that left a member out carried the complete name
+    except Exception as e:  # noqa: BLE001 — a naming pass must never cost the nightly its backup
+        log.warning("pre-.344 partial bundle check failed (%s) — the nightly goes on; the check runs again next time", e)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     try:
         if settings.db_backup_bundle:  # v0.51.339: no getattr shim — a settings surface without the toggle fails loudly, never a silent bare snapshot
             # v0.51.335: a bundle — the snapshot plus motif.yaml, cookies.txt
             # and the themes census — instead of a bare snapshot (spec § 3).
-            from . import bundle as bundle_mod
             try:
                 bf = bundle_mod.create_bundle_for(settings, stamp)  # v0.51.344: the API's spelling too — the eight kwargs were hand-kept twice
             except bundle_mod.BundleOverCap as e:  # v0.51.344: every nightly wrote nothing and said to take the snapshot the job can take itself
                 bf = db_backup.create_backup(settings.db_path, settings.config_dir, now_stamp=stamp)
-                log_event(settings.db_path, level="WARNING", component="backup",
-                          message=f"Scheduled backup bundle not written ({e}) — a plain database snapshot was taken instead")
+                log_event(settings.db_path, level="WARNING", component="backup",  # v0.51.344: R1-F5 — e.reason, not str(e): the event told the operator to take the snapshot it had just taken
+                          message=f"Scheduled backup bundle not written ({e.reason}) — a plain database snapshot was taken instead")
         else:
             bf = db_backup.create_backup(
                 settings.db_path, settings.config_dir, now_stamp=stamp)
@@ -1332,7 +1339,8 @@ def _scheduled_database_backup(settings: "Settings") -> None:
         return
     removed = db_backup.prune_backups(  # v0.51.344: now read after the create, so a backup landing during the VACUUM is never "future"
         settings.config_dir, settings.db_backup_retention,
-        now_stamp=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"), keep=bf.name)
+        now_stamp=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"), keep=bf.name,
+        protect_complete_bundle=settings.db_backup_bundle)  # v0.51.344: R1-F5 — fallback snapshots rotated out every complete bundle the operator asked for
     msg = (f"Scheduled backup bundle created: {bf.name}" if bf.kind == "bundle"
            else f"Scheduled database backup created: {bf.name}")
     if removed:

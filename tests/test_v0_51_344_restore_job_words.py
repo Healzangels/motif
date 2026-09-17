@@ -102,7 +102,8 @@ def test_a_cut_off_run_says_whether_the_next_start_can_report_it(env, monkeypatc
         job = api_mod.canon_restore_shutdown()
         job.join(10)
     assert not job.is_alive()
-    assert landed == (["running"] if start_lands else []), "premise: whether this run's running marker landed"
+    # v0.51.344: the cut-off rewrites its running marker with the run's counts — every landed write is still 'running'
+    assert set(landed) == ({"running"} if start_lands else set()), "premise: whether this run's running marker landed"
     (said,) = [r.getMessage() for r in caplog.records if "cut off by a motif shutdown" in r.getMessage()]
     _reset_job()
     st = _status(client)

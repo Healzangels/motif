@@ -883,10 +883,12 @@ def test_a_watched_run_cut_off_without_a_first_report_still_alarms(env, monkeypa
     assert cut["status"] == "interrupted" and "first_report" not in cut, f"premise: a live cut-off carries no first_report: {cut}"
     _s0, s1 = _run_page(tmp_path / "page", [_report(), _RUNNING, cut, _report()], ["tick"], ssr=ssr_running)
     status = s1["canon-restore-plex-status"]
-    # v0.51.344: the watch alone makes this an alarm — first_report belongs to the marker read after a restart
+    # v0.51.344: the watch alone makes this an alarm — first_report belongs to the marker read after a restart;
+    # the run's counts follow the words (R2-F6: a cut-off run's skipped rows reach the page)
     assert status["className"] == "form-status form-status-fail", status
     assert re.fullmatch(r"✗ the run started .+ was cut off by a motif restart — RUN CHECK, then RESTORE FROM PLEX "
-                        r"restores what is left", status["text"]), status
+                        r"restores what is left · restored 2 \(1 from Plex folders, 1 from Plex's store\) · "
+                        r"1 skipped \(1 no Plex copy\) · 7 not tried", status["text"]), status
     assert (s1["canon-missing-block"]["display"], s1["__timers"]) == ("", 0)
 
 

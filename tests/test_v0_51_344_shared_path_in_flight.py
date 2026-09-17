@@ -12,7 +12,7 @@ import pytest
 
 from app.core import canonical_health as ch
 from app.core import worker as worker_mod
-from app.core.canonical import download_theme_rel
+from app.core.canonical import canonical_theme_rel
 from app.core.db import get_conn, init_db
 from test_v0_51_342_restore_from_plex_job import AUTH, _ago, env  # noqa: F401 — env is the endpoints' fixture
 from test_v0_51_342_restore_pool import FakePlex
@@ -48,7 +48,7 @@ def _theme(db, tmdb, *, title=TITLE, media_type="movie"):
 
 def _path(*, title=TITLE, edition="", media_type="movie", subdir="movies"):
     """Where a download of this title writes theme.mp3, relative to themes_dir."""
-    return str(Path(download_theme_rel(media_type, subdir, title, YEAR, edition)) / "theme.mp3")
+    return str(Path(canonical_theme_rel(media_type, subdir, title, YEAR, edition)) / "theme.mp3")
 
 
 def _broken(db, plexdir, tmdb, file_path, *, edition="", store=False, media_type="movie", placement=True,
@@ -234,7 +234,8 @@ def test_a_download_that_ends_mid_run_stops_holding_the_rows_on_its_path(tmp_pat
         if done == 1 and not seen:
             with closing(sqlite3.connect(db)) as c:
                 seen.append(c.execute("SELECT status FROM jobs WHERE id = ?", (job,)).fetchone()[0])
-                c.execute("UPDATE jobs SET status = 'failed' WHERE id = ?", (job,))
+                # v0.51.344: as every end-writer does — the in-flight memo's key reads the finished_at stamp (R2-F9)
+                c.execute("UPDATE jobs SET status = 'failed', finished_at = ? WHERE id = ?", (_ago(), job))
                 c.commit()
     res = ch.restore_from_plex(db, themes, None, progress_cb=progress)
     assert seen == ["pending"], "premise: the first row in the section was checked while the download was queued"
@@ -300,7 +301,8 @@ def test_a_later_restore_never_reuses_the_downloads_an_earlier_run_read(tmp_path
     first = ch.restore_from_plex(db, themes, None)
     assert [s["reason"] for s in first["skipped"]] == ["download_in_flight"], "premise: the queued download held the row"
     with closing(sqlite3.connect(db)) as c:
-        c.execute("UPDATE jobs SET status = 'failed' WHERE id = ?", (job,))
+        # v0.51.344: as every end-writer does — the in-flight memo's key reads the finished_at stamp (R2-F9)
+        c.execute("UPDATE jobs SET status = 'failed', finished_at = ? WHERE id = ?", (_ago(), job))
         c.commit()
     second = ch.restore_from_plex(db, themes, None)
     assert (second["restored"], second["skipped"]) == (1, []), "a new run answered from the downloads an earlier run read"

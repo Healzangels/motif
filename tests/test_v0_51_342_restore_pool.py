@@ -273,7 +273,8 @@ def test_one_connection_per_run_and_one_transaction_per_stamp(tmp_path, monkeypa
     present = sum(1 for s in res["skipped"] if s["reason"] == "canonical_already_present")
     assert res["restored"] == 8 and present == 2
     assert seen["connects"] == 1, f"{seen['connects']} connections for one run"
-    assert seen["begins"] == res["restored"] + present
+    # v0.51.344 (R1-F3): every seeded sha is one no bytes carry, so each restored row's incoming stamp is a transaction too
+    assert seen["begins"] == 2 * res["restored"] + present
 
 
 # ── 3: threads, clients, bounded bodies ──────────────────────────────

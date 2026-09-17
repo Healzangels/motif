@@ -20,6 +20,8 @@ that needs the EMPTY-allowlist (fail-closed) path overrides the env per-test via
 from __future__ import annotations
 
 import os
+import sys
+import threading
 
 import pytest
 from starlette.testclient import TestClient
@@ -37,6 +39,18 @@ def _reset_login_rate_limit_state():
     from app.core.auth import _reset_login_failures_for_test
     _reset_login_failures_for_test()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_canonical_health_state(monkeypatch):
+    # v0.51.344: close_publishing sets a gate nothing clears and the memo pins a run's connection — one test reaching either reached every later test
+    from app.core import canonical_health as ch
+    monkeypatch.setattr(ch, "_PUBLISH_CLOSED", threading.Event())
+    monkeypatch.setattr(ch, "_PUBLISH_LOCK", threading.Lock())
+    monkeypatch.setattr(ch, "_IN_FLIGHT_DOWNLOADS", {})
+    api_mod = sys.modules.get("app.web.api")  # v0.51.344: the restore job's exit latch, only once its module is loaded — never an import for this
+    if api_mod is not None:
+        monkeypatch.setattr(api_mod, "_CANON_RESTORE_SHUTDOWN", threading.Event())
 
 
 @pytest.fixture(autouse=True)

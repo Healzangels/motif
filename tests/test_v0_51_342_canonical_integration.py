@@ -233,24 +233,30 @@ def test_a_download_time_stamp_on_a_row_already_recorded_present_still_wins(worl
 
 # ── F5: a failed re-hash makes the row a CHANGED candidate ───────────
 
-def test_a_restore_whose_rehash_fails_lists_the_row_as_changed(world, monkeypatch):
+def test_a_sidecar_whose_staged_copy_cannot_be_read_is_refused_and_changed_lists_nothing(world, monkeypatch):
+    # v0.51.344 (R2-F7): the sidecar leg reads its staged copy once, before the move — there is no read-back to fail;
+    # a copy it cannot read never lands, the row keeps its stamp, and CHANGED has nothing to list
     _s, db, themes, plexdir, _events = world
     for t, n in ((11, 40), (12, 50)):
         (plexdir / str(t) / "theme.mp3").write_bytes(b"s" * n)
     real_open = Path.open
     target = _canon(themes, 11)
+    before = _cols(db, 11, ("canonical_present", "file_size", "file_sha256", "canonical_changed_candidate"))
 
     def open_eio(self, *a, **kw):
-        if self == target:
+        if self.parent == target.parent and self.name.endswith(".motif-tmp"):
             raise OSError(errno.EIO, os.strerror(errno.EIO), str(self))
         return real_open(self, *a, **kw)
     monkeypatch.setattr(Path, "open", open_eio)
     res = ch.restore_from_plex(db, themes, None)
     monkeypatch.setattr(Path, "open", real_open)
-    assert res["restored_sidecar"] == 5 and target.stat().st_size == 40
+    assert res["restored_sidecar"] == 4
+    assert [s["reason"] for s in res["skipped"] if s["tmdb_id"] == 11] == [f"link_failed:{os.strerror(errno.EIO)}"]
+    assert not target.exists() and list(target.parent.iterdir()) == [], "an unread copy moved, or its staging file stayed"
     changed = [(r["tmdb_id"], r["recorded"], r["on_disk"]) for r in _report_of(db, themes)["changed"]]
-    assert changed == [(11, 111, 40)], "the kept size is not these bytes' — CHANGED must re-read it"
-    assert _cols(db, 11, ("canonical_present", "canonical_changed_candidate")) == (1, 1)
+    assert changed == [], "a refused restore left a row for CHANGED to list"
+    assert _cols(db, 11, ("canonical_present", "file_size", "file_sha256", "canonical_changed_candidate")) == before, \
+        "a refused restore stamped the row"
     # v0.51.342: reversed — a stamp whose size moved (112 → 50) is a candidate too; CHANGED re-reads it and lists nothing.
     assert _cols(db, 12, ("file_size", "canonical_changed_candidate")) == (50, 1)
 

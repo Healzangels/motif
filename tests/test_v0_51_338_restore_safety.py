@@ -300,25 +300,28 @@ def test_a_same_sha_restore_keeps_the_norm_anchors(tmp_path):
     assert got == _LEVELLED, "identical bytes are still exactly the file those anchors describe"
 
 
-def test_an_unreadable_rehash_after_a_restore_still_clears_the_norm_anchors(tmp_path, monkeypatch, caplog):
+def test_an_unreadable_staged_copy_is_refused_and_the_anchors_it_never_replaced_stay(tmp_path, monkeypatch, caplog):
+    # v0.51.344 (R2-F7): the sidecar leg hashes its staged copy once, before the move — a copy it cannot read never
+    # lands, so the anchors still describe the bytes on record (the old read-back after the move is gone)
     same = hashlib.sha256(b"sidecar-bytes-101").hexdigest()
     db, themes, canonical = _seed_sidecar_row(tmp_path, file_sha256=same, extra=_LEVELLED)
     real_open = Path.open
     fired = []
 
     def open_(self, mode="r", *a, **k):
-        if self == canonical and "rb" in mode:
+        if self.parent == canonical.parent and self.name.endswith(".motif-tmp") and "rb" in mode:
             fired.append(1)
             raise PermissionError(errno.EACCES, "Permission denied", str(self))
         return real_open(self, mode, *a, **k)
     monkeypatch.setattr(Path, "open", open_)
     with caplog.at_level(logging.WARNING, logger="motif.canonical_health"):
-        assert ch.restore_from_placement(db, themes, _row(db, 101))["ok"]
-    assert fired, "premise: the post-restore re-hash could not read the canonical"
+        res = ch.restore_from_placement(db, themes, _row(db, 101))
+    assert fired, "premise: the staged copy could not be read"
+    assert res == {"ok": False, "reason": "link_failed:Permission denied"}
+    assert not canonical.exists() and not list(themes.rglob("*.motif-tmp")), "an unhashed copy moved onto the canonical"
     got = dict(zip(_NORM_COLS, _lf_cols(db, 101, _NORM_COLS)))
-    assert got == dict.fromkeys(_NORM_COLS), (
-        "bytes were written but could not be hashed — the anchors describe a file we "
-        "can no longer vouch for, so they must clear, not survive on the prior sha")
+    assert got == _LEVELLED and _lf_cols(db, 101, ("canonical_present",)) == (0,), (
+        "nothing moved, yet the anchors of the bytes on record were cleared or the row stamped")
 
 
 # ── a 0-byte stub is broken, not present: both guards still restore it ──

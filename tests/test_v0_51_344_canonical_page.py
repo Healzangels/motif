@@ -189,3 +189,58 @@ def test_the_row_restore_refused_by_a_running_restore_alerts_motifs_words(env, m
 def test_the_row_restore_failure_without_motifs_json_says_what_answered(tmp_path, answer, words):
     [alert] = _row_alerts(tmp_path, answer)
     assert alert.startswith(words) and "<html" not in alert, alert
+
+
+# ── R1-F25: a watched run answered by an earlier run's marker ─────────
+# The start marker's write failed (PB-036) and a restart cut the run off: the status endpoint then serves whatever
+# marker an earlier run left, and the page must not paint that as the watched run's result.
+
+def _earlier_run(kind):
+    started, finished = _ago(hours=5, minutes=1), _ago(hours=5)
+    if kind == "done":
+        return _done(started, finished), f"last run 5h ago: {_WORDS}"
+    if kind == "failed":
+        return ({"status": "failed", "error": "boom", "restored": 2, "started_at": started, "finished_at": finished,
+                 "actor": "testadmin"}, "last run 5h ago: ✗ restore failed — boom (2 restored before it stopped)")
+    return ({"status": "interrupted", "started_at": started, "actor": "testadmin"},
+            "last run started 5h ago: cut off by a motif restart")
+
+
+@pytest.mark.parametrize("kind", ["done", "failed", "interrupted"])
+def test_a_watched_run_answered_by_an_earlier_runs_marker_says_it_stopped_without_a_result(tmp_path, ssr_running, kind):
+    marker, last_run = _earlier_run(kind)
+    running = dict(_RUNNING, started_at=_ago(hours=2))
+    s0, s1 = _page(tmp_path, [_PAGE, running, marker, _PAGE], ["tick"], ssr=ssr_running)
+    assert s0[_STATUS]["text"] == _PROGRESS, "premise: the page was watching the run"
+    assert (s1[_STATUS]["text"], s1[_STATUS]["className"]) == (f"{_IDLE_ALARM} · {last_run}", "form-status form-status-fail"), \
+        "an earlier run's marker read as the watched run's result"
+    assert _unlocked(s1) and s1["__timers"] == 0 and s1["canon-missing-block"]["display"] == ""
+
+
+def test_the_watched_runs_own_marker_still_reads_as_its_result(tmp_path, ssr_running):
+    running = dict(_RUNNING, started_at=_ago(hours=2))
+    _s0, s1 = _page(tmp_path, [_PAGE, running, _done(running["started_at"], _ago(seconds=1)), _PAGE], ["tick"], ssr=ssr_running)
+    assert (s1[_STATUS]["text"], s1[_STATUS]["className"]) == (_WORDS, "form-status form-status-ok"), s1[_STATUS]
+
+
+def test_a_run_the_page_never_saw_going_reads_by_its_marker_alone(tmp_path):
+    # a short run finishes before its first poll: the marker's started_at differs from the earlier run's the page saw
+    older = _done(_ago(hours=3, minutes=1), _ago(hours=3))
+    _s0, s1 = _page(tmp_path, [_PAGE, older, {"ok": True, "started": True}, _done(_ago(seconds=2), _ago(seconds=1)), _report()],
+                    [_BTN])
+    assert (s1[_STATUS]["text"], s1[_STATUS]["className"]) == (_WORDS, "form-status form-status-ok"), \
+        "a run that finished before its first poll was taken for a lost one"
+
+
+def test_the_check_the_lost_run_alarm_asks_for_quiets_it(tmp_path, ssr_running):
+    missing = [_row(2004, "Lost Title", None)]
+    page = _report(missing=missing, restorable=0)
+    checked = {**page, "check": {"checked": 5, "missing": 1, "skipped": 0},
+               "checked": {"tracked": 5, "never": 0, "oldest": _ago(seconds=1), "newest": _ago(seconds=1)}}
+    running = dict(_RUNNING, started_at=_ago(hours=2))
+    _s0, s1, s2 = _page(tmp_path, [page, running, _done(_ago(hours=5, minutes=1), _ago(hours=5)), page, checked],
+                        ["tick", _CHECK_BTN], ssr=ssr_running)
+    assert s1[_STATUS]["text"].startswith(_IDLE_ALARM)
+    assert s2["canon-check-status"]["text"] == "✓ check complete"
+    assert (s2[_STATUS]["text"], s2[_STATUS]["className"]) == (
+        "last run started 2h ago: cut off by a motif restart", "form-status"), "the alarm still asks for RUN CHECK"

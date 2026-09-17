@@ -183,7 +183,7 @@ class _RefusingFile:
 
 
 def _upload_save_refused(monkeypatch, err: int, at: str) -> None:
-    real_mkstemp, real_fdopen = tempfile.mkstemp, os.fdopen
+    real_mkstemp, real_fdopen, real_open, real_replace = tempfile.mkstemp, os.fdopen, os.open, os.replace
     fds: set[int] = set()
 
     def mkstemp(suffix=None, prefix=None, dir=None, text=False):
@@ -196,17 +196,33 @@ def _upload_save_refused(monkeypatch, err: int, at: str) -> None:
         return real_mkstemp(suffix, prefix, dir, text)
 
     def fdopen(fd, *a, **k):
-        if fd in fds:
+        if fd in fds and at == "write":
             fds.discard(fd)
             return _RefusingFile(fd, err)
         return real_fdopen(fd, *a, **k)
+
+    def open_(path, flags, *a, **k):  # v0.51.344: R1-F10 — the O_EXCL claim of the upload's listed name
+        if at == "claim" and flags & os.O_EXCL and Path(path).name.startswith("motif-bundle-upload-"):
+            raise OSError(err, os.strerror(err), str(path))
+        return real_open(path, flags, *a, **k)
+
+    def replace(src, dst, *a, **k):  # v0.51.344: R1-F10 — the rename onto the claimed name
+        if at == "replace" and Path(dst).name.startswith("motif-bundle-upload-"):
+            raise OSError(err, os.strerror(err), str(dst))
+        return real_replace(src, dst, *a, **k)
     monkeypatch.setattr(tempfile, "mkstemp", mkstemp)
     monkeypatch.setattr(os, "fdopen", fdopen)
+    monkeypatch.setattr(os, "open", open_)
+    monkeypatch.setattr(os, "replace", replace)
+
+
+# v0.51.344: R1-F10 — the claim and the rename are the bundle upload's own steps
+_UPLOAD_STEPS = [("bundle", "mkstemp"), ("bundle", "write"), ("bundle", "claim"), ("bundle", "replace"),
+                 ("snapshot", "mkstemp"), ("snapshot", "write")]
 
 
 @ERRNOS
-@pytest.mark.parametrize("at", ["mkstemp", "write"])
-@pytest.mark.parametrize("kind", ["bundle", "snapshot"])
+@pytest.mark.parametrize("kind, at", _UPLOAD_STEPS, ids=[f"{k}-{a}" for k, a in _UPLOAD_STEPS])
 def test_a_fault_saving_an_upload_is_answered_in_words_and_keeps_nothing(api, tmp_path, monkeypatch, caplog, err, status, at, kind):
     client, cd = api
     if kind == "bundle":

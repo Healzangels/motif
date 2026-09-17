@@ -782,6 +782,12 @@ class _HoldTheJobAtItsFirstLock:
     def __exit__(self, *exc):
         return self.real.__exit__(*exc)
 
+    def acquire(self, *a, **k):  # v0.51.344: canon_restore_shutdown takes the lock without waiting for it
+        return self.real.acquire(*a, **k)
+
+    def release(self):
+        return self.real.release()
+
 
 def test_a_shutdown_right_after_start_joins_the_run_that_start_claimed(env, monkeypatch):
     client, settings, tmp_path, events = env

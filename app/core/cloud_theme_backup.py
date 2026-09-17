@@ -76,7 +76,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .canonical import canonical_theme_subdir
+from .canonical import canonical_theme_rel
 from .events import now_iso
 
 log = logging.getLogger("motif.cloud_theme_backup")
@@ -843,8 +843,8 @@ def backup_cloud_theme(
     # ({edition-<key>}) so sibling editions don't collide on one theme.mp3,
     # and key the local_files row to the edition (was hardcoded '').
     edition_key = target.get("edition_key", "") or ""
-    canonical_folder = canonical_theme_subdir(title, year, edition_key)
-    rel_path = f"{section_slug}/{canonical_folder}/theme.mp3"
+    # v0.51.344: the one spelling every canonical writer uses — a collection nests under collections/ as its download does
+    rel_path = f"{canonical_theme_rel(media_type, section_slug, title, year, edition_key)}/theme.mp3"
     abs_path = themes_dir / rel_path
     # Build the URL the same way set_active_theme_via_reupload
     # does (the v1.18.36 production path).

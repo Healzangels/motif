@@ -53,7 +53,7 @@ _PRERESTORE_RE = re.compile(r"motif-prerestore-([0-9]{8}-[0-9]{6})\.db")
 # sharing the list, the name gate, retention and the four endpoints.
 _BUNDLE_RE = re.compile(r"motif-bundle-([0-9]{8}-[0-9]{6})\.tar\.gz")
 # v0.51.343: an uploaded bundle, named by its upload's UTC time and kept outside retention like a pre-restore copy.
-_UPLOAD_RE = re.compile(r"motif-bundle-upload-([0-9]{8}-[0-9]{6})(?:-(?:[2-9]|[1-9][0-9]))?\.tar\.gz")  # v0.51.344: -2..-99 — a same-second upload takes the next free name
+_UPLOAD_RE = re.compile(r"motif-bundle-upload-([0-9]{8}-[0-9]{6})(?:-([2-9]|[1-9][0-9]))?\.tar\.gz")  # v0.51.344: -2..-99 — a same-second upload takes the next free name
 # v0.51.344: a bundle that left motif.yaml or cookies.txt out over its cap — its manifest is the LAST tar member, so only its name can say so cheaply
 _PARTIAL_RE = re.compile(r"motif-bundle-partial-([0-9]{8}-[0-9]{6})\.tar\.gz")
 # v0.51.343: the one name table — (kind, name shape, counts toward retention), read only through _classify.
@@ -74,10 +74,17 @@ class BackupFile:
     kind: str = "snapshot"  # v0.51.335: snapshot | prerestore | bundle
     retained: bool = True  # v0.51.343: False = outside retention (a pre-restore copy or an uploaded bundle), for the list chip
     partial: bool = False  # v0.51.344: a motif-bundle-partial-* — it left a member out over its cap
+    future: bool = False  # v0.51.344: a retained file stamped after the caller's now — retention neither counts nor deletes it (R1-F21)
 
 
 def backups_dir(config_dir: Path) -> Path:
     return config_dir / BACKUP_SUBDIR
+
+
+def _upload_seq(name: str) -> int:
+    # v0.51.344: R1-F22 — a same-second upload's -N, the first upload (no suffix) as 1, every other shape as 1
+    m = _UPLOAD_RE.fullmatch(name)
+    return int(m.group(2)) if m and m.group(2) else 1
 
 
 def _classify(name: str) -> tuple[str, str, bool, bool] | None:
@@ -175,11 +182,12 @@ def vacuum_into(db_path: Path, dest: Path) -> None:
         conn.close()
 
 
-def list_backups(config_dir: Path) -> list[BackupFile]:
-    """Every file in the backups dir whose name _classify accepts, newest first by embedded stamp; anything else is ignored."""
+def list_backups(config_dir: Path, *, now_stamp: str | None = None) -> list[BackupFile]:
+    """Every file in the backups dir whose name _classify accepts, newest first by embedded stamp (same-second uploads by their -N); anything else is ignored. With `now_stamp`, a retained row stamped after it is flagged `future`."""
     bdir = backups_dir(config_dir)
     if not bdir.exists():
         return []
+    now_iso = _iso_from_stamp(now_stamp) if now_stamp else None
     # v0.51.343: each file classified once; the stamp rides along for the sort.
     rows: list[tuple[str, BackupFile]] = []
     for p in bdir.iterdir():
@@ -194,12 +202,13 @@ def list_backups(config_dir: Path) -> list[BackupFile]:
         except OSError as e:
             log.warning("backup stat failed (%s): %s — skipping", p.name, e)
             continue
-        rows.append((stamp, BackupFile(name=p.name, size=size,
-                                       created_at=_iso_from_stamp(stamp),
-                                       kind=kind, retained=retained, partial=partial)))
+        created_at = _iso_from_stamp(stamp)
+        rows.append((stamp, BackupFile(name=p.name, size=size, created_at=created_at,
+                                       kind=kind, retained=retained, partial=partial,
+                                       future=bool(retained and now_iso and created_at > now_iso))))
     # Sort by embedded stamp (true chronological across both name
     # shapes), newest first.
-    rows.sort(key=lambda r: (r[0], r[1].name), reverse=True)
+    rows.sort(key=lambda r: (r[0], _upload_seq(r[1].name), r[1].name), reverse=True)  # v0.51.344: R1-F22 — the first upload sorted above -2, and -10 below -2
     return [b for _stamp, b in rows]
 
 
@@ -227,19 +236,19 @@ def delete_backup(config_dir: Path, name: str) -> bool:
     return True
 
 
-def prune_backups(config_dir: Path, retention: int, *, now_stamp: str, keep: str | None = None) -> list[str]:
-    """Keep the newest `retention` backups whose _KINDS row counts toward retention and delete the older — never `keep` or one stamped after `now_stamp`, plus the newest complete bundle while every kept bundle is partial; `retention <= 0` keeps all; returns names removed, a per-file OS error logged and skipped."""
+def prune_backups(config_dir: Path, retention: int, *, now_stamp: str, keep: str | None = None,
+                  protect_complete_bundle: bool = False) -> list[str]:
+    """Keep the newest `retention` backups whose _KINDS row counts toward retention and delete the older — never `keep` or one stamped after `now_stamp`, plus the newest complete bundle while every kept bundle is partial (with `protect_complete_bundle`, while the window holds no complete bundle at all); `retention <= 0` keeps all; returns names removed, a per-file OS error logged and skipped."""
     if retention <= 0:
         return []
     # v0.51.335: bundles count with the snapshots — one retention window
     # over both kinds; pre-restore copies stay exempt.
     # v0.51.343: the retained flag comes from the _KINDS table, not a re-encoded regex pair.
-    now_iso = _iso_from_stamp(now_stamp)
     routine: list[BackupFile] = []
-    for b in list_backups(config_dir):
+    for b in list_backups(config_dir, now_stamp=now_stamp):
         if not b.retained:  # v0.51.344: list_backups already classified each file — no second _classify pass
             continue
-        if b.created_at > now_iso:  # v0.51.344: a legacy upload or a clock-ahead write outranked every new file, so each nightly deleted its own
+        if b.future:  # v0.51.344: a legacy upload or a clock-ahead write outranked every new file, so each nightly deleted its own
             log.warning("backup retention: %s is stamped after now (%s) — not counted and not pruned; delete it from "
                         "the backup list if it is not wanted", b.name, now_stamp)
             continue
@@ -247,12 +256,13 @@ def prune_backups(config_dir: Path, retention: int, *, now_stamp: str, keep: str
     window = routine[:retention]
     doomed = [b for b in routine[retention:] if b.name != keep]  # v0.51.344: never the file the job just wrote
     kept_bundles = [b for b in window if b.kind == "bundle"]
-    if kept_bundles and all(b.partial for b in kept_bundles):  # v0.51.344: R1-F4 — partial bundles rotated out the only bundle holding cookies.txt
+    # v0.51.344: R1-F5 — with bundles wanted, a window of fallback snapshots rotated out every complete bundle; without them, a snapshot-only schedule keeps its .335 behaviour
+    if (kept_bundles or protect_complete_bundle) and all(b.partial for b in kept_bundles):  # v0.51.344: R1-F4 — partial bundles rotated out the only bundle holding cookies.txt
         spare = next((b for b in doomed if b.kind == "bundle" and not b.partial), None)
         if spare is not None:
             doomed.remove(spare)
-            log.info("backup retention: kept %s — the newest bundle that left nothing out; every newer kept bundle "
-                     "left a member out", spare.name)
+            log.info("backup retention: kept %s — the newest complete bundle; every newer kept backup is a partial bundle "
+                     "or a plain snapshot", spare.name)
     removed: list[str] = []
     bdir = backups_dir(config_dir)
     for b in doomed:

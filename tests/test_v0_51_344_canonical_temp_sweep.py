@@ -1,14 +1,17 @@
 """v0.51.344: the daily temp sweep also clears the staging temps a killed canonical restore strands in themes_dir.
 
-  1. A real SIGKILL mid-publish strands theme.mp3.part and theme.mp3.<hex>.motif-tmp; the sweep removes those two
-     shapes and nothing else beside the canonical.
-  2. The age gate reads ctime: link() and copy2() keep the source's mtime, so a temp staged a moment ago stays.
-  3. The daily job passes the configured themes_dir; section_ids scope the canonical walk; a writer's lock is waited on.
+  1. A real SIGKILL mid-publish strands theme.mp3.<hex>.part and theme.mp3.<hex>.motif-tmp; the sweep removes those
+     two shapes and nothing else beside the canonical — yt-dlp's own theme.mp3.part included (R2-F3).
+  2. The age gate reads ctime for a file with its own inode: copy2() keeps the source's mtime, so a temp staged a
+     moment ago stays (a hardlink's ctime is its inode's — test_v0_51_344_canonical_sweep_round2 covers it, R2-F4).
+  3. The daily job passes the configured themes_dir; section_ids scope the canonical walk; a writer's lock is
+     waited on for a bounded time and its temps are left for the next run (R3-F2).
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import signal
 import sqlite3
@@ -20,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core import canonical_health as ch
+from app.core import plex_enum
 from app.core import scheduler
 from app.core.db import init_db
 from app.core.plex_enum import sweep_stale_placement_temps
@@ -27,6 +31,8 @@ from app.core.plex_enum import sweep_stale_placement_temps
 REPO = Path(__file__).resolve().parent.parent
 NOW = datetime.now(timezone.utc).isoformat(timespec="seconds")
 REL = "movies/M1/theme.mp3"
+PART = ".0123456789abcdef.part"  # v0.51.344: _publish_store_bytes' unique staging name, as a killed one strands it
+UNIQUE = re.compile(r"theme\.mp3\.[0-9a-f]{16}\.(part|motif-tmp)")
 
 
 def _db(path: Path) -> Path:
@@ -91,10 +97,11 @@ def test_a_killed_restores_two_temps_are_swept_and_nothing_else_beside_the_canon
         r = subprocess.run([sys.executable, "-c", child, str(REPO), *args], capture_output=True, text=True, timeout=120)
         assert r.returncode == -signal.SIGKILL, r.stderr[-2000:]
     stranded = sorted(p.name for p in canonical.parent.iterdir())
-    assert len(stranded) == 2 and "theme.mp3.part" in stranded, stranded
+    assert sorted(m.group(1) for m in map(UNIQUE.fullmatch, stranded) if m) == ["motif-tmp", "part"], stranded
     canonical.write_bytes(b"the canonical")
-    # a placement's fixed name, a sibling link's temp, an operator's copy that only starts with a writer's shape
-    foreign = ["theme.mp3.motif-tmp", "theme.mp3.sib.tmp", "theme.mp3.part.keep"]
+    # a placement's fixed name, yt-dlp's own in-flight name, a sibling link's temp, an operator's copy that only
+    # starts with a writer's shape
+    foreign = ["theme.mp3.motif-tmp", "theme.mp3.part", "theme.mp3.sib.tmp", "theme.mp3.part.keep"]
     for name in foreign:
         (canonical.parent / name).write_bytes(b"not a restore's")
     _forward(monkeypatch, 7200)
@@ -114,13 +121,13 @@ def test_a_temp_staged_a_moment_ago_from_an_old_file_is_kept_in_both_roots(tmp_p
     themes = tmp_path / "themes"
     (themes / REL).parent.mkdir(parents=True)
     _lf(db, 1, REL)
-    linked = [folder / "theme.mp3.motif-tmp", themes / "movies/M1/theme.mp3.0123456789abcdef.motif-tmp"]
-    for p in linked:
-        os.link(src, p)
-    copied = themes / "movies/M1/theme.mp3.part"
-    shutil.copy2(src, copied)
-    staged = [*linked, copied]
-    assert all(time.time() - p.stat().st_mtime > 3600 for p in staged), "premise: mtime says two hours old"
+    # v0.51.344: copy2 temps — a file with its own inode is aged by its ctime; a hardlink's is its inode's (R2-F4)
+    staged = [folder / "theme.mp3.motif-tmp", themes / "movies/M1/theme.mp3.0123456789abcdef.motif-tmp",
+              themes / ("movies/M1/theme.mp3" + PART)]
+    for p in staged:
+        shutil.copy2(src, p)
+    assert all(time.time() - p.stat().st_mtime > 3600 and p.stat().st_nlink == 1 for p in staged), \
+        "premise: mtime says two hours old, and each temp is its own inode"
     assert sweep_stale_placement_temps(db, themes_dir=themes) == 0
     assert all(p.exists() for p in staged), "a restore or placement may still be about to os.replace these"
 
@@ -132,7 +139,7 @@ def test_the_daily_job_sweeps_the_configured_themes_dir_and_the_media_folders_wi
     s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
     _db(s.db_path)
     themes = tmp_path / "themes"
-    part = themes / "movies/M1/theme.mp3.part"
+    part = themes / ("movies/M1/theme.mp3" + PART)
     part.parent.mkdir(parents=True)
     part.write_bytes(b"stranded")
     _lf(s.db_path, 1, REL)
@@ -159,7 +166,7 @@ def test_the_job_start_scheduler_registers_sweeps_the_themes_dir_with_the_args_i
     s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
     _db(s.db_path)
     themes = tmp_path / "themes"
-    part = themes / (REL + ".part")
+    part = themes / (REL + PART)
     part.parent.mkdir(parents=True)
     part.write_bytes(b"stranded")
     _lf(s.db_path, 1, REL)
@@ -201,7 +208,7 @@ def test_section_ids_scope_the_canonical_walk(tmp_path, monkeypatch):
     for tmdb, section in ((1, "1"), (2, "2")):
         rel = f"movies/S{section}/theme.mp3"
         _lf(db, tmdb, rel, section=section)
-        parts[section] = themes / (rel + ".part")
+        parts[section] = themes / (rel + PART)
         parts[section].parent.mkdir(parents=True)
         parts[section].write_bytes(b"stranded")
     _forward(monkeypatch, 7200)
@@ -209,23 +216,30 @@ def test_section_ids_scope_the_canonical_walk(tmp_path, monkeypatch):
     assert not parts["1"].exists() and parts["2"].exists()
 
 
-def test_the_sweep_waits_for_the_writer_holding_the_canonicals_lock(tmp_path, monkeypatch):
+def test_the_sweep_leaves_a_temp_whose_writer_holds_the_canonicals_lock_for_the_next_run(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="app.core.plex_enum")
     db = _db(tmp_path / "m.db")
     themes = tmp_path / "themes"
     _lf(db, 1, REL)
-    part = themes / (REL + ".part")
+    part = themes / (REL + PART)
     part.parent.mkdir(parents=True)
     part.write_bytes(b"stranded")
     _forward(monkeypatch, 7200)
+    # v0.51.344: the wait for a writer is a bound the interpreter's exit can outlive, never an open-ended one (R3-F2)
+    assert 0 < plex_enum._CANON_SWEEP_LOCK_WAIT_S <= 30
+    monkeypatch.setattr(plex_enum, "_CANON_SWEEP_LOCK_WAIT_S", 0.25)
     out: list[int] = []
     t = threading.Thread(target=lambda: out.append(sweep_stale_placement_temps(db, themes_dir=themes)))
     lock = ch._canonical_write_lock(themes / REL)
+    lock.acquire()
     try:
-        with lock:
-            t.start()
-            t.join(timeout=1.0)
-            held = (t.is_alive(), part.exists())
+        t.start()
+        t.join(timeout=15.0)
+        held = (t.is_alive(), part.exists(), list(out))
     finally:
+        lock.release()
         t.join(timeout=30)
-    assert held == (True, True), "the sweep unlinked a temp while its writer held the canonical's lock"
-    assert out == [1] and not part.exists()
+    assert held == (False, True, [0]), "with its writer's lock held the sweep must return, and leave the temp"
+    left = [r.getMessage() for r in caplog.records if "left for the next run" in r.getMessage()]
+    assert len(left) == 1 and str(themes / REL) in left[0], left
+    assert sweep_stale_placement_temps(db, themes_dir=themes) == 1 and not part.exists(), "the next run takes it"

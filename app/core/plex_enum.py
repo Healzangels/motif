@@ -1214,7 +1214,8 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
                 "(preserving prior canonical_present)", r["file_path"], err)
             continue
         # v0.51.342: a present file at another size than recorded is a CHANGED candidate — the page re-stats only these.
-        changed = 1 if present and (r["file_size"] or 0) > 0 and st_size != r["file_size"] else None
+        # v0.51.344: a size never recorded (NULL / 0) counts as another size — bytes with no stamp to match are CHANGED (R3-F6)
+        changed = 1 if present and st_size != (r["file_size"] or 0) else None
         row = (1 if present else 0, now, changed, miss_sig, r["media_type"], r["tmdb_id"],
                r["section_id"], r["edition_key"], r["canonical_present"], r["downloaded_at"])
         (present_updates if present else missing_updates).append(row)
@@ -1719,6 +1720,9 @@ def find_theme_sidecar_path(folder_path: str) -> Path | None:
     return None
 
 
+_CANON_SWEEP_LOCK_WAIT_S = 2.0  # v0.51.344: the sweep's bounded wait for a canonical's writer — never an open-ended one on a pool thread (R3-F2)
+
+
 def sweep_stale_placement_temps(db_path: Path, *,
                                 section_ids: list[str] | None = None,
                                 older_than_secs: int = 3600,
@@ -1748,12 +1752,16 @@ def sweep_stale_placement_temps(db_path: Path, *,
                 "SELECT DISTINCT file_path FROM local_files "
                 "WHERE file_path IS NOT NULL AND file_path != ''"
                 + _scope_sql, _scope_params).fetchall() if themes_dir is not None else []
+            # v0.51.344: the section roots too — a restore or an unmanage drops the row that named a folder (R3-F3)
+            sec_rows = conn.execute(
+                "SELECT themes_subdir FROM plex_sections WHERE themes_subdir != ''"
+                + _scope_sql, _scope_params).fetchall() if themes_dir is not None else []
     except Exception as e:  # noqa: BLE001 — defensive
         log.warning("sweep_stale_placement_temps: folder query failed: %s", e)
         return 0
     folders = [r["folder_path"] for r in rows]
     canon_dirs: dict[Path, set[str]] = {}
-    if canon_rows:
+    if canon_rows or sec_rows:
         try:
             root_alive = themes_dir.is_dir()
         except OSError:
@@ -1765,6 +1773,26 @@ def sweep_stale_placement_temps(db_path: Path, *,
             for r in canon_rows:
                 p = themes_dir / r["file_path"]
                 canon_dirs.setdefault(p.parent, set()).add(p.name)
+            named, walked = len(canon_dirs), 0
+            for sr in sec_rows:
+                # v0.51.344: one level under each section root, the folder shape every download writes — bounded (R3-F3)
+                for root in (themes_dir / sr["themes_subdir"], themes_dir / "collections" / sr["themes_subdir"]):
+                    try:
+                        with os.scandir(root) as it:
+                            subs = [e.name for e in it if e.is_dir(follow_symlinks=False)]
+                    except (FileNotFoundError, NotADirectoryError):
+                        continue  # a section nothing was downloaded for yet
+                    except (OSError, ValueError) as e:
+                        log.warning("sweep_stale_placement_temps: could not list section root %s (%s) — its "
+                                    "row-less folders are not swept this run", root, e)
+                        continue
+                    for name in subs:
+                        canon_dirs.setdefault(root / name, set()).add("theme.mp3")
+                    walked += len(subs)
+            unnamed = len(canon_dirs) - named
+            (log.info if unnamed else log.debug)(
+                "sweep_stale_placement_temps: walked %d canonical folder(s) under %d section root(s) — %d named by "
+                "no local_files row", walked, len(sec_rows), unnamed)
     if not folders and not canon_dirs:
         return 0
     import re
@@ -1773,7 +1801,8 @@ def sweep_stale_placement_temps(db_path: Path, *,
 
     def _fresh(st) -> bool:
         # v0.51.344: link()/copy2() keep the source's mtime — only ctime says when the staging file was made.
-        return max(st.st_mtime, st.st_ctime) > cutoff
+        # v0.51.344: a hardlink's ctime is its inode's, moved by every later link to the canonical — mtime is its only clock (R2-F4)
+        return (max(st.st_mtime, st.st_ctime) if st.st_nlink == 1 else st.st_mtime) > cutoff
 
     def _sweep_one(folder_path: str) -> int:
         # First reachable candidate dir wins (mirror find_theme_sidecar_path).
@@ -1783,6 +1812,10 @@ def sweep_stale_placement_temps(db_path: Path, *,
                 st = tmp.stat()
             except OSError:
                 continue  # not present in this candidate — try the next
+            except ValueError as e:
+                # v0.51.344: a folder_path no OS call accepts (an embedded NUL) — one such row ended the whole sweep
+                log.debug("sweep_stale_placement_temps: %r is not a statable path (%s) — skipped", folder_path, e)
+                return 0
             if _fresh(st):
                 return 0  # too fresh — a placement may be mid-flight
             try:
@@ -1810,17 +1843,27 @@ def sweep_stale_placement_temps(db_path: Path, *,
                 "sweep_stale_placement_temps: could not list %s (%s) — skipped", d, e)
             list_warned[0] = True
             return 0
+        except ValueError as e:
+            # v0.51.344: a file_path no OS call accepts (an embedded NUL) — verify reads it missing; one such row ended the whole sweep
+            log.debug("sweep_stale_placement_temps: %r is not a listable path (%s) — skipped", d, e)
+            return 0
         from .canonical_health import _canonical_write_lock
         removed = 0
         for base in bases:
-            # v0.51.344: only the two writer shapes — _publish_store_bytes' .part and a restore's unique .motif-tmp.
-            shape = re.compile(re.escape(base) + r"(?:\.part|\.[0-9a-f]{16}\.motif-tmp)")
-            for name in names:
-                if not shape.fullmatch(name):
-                    continue
-                tmp = d / name
-                # v0.51.344: the writer's own lock — a publish re-opening a stranded .part never loses it mid-write.
-                with _canonical_write_lock(d / base):
+            # v0.51.344: only motif's own writers' unique names — yt-dlp's theme.mp3.part beside them is a download's (R2-F3)
+            shape = re.compile(re.escape(base) + r"\.[0-9a-f]{16}\.(?:part|motif-tmp)")
+            temps = [name for name in names if shape.fullmatch(name)]
+            if not temps:
+                continue
+            lock = _canonical_write_lock(d / base)
+            # v0.51.344: the writer's own lock, bounded — a live writer's temps are by definition not stale (R3-F2)
+            if not lock.acquire(timeout=_CANON_SWEEP_LOCK_WAIT_S):
+                log.info("sweep_stale_placement_temps: a writer owns %s — %d temp(s) left for the next run",
+                         d / base, len(temps))
+                continue
+            try:
+                for name in temps:
+                    tmp = d / name
                     try:
                         st = tmp.lstat()
                     except OSError:
@@ -1833,6 +1876,8 @@ def sweep_stale_placement_temps(db_path: Path, *,
                         removed += 1
                     except OSError as e:
                         log.warning("sweep_stale_placement_temps: could not remove %s: %s", tmp, e)
+            finally:
+                lock.release()
         return removed
 
     from concurrent.futures import ThreadPoolExecutor

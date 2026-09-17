@@ -1462,8 +1462,9 @@
         <span class="form-label-text">WRITE A BUNDLE</span>
         <p class="form-hint">
           Each scheduled run writes a bundle (the snapshot is inside it)
-          instead of a bare snapshot. Retention counts both kinds
-          (uploaded bundles sit outside it).
+          instead of a bare snapshot; when the database or its census is
+          over a bundle's cap, that run writes a plain snapshot instead and
+          says so. Retention counts both kinds (uploaded bundles sit outside it).
         </p>
       </label>
       <label class="field-row">
@@ -1488,10 +1489,13 @@
             After each scheduled backup, delete all but the newest N
             snapshots and bundles. <code>0</code> keeps every backup (you prune
             manually). Manual backups count toward the limit; uploaded
-            bundles and pre-restore copies never do — they stay until you
-            delete them. While every kept bundle left a member out over its
-            size cap, the newest complete bundle is kept as well, and a
-            backup stamped later than now is neither counted nor deleted.
+            bundles (from v0.51.343 on) and pre-restore copies never do — they
+            stay until you delete them; a bundle uploaded on an earlier version
+            is filed under its own stamp and counts. While WRITE A BUNDLE is on
+            and no kept backup is a complete bundle (each newer one a partial
+            bundle or a fallback snapshot), the newest complete bundle is kept
+            as well, and a backup stamped later than now is neither counted nor
+            deleted.
           </p>
         </span>
       </label>
@@ -1531,6 +1535,8 @@
       <span class="restore-pending-text">
         ⚠ A restore is staged<span id="database-restore-pending-members"></span>. <strong>Restart the motif container</strong>
         to apply it (what it replaces will be backed up first).
+        {# v0.51.344: R3-F1 — the same sentence as bundle.STAGED_DISCARDS_NOTE: the swap throws away what lands in between #}
+        What motif records until the restart — downloads, RESTORE FROM PLEX and repairs — is discarded with the database the swap replaces; the files stay on disk, untracked.
       </span>
       <button type="button" class="btn btn-tiny"
               id="database-restore-cancel-btn">// CANCEL RESTORE</button>

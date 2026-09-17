@@ -25,6 +25,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import stat
 import tarfile
 import tempfile
 import threading
@@ -36,7 +37,7 @@ from pathlib import Path
 
 from . import db_backup
 from .canonical import hash_file
-from .config_file import SECRET_MASK, is_secret_config_key, mask_config_value
+from .config_file import SECRET_MASK, _collection_alias, _unreadable_scalar, is_secret_config_key, mask_config_value  # v0.51.344: the boot's loader names an unbuildable scalar by key too — one walker, in config_file
 
 log = logging.getLogger(__name__)
 
@@ -171,7 +172,10 @@ def build_manifest(*, created_at: str, motif_version: str, schema_version: int,
 
 
 class BundleOverCap(ValueError):
-    """v0.51.344: a bundle refused for a member over its cap — a plain snapshot can still be taken."""
+    """v0.51.344: a bundle refused for a member over its cap — a plain snapshot can still be taken; `reason` is the refusal without that advice."""
+    def __init__(self, reason: str):
+        super().__init__(f"{reason} — no bundle was written; take a plain snapshot instead")  # v0.51.344: R1-F5 — the nightly's event quoted this advice and then said it had taken one
+        self.reason = reason
 
 
 def create_bundle(db_path: Path, config_dir: Path, *,
@@ -204,16 +208,17 @@ def create_bundle(db_path: Path, config_dir: Path, *,
         conn.close()
     if about > _MEMBER_CAP[MEMBER_DB] * 21 // 20:  # v0.51.344: the whole VACUUM (time + disk) was paid before this refusal; 5% over the estimate's measured 4% error
         raise BundleOverCap(f"the database is about {about} bytes, over the {_MEMBER_CAP[MEMBER_DB]}-byte cap a bundle's "
-                            "database may be — no bundle was written; take a plain snapshot instead")
+                            "database may be")
     # Same filesystem as the destination, so the final rename is atomic.
     tmp = Path(tempfile.mkdtemp(prefix=".bundle-", dir=bdir))
     try:
+        claim_temp(tmp)  # v0.51.344: R1-F20 — the temp sweep skips a create in flight, however long its VACUUM takes
         db_member = tmp / MEMBER_DB
         db_backup.vacuum_into(db_path, db_member)
         db_size = db_member.stat().st_size
         if db_size > _MEMBER_CAP[MEMBER_DB]:  # v0.51.342: written without complaint, then every restore refused it
             raise BundleOverCap(f"the database snapshot is {db_size} bytes, over the {_MEMBER_CAP[MEMBER_DB]}-byte cap a "
-                                "bundle's database may be — no bundle was written; take a plain snapshot instead")
+                                "bundle's database may be")
         members: dict[str, dict] = {
             MEMBER_DB: {"size": db_size, "sha256": _sha256_file(db_member)},
         }
@@ -243,7 +248,7 @@ def create_bundle(db_path: Path, config_dir: Path, *,
         payload = json.dumps(manifest, indent=1, sort_keys=True).encode("utf-8")
         if len(payload) > _MEMBER_CAP[MEMBER_MANIFEST]:  # v0.51.342: the census grows with the library, and inspect refuses a manifest over its cap
             raise BundleOverCap(f"the bundle manifest is {len(payload)} bytes, over the {_MEMBER_CAP[MEMBER_MANIFEST]}-byte "
-                                "cap a manifest may be — no bundle was written; take a plain snapshot instead")
+                                "cap a manifest may be")
         part = tmp / (name + ".part")
         # v0.51.339: dereference — a symlinked motif.yaml/cookies.txt was archived as a 0-byte SYMTYPE (its target path leaked) and every restore refused it.
         with tarfile.open(part, "w:gz", dereference=True) as tar:
@@ -256,6 +261,7 @@ def create_bundle(db_path: Path, config_dir: Path, *,
         part.replace(dest)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+        release_temp(tmp)
     st = dest.stat()
     log.info("backup bundle written: %s (%d bytes, %d census rows)",
              name, st.st_size, len(manifest["themes_census"]))
@@ -292,6 +298,9 @@ def create_bundle_for(settings, now_stamp: str) -> db_backup.BackupFile:
 
 CONFIG_PENDING = "motif.yaml" + db_backup.RESTORE_PENDING_SUFFIX
 COOKIES_PENDING = "cookies.txt" + db_backup.RESTORE_PENDING_SUFFIX
+# v0.51.344: R3-F1 — the stage answer, its event and the banner all say what the boot swap throws away; one sentence, so they cannot drift
+STAGED_DISCARDS_NOTE = ("What motif records until the restart — downloads, RESTORE FROM PLEX and repairs — is discarded "
+                        "with the database the swap replaces; the files stay on disk, untracked.")
 # v0.51.339: the preview masks through GET /api/config's rule (config_file.mask_config_value), never a second regex.
 MASK = SECRET_MASK
 
@@ -319,45 +328,6 @@ def _parse_error_summary(e: Exception) -> str:
     return type(e).__name__ + (f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else "")
 
 
-_UNREADABLE_WORDS = {"tag:yaml.org,2002:int": "an integer too long to read", "tag:yaml.org,2002:timestamp": "a date that does not exist"}
-
-
-def _unreadable_scalar(text: str) -> str | None:
-    """The dotted key of the first scalar YAML's safe loader cannot build, in words — never its value — or None."""
-    import yaml
-    loader, builder = yaml.SafeLoader(text), yaml.SafeLoader("")
-    try:
-        root = loader.get_single_node()
-    except yaml.YAMLError as e:
-        log.info("bundle restore: the motif.yaml does not compose (%s) — its parse error is named by type", type(e).__name__)
-        return None
-    finally:
-        loader.dispose()
-    seen: set[int] = set()
-
-    def walk(node, path: str) -> str | None:
-        if id(node) in seen:
-            return None
-        seen.add(id(node))
-        if isinstance(node, yaml.MappingNode):
-            for k, v in node.value:
-                name = k.value if isinstance(k, yaml.ScalarNode) else "?"
-                if found := walk(v, f"{path}.{name}" if path else str(name)):
-                    return found
-            return None
-        if isinstance(node, yaml.SequenceNode):
-            return next((found for v in node.value if (found := walk(v, path))), None)
-        try:
-            builder.construct_object(node)
-        except ValueError:
-            return f"{path or 'its top level'} holds {_UNREADABLE_WORDS.get(node.tag, 'a value YAML cannot read')}"
-        except Exception as e:  # v0.51.344: a tag the safe loader refuses is not the ValueError being named — look on
-            log.info("bundle restore: %s does not build either (%s)", path or "its top level", type(e).__name__)
-        return None
-    try:
-        return walk(root, "") if root is not None else None
-    finally:
-        builder.dispose()
 
 
 def flatten_config(text: str | bytes, *, side: str) -> tuple[dict[str, object], str | None]:
@@ -366,7 +336,16 @@ def flatten_config(text: str | bytes, *, side: str) -> tuple[dict[str, object], 
     the mapping ConfigFile.load() needs — logged at WARNING naming the side."""
     import yaml
     try:
-        raw = yaml.safe_load(text.decode("utf-8") if isinstance(text, bytes) else text) or {}
+        loader = yaml.SafeLoader(text.decode("utf-8") if isinstance(text, bytes) else text)
+        try:
+            node = loader.get_single_node()
+            err = _collection_alias(node)  # v0.51.344: R1-F9 — judged on the composer's graph BEFORE construct_document: its merge-key flattening consumes `<<: *a` and splices the anchored pairs in, fan^levels of them
+            if err:
+                log.warning("bundle restore: the %s motif.yaml does not parse (%s) — no config diff", side, err)
+                return {}, err
+            raw = (loader.construct_document(node) if node is not None else None) or {}  # cheap: a scalar alias constructs its node once
+        finally:
+            loader.dispose()
     except Exception as e:  # v0.51.339: was a silent {} — a full false diff, then a staged file that crashed the next boot
         # v0.51.344: a bare ValueError (an integer past Python's text limit, a date that does not exist) read only "ValueError"; a UnicodeDecodeError keeps its summary
         err = (_unreadable_scalar(text.decode("utf-8") if isinstance(text, bytes) else text) if type(e) is ValueError else None) or _parse_error_summary(e)
@@ -520,7 +499,7 @@ class _TailGuard:
     def read(self, size=-1):
         data = self._f.read(size)
         self._n += len(data)
-        if self._n > _TAIL_RAW_BUDGET:  # v0.51.344: the allowance spans the whole stream, so a trip inside the archive read "after the archive's end"
+        if self._n > _TAIL_RAW_BUDGET:  # v0.51.344: the guard is installed once for the whole file and its allowance is refreshed by each _TarFeed.read, so a trip inside the archive read "after the archive's end"
             raise _BundleTail(f"not a motif bundle: over {_TAIL_RAW_BUDGET} bytes of its gzip stream were read for too little data — "
                               "padding or empty gzip members")
         return data
@@ -533,11 +512,14 @@ class _TailGuard:
 
 
 _EXT_HEADER_CAP = 64 << 10
+_NAME_ECHO = 200  # v0.51.344: R1-F24 — how much of an unexpected member's name a refusal repeats
 _EXT_TYPES = (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE)
 
 
 class _BoundedTarInfo(tarfile.TarInfo):
     def _proc_member(self, tar):
+        if self.size < 0:  # v0.51.344: R1-F24 — a base-256 negative size charged the budget a credit; the bound leaned on tarfile's own _block guard
+            raise ValueError("not a motif bundle: a header with a negative size, which motif never writes")
         if self.type == tarfile.XGLTYPE:  # v0.51.344: a 'g' header's keys ride every later header and member as a copy — create_bundle never writes one
             raise ValueError("not a motif bundle: a global pax header, which motif never writes")
         if self.type == tarfile.GNUTYPE_SPARSE:  # v0.51.344: its extended blocks are read whole before the member gate refuses it — a 437 KiB file held 300 MiB
@@ -628,7 +610,9 @@ def _over_cap(name: str, size: int) -> str:
 def _member_refusal(m: tarfile.TarInfo, seen: dict) -> str | None:
     """Why this header is refused — judged as the stream meets it, before any of its bytes are read — or None."""
     if m.name not in MEMBERS:
-        return f"not a motif bundle: unexpected member {m.name!r}"
+        # v0.51.344: R1-F24 — a 64 KiB longname was echoed whole into the 422; the first 200 characters and the length say enough
+        shown = m.name if len(m.name) <= _NAME_ECHO else f"{m.name[:_NAME_ECHO]}…"
+        return f"not a motif bundle: unexpected member {shown!r}" + (f" ({len(m.name)} characters)" if shown != m.name else "")
     if m.name in seen:  # v0.51.342: the old extractor silently kept the LAST copy of a repeated name
         return f"not a motif bundle: {m.name} appears twice"
     if m.type not in (tarfile.REGTYPE, tarfile.AREGTYPE):  # v0.51.342: regular files only — isfile() also passed CONTTYPE and sparse members
@@ -733,6 +717,126 @@ def _remove_tree(p: Path) -> None:
     shutil.rmtree(p, onexc=warn)  # v0.51.342: was ignore_errors — an extraction left on /config went unlogged
 
 
+# v0.51.344: R1-F20 — the temps this process holds open (absolute paths); the daily sweep never removes one, whatever its age
+_LIVE_TEMPS: set[str] = set()
+_LIVE_TEMPS_LOCK = threading.Lock()
+_TEMP_SHAPES = (".bundle-", ".restore-upload.")  # the create / inspect / stage dirs and the upload's temp file
+
+
+def claim_temp(p: Path) -> None:
+    """v0.51.344: R1-F20 — mark a create / inspect / stage / upload temp as in flight, exempt from sweep_stale_bundle_temps until release_temp."""
+    with _LIVE_TEMPS_LOCK:
+        _LIVE_TEMPS.add(os.path.abspath(p))
+
+
+def release_temp(p: Path) -> None:
+    with _LIVE_TEMPS_LOCK:
+        _LIVE_TEMPS.discard(os.path.abspath(p))
+
+
+def sweep_stale_bundle_temps(config_dir: Path, db_path: Path, *, older_than_secs: int = 3600) -> int:
+    """v0.51.344: R1-F20 — remove the `.bundle-*` dirs and `.restore-upload.*` files a killed create / inspect / stage / upload stranded in the backups dir, beside motif.db and in config_dir: only past `older_than_secs` (mtime or ctime, whichever is later) and not held by this process, and under STAGING_LOCK, so never inside a staging. Returns the count removed, each logged."""
+    cutoff = time.time() - max(0, older_than_secs)
+    roots = list(dict.fromkeys((db_backup.backups_dir(config_dir), db_path.parent, config_dir)))
+    removed = 0
+    with STAGING_LOCK:
+        with _LIVE_TEMPS_LOCK:
+            live = set(_LIVE_TEMPS)
+        for root in roots:
+            try:
+                with os.scandir(root) as it:
+                    names = [e.name for e in it]
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                log.warning("bundle temp sweep: could not list %s (%s) — skipped this run", root, e)
+                continue
+            for name in names:
+                p = root / name
+                if not name.startswith(_TEMP_SHAPES) or os.path.abspath(p) in live:
+                    continue
+                try:
+                    st = p.lstat()
+                except FileNotFoundError:
+                    continue  # gone since the listing — its writer finished
+                except OSError as e:
+                    log.warning("bundle temp sweep: could not stat %s (%s) — skipped", p, e)
+                    continue
+                if max(st.st_mtime, st.st_ctime) > cutoff:
+                    continue  # fresh — a temp a moment old may be a writer that has not registered yet
+                try:
+                    if stat.S_ISDIR(st.st_mode):
+                        shutil.rmtree(p)
+                    else:
+                        p.unlink()
+                except OSError as e:
+                    log.warning("bundle temp sweep: could not remove %s (%s) — delete it by hand", p, e)
+                    continue
+                log.info("bundle temp sweep: removed stale %s", p)
+                removed += 1
+    return removed
+
+
+PARTIAL_NAMES_MARKER = ".partial-names-checked"  # v0.51.344: R1-F4 — in the backups dir once every pre-.344 bundle's manifest has been read
+
+
+def bundle_left_out(path: Path) -> list[str] | None:
+    """v0.51.344: R1-F4 — the members a bundle's manifest says were left out, read by streaming the archive once with no extraction; None when it does not read as a motif bundle."""
+    noted = None
+    try:
+        with open(path, "rb") as raw, gzip.GzipFile(fileobj=(guard := _TailGuard(raw)), mode="rb") as gz:
+            with tarfile.open(fileobj=_TarFeed(gz, guard), mode="r|", bufsize=_STREAM_BUF, tarinfo=_BoundedTarInfo) as tar:
+                for m in tar:
+                    if m.name != MEMBER_MANIFEST or not 0 <= m.size <= _MEMBER_CAP[MEMBER_MANIFEST]:
+                        continue  # the stream skips a member it does not read
+                    manifest = json.loads(tar.extractfile(m).read().decode("utf-8"))
+                    noted = manifest.get("left_out") if isinstance(manifest, dict) else None
+    except (tarfile.TarError, OSError, ValueError, EOFError, zlib.error, IndexError, RecursionError, _BundleTail) as e:
+        log.warning("bundle names: %s could not be read as a motif bundle (%s: %s) — its name is left as it is", path.name, type(e).__name__, e)
+        return None
+    return [n for n in (MEMBER_CONFIG, MEMBER_COOKIES) if isinstance(noted, dict) and isinstance(noted.get(n), dict)]
+
+
+def rename_legacy_partials(config_dir: Path) -> list[str]:
+    """v0.51.344: R1-F4 — once per install (PARTIAL_NAMES_MARKER in the backups dir): every motif-bundle-<stamp>.tar.gz whose manifest notes a member left out — the shape .342/.343 wrote — is renamed to its partial name, so retention and the list read it right. One inflate per such bundle, once; each rename logged. Returns the new names."""
+    bdir = db_backup.backups_dir(config_dir)
+    marker = bdir / PARTIAL_NAMES_MARKER
+    if marker.exists() or not bdir.is_dir():  # no backups dir yet: nothing pre-.344 to rename, and the nightly makes the dir itself
+        return []
+    try:
+        names = sorted(p.name for p in bdir.iterdir() if p.is_file())
+    except OSError as e:
+        log.warning("bundle names: could not list %s (%s) — pre-.344 bundles are checked on the next run", bdir, e)
+        return []
+    renamed: list[str] = []
+    settled = True
+    for name in names:
+        m = db_backup._BUNDLE_RE.fullmatch(name)
+        if not m:
+            continue
+        left = bundle_left_out(bdir / name)
+        if not left:
+            continue
+        new = bundle_name(m.group(1), partial=True)
+        if (bdir / new).exists():
+            log.warning("bundle names: %s left out %s, but %s already exists — its name is left as it is", name, ", ".join(left), new)
+            continue
+        try:
+            os.rename(bdir / name, bdir / new)
+        except OSError as e:
+            settled = False
+            log.warning("bundle names: could not rename %s to %s (%s) — retried on the next run", name, new, e)
+            continue
+        log.warning("bundle names: renamed %s to %s — its manifest says it left out %s", name, new, ", ".join(left))
+        renamed.append(new)
+    if settled:
+        try:
+            marker.touch()
+        except OSError as e:
+            log.warning("bundle names: could not write %s (%s) — every retained bundle's manifest is read again on the next run", marker.name, e)
+    return renamed
+
+
 def inspect_bundle(path: Path) -> BundleCheck:
     """Validate a bundle before anything is staged: a gzip tar whose members
     are only the known names, a manifest of a format this build reads, every
@@ -744,10 +848,12 @@ def inspect_bundle(path: Path) -> BundleCheck:
     except OSError as e:  # v0.51.344: mkdtemp sat outside the mapping — an ENOSPC was a wordless 500 the page blamed on a proxy
         log.error("bundle check: could not make the extraction directory beside %s (%s) — %s was not judged", path, e, path.name)
         raise _write_refused(e, path.name, "the bundle") from e
+    claim_temp(tmp)  # v0.51.344: R1-F20 — the temp sweep skips an inspection in flight
     try:
         return replace(_inspect_into(path, tmp), db_source=None)  # v0.51.342: the extraction dies with tmp — never hand out a token to a deleted file
     finally:
         _remove_tree(tmp)
+        release_temp(tmp)
 
 
 def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None = None,
@@ -766,6 +872,8 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
     # v0.51.339: a side that does not parse is named, and there is no diff — never a false "every key differs".
     parse_error: dict[str, str | None] = {"live": None, "bundle": None}
     cookies_at = str(cookies_target) if cookies_target else None
+    from . import config_file as cf
+    env_overrides = cf.env_overrides_present()  # v0.51.344: R3-F9 — the settings page's badge rule, so the card can show the same one
     if check.has_config:
         live, parse_error["live"] = flatten_config(live_bytes, side="live")
         bundle_bytes = check.config_bytes or b""  # v0.51.342: from the one pass — bundle_config_bytes re-opened the archive and inflated it twice for a few hundred bytes
@@ -775,6 +883,9 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
             other, parse_error["bundle"] = flatten_config(bundle_bytes, side="bundle")
         if not (parse_error["live"] or parse_error["bundle"]):
             diff = _diff_rows(live, other)
+            for d in diff:  # v0.51.344: R3-F9 — env wins at boot for these keys: the file changes, the running value does not (the cookies line below already applies env)
+                if d["key"] in env_overrides:
+                    d["env_override"] = env_overrides[d["key"]]
         # v0.51.341: boot reads settings.cookies_file from the config this bundle swaps in — the live path only when it carries none
         cookies_at = None if parse_error["bundle"] else _cookies_file_after_swap(bundle_bytes)
     census, counts = m.get("themes_census"), m.get("counts")
@@ -799,12 +910,14 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
                "schema_version": check.db.schema_version if check.db else None},
         "config_in_bundle": check.has_config,
         "config_diff": diff,
+        "env_overrides": env_overrides,  # v0.51.344: R3-F9 — {dotted key: env var}, as GET /api/config carries it
         "config_parse_error": parse_error,
         # v0.51.342: an over-cap cookies.txt is left out of the staging, not fatal to it — the config still restores
         "cookies": ("in bundle" if check.has_cookies and not cookies_why
                     else f"in bundle, but {cookies_why} — it is not restored, and your cookies file stays as it is" if check.has_cookies
                     else f"not in bundle — {cookies_why}; your cookies file stays as it is" if cookies_why else "not in bundle"),
         "cookies_target": cookies_at,  # v0.51.341: restored cookies land on the boot's settings.cookies_file
+        "cookies_live": str(cookies_target) if cookies_target else None,  # v0.51.344: R1-F14 — the file that stays as it is is the LIVE one; the card named the post-swap path
         "left_out": left_out,
     }
 
@@ -964,6 +1077,7 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
         except OSError as e:  # v0.51.344: mkdtemp sat outside the mapping — an ENOSPC was a wordless 500 the page blamed on a proxy
             log.error("bundle restore: could not make the extraction directory beside %s (%s) — %s was not judged", db_path, e, bundle_path.name)
             raise _write_refused(e, bundle_path.name, db_path.name) from e
+        claim_temp(tmp)  # v0.51.344: R1-F20 — the temp sweep also takes STAGING_LOCK, but the registry is the one rule for every temp
         try:
             check = _inspect_into(bundle_path, tmp, beside=db_path.name)  # v0.51.342: one pass + one integrity_check — was inspect_bundle, a second extraction, then stage_restore's own re-check
             if not check.ok:
@@ -1003,6 +1117,7 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
                     check.left_as_is[member] = f"{why} — it is not restored, and your {live} is left as it is"
         finally:
             _remove_tree(tmp)
+            release_temp(tmp)
         log.info("bundle restore staged from %s: %s; applies on next restart",
                  bundle_path.name, ", ".join(check.staged))
         for words in check.left_as_is.values():

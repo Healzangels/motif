@@ -223,9 +223,12 @@ def test_motif_shutdown_cancels_the_running_job_which_reads_cut_off_not_cancelle
         job.join(10)
     assert not job.is_alive(), "the shutdown did not cancel the running job"
     assert _status(client)["status"] == "interrupted", "a run stopped by the shutdown read as cancelled or done"
-    assert json.loads(_marker(settings).read_text()) == {"status": "running", "started_at": started,
-                                                         "actor": "testadmin"}, \
+    marker = json.loads(_marker(settings).read_text())
+    assert (marker["status"], marker["started_at"], marker["actor"]) == ("running", started, "testadmin"), \
         "the marker must still say running, so the next start reports the run cut off"
+    # v0.51.344: it carries what the run restored and skipped — the restart's page words them
+    assert (marker["restored"], marker["not_attempted"], [s["reason"] for s in marker["skipped"]]) == \
+        (2, 7, ["no_plex_copy"]), marker
     # v0.51.344: flipped — the rows a cut-off run restored are committed, so it leaves an audit row and a WARNING event
     warned = [e["message"] for e in events if e.get("level") == "WARNING"]
     assert _messages(events) == warned and len(warned) == 1, events
@@ -237,11 +240,15 @@ def test_motif_shutdown_cancels_the_running_job_which_reads_cut_off_not_cancelle
     details = json.loads(audits[0][1])
     assert (details["status"], details["restored"], details["not_attempted"]) == ("interrupted", 2, 7), details
     assert "skipped" not in details, "the audit row carries the counts, not the list"
+    assert details["skipped_reasons"] == {"no_plex_copy": 1}, details  # v0.51.344: the reasons, as a histogram
     assert any("cut off by a motif shutdown" in r.getMessage() for r in caplog.records)
     assert api_mod.canon_restore_shutdown() is None, "with no run, the exit path has nothing to join"
     _reset_job()
-    assert _status(client) == {"status": "interrupted", "started_at": started, "actor": "testadmin",
-                               "first_report": True}
+    st = _status(client)
+    assert (st["status"], st["started_at"], st["actor"], st["first_report"]) == ("interrupted", started, "testadmin",
+                                                                                 True), st
+    # v0.51.344: the restart's report carries the cut-off run's counts and skipped rows
+    assert (st["restored"], st["not_attempted"], [s["reason"] for s in st["skipped"]]) == (2, 7, ["no_plex_copy"]), st
 
 
 # ── 3: a pool refused by interpreter shutdown is a cut-off ───────────

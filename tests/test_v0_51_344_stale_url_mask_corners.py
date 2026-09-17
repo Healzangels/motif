@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from app.core.config_file import _is_masked_url_credentials, mask_url_credentials, unmask_url_credentials
+from app.core.config_file import _pre341_url_mask, mask_url_credentials, unmask_url_credentials
 from app.core.events import _SCRUB_SUBSTRINGS
 
 from tests.test_v0_51_341_config_secrets_preview import _api
@@ -33,7 +33,7 @@ _FRAGMENT_Q = [f"https://host.example/x#{a}=v?{b}=S-{i}"
 @pytest.mark.parametrize("stored", _FRAGMENT_Q)
 def test_a_342_tab_holding_a_question_mark_in_a_fragment_secret_saves_the_stored_url(tmp_path, monkeypatch, stored):
     stale = _old_mask_url_credentials(stored)
-    assert "***" in stale and not _is_masked_url_credentials(stale), "the case: a mask this build's shape check cannot see"
+    assert "***" in stale and unmask_url_credentials(stale, "") == stale, "the case: a mask only the stale-tab arm can see — read as typed with nothing stored"
     client, settings = _api(tmp_path, monkeypatch)
     assert _patch(client, "sync.database_url", stored).status_code == 200
     before = (tmp_path / "motif.yaml").read_bytes()
@@ -59,6 +59,14 @@ def test_a_340_tab_saves_the_stored_url_byte_identical(tmp_path, monkeypatch, st
     assert r.status_code == 200, r.text
     assert (tmp_path / "motif.yaml").read_bytes() == before
     assert _saved(tmp_path, settings, "sync.git_url") == (stored, stored)
+
+
+def test_the_340_stale_tab_arm_reproduces_the_340_mask_over_the_corpus():
+    # v0.51.344: pins _pre341_url_mask to the frozen oracle — reading an "@" past the authority invents a mask no .340 tab showed (a typed https://***@b.c would silently keep the stored URL)
+    urls = [u for _, u in _corpus()] + _V340 + _FRAGMENT_Q
+    assert sum("@" in u.split("://", 1)[-1].split("/", 1)[-1] for u in urls) > 100, "the corpus holds an \"@\" past the authority"
+    for u in urls:
+        assert _pre341_url_mask(u) == _v340_mask_url_credentials(u), u
 
 
 def test_every_340_mask_of_the_generated_corpus_saves_unchanged(tmp_path, monkeypatch):

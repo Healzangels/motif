@@ -292,8 +292,10 @@ def test_scheduled_job_writes_a_bundle_when_the_toggle_is_on(tmp_path, monkeypat
     logged: list[str] = []
     monkeypatch.setattr(sched, "log_event", lambda *a, **k: logged.append(k.get("message") or (a[3] if len(a) > 3 else "")))
     sched._scheduled_database_backup(S())
-    names = sorted(p.name for p in (cd / "backups").iterdir())
+    # v0.51.344: retargeted from "exactly one file in the dir" — R1-F4's one-time naming check leaves its marker there; the invariant is one listed bundle and no temp
+    names = [b.name for b in db_backup.list_backups(cd)]
     assert len(names) == 1 and names[0].startswith("motif-bundle-") and names[0].endswith(".tar.gz")
+    assert not [p.name for p in (cd / "backups").iterdir() if p.name.startswith(".bundle-")], "no temp directory left behind"
     assert any("bundle" in (m or "") for m in logged), logged
     # the toggle off → a bare snapshot, unchanged behaviour
     S.db_backup_bundle = False

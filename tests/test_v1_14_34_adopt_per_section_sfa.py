@@ -53,7 +53,7 @@ def test_do_adopt_no_longer_writes_title_global_failure_acked_at():
     revert to the title-global form."""
     src = (REPO / "app" / "core" / "adopt.py").read_text()
     fn_anchor = src.index("def _do_adopt(")
-    body = src[fn_anchor:fn_anchor + 13000]  # v1.24.1: was 10000 (ON CONFLICT grew _do_adopt)
+    body = src[fn_anchor:src.index("\ndef ", fn_anchor + 1)]  # v0.51.344: the whole function — v1.24.1's 13000-char window (was 10000) overflowed again
     # The pre-fix shape — anchored to the SET clause + the
     # bare-WHERE form (no section_id in the WHERE).
     bare_pattern = (
@@ -77,7 +77,7 @@ def test_do_adopt_writes_per_section_sfa():
     failure_kind)."""
     src = (REPO / "app" / "core" / "adopt.py").read_text()
     fn_anchor = src.index("def _do_adopt(")
-    body = src[fn_anchor:fn_anchor + 13000]  # v1.24.1: was 10000 (ON CONFLICT grew _do_adopt)
+    body = src[fn_anchor:src.index("\ndef ", fn_anchor + 1)]  # v0.51.344: the whole function — v1.24.1's 13000-char window (was 10000) overflowed again
     assert "INSERT INTO section_failure_acks" in body
     assert "auto:adopt" in body
     # The EXISTS gate prevents writing on a no-failure row.
@@ -107,7 +107,7 @@ def test_adopt_section_id_required_in_scope():
     section_id resolution past the sfa write site."""
     src = (REPO / "app" / "core" / "adopt.py").read_text()
     fn_anchor = src.index("def _do_adopt(")
-    body = src[fn_anchor:fn_anchor + 13000]  # v1.24.1: was 10000 (ON CONFLICT grew _do_adopt)
+    body = src[fn_anchor:src.index("\ndef ", fn_anchor + 1)]  # v0.51.344: the whole function — v1.24.1's 13000-char window (was 10000) overflowed again
     # The section_id pull comes BEFORE the sfa write.
     section_pull = body.index('section_id = finding["section_id"]')
     sfa_write = body.index("INSERT INTO section_failure_acks")
@@ -162,7 +162,7 @@ def test_sfa_insert_runs_against_fixture(tmp_path):
     # Extract the adopt.py sfa INSERT.
     src = (REPO / "app" / "core" / "adopt.py").read_text()
     fn_anchor = src.index("def _do_adopt(")
-    body = src[fn_anchor:fn_anchor + 13000]  # v1.24.1: was 10000 (ON CONFLICT grew _do_adopt)
+    body = src[fn_anchor:src.index("\ndef ", fn_anchor + 1)]  # v0.51.344: the whole function — v1.24.1's 13000-char window (was 10000) overflowed again
     # Locate the conn.execute("""...""" containing the sfa
     # INSERT and pull the SQL out.
     m = re.search(
@@ -232,7 +232,7 @@ def test_sfa_insert_no_op_when_no_failure_kind(tmp_path):
     # v1.24.1: widened 10000→13000 — the ON CONFLICT clauses on the
     # local_files/placements upserts grew _do_adopt, pushing the sfa INSERT
     # (~9608 chars in) past the old window so `.+?` couldn't complete.
-    body = src[fn_anchor:fn_anchor + 13000]
+    body = src[fn_anchor:src.index("\ndef ", fn_anchor + 1)]  # v0.51.344: the whole function — the 13000 window overflowed again
     m = re.search(
         r'"""(INSERT INTO section_failure_acks.+?)"""',
         body, re.DOTALL,

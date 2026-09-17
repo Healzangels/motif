@@ -463,6 +463,8 @@ _SKIP_WORDING = {
     "plex_error:": "Plex fetch failed",
     # v0.51.344: a Plex answer after motif's exit deadline is not written.
     "motif_exiting": "motif was shutting down — not written",
+    # v0.51.344: an edition swap re-keyed the row mid-run — its stamp went nowhere.
+    "row_moved": "its canonical moved mid-run — not restored",
 }
 
 

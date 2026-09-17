@@ -37,7 +37,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .canonical import canonical_theme_subdir
+from .canonical import canonical_theme_rel
 
 # v0.51.344: the shared streaming hash, kept as _hash_file — plex_enum and canonical_health import it, tests patch it
 from .canonical import hash_file as _hash_file
@@ -717,16 +717,22 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     # wrote edition_key='' + the standard folder, so adopting the Extended
     # sidecar landed on the standard edition's state.
     edition_key = edition_key_for_folder(finding["media_folder"])
-    out_dir = media_root / canonical_theme_subdir(title, year, edition_key)
+    # v0.51.344: the one spelling every canonical writer uses (media_root above stays as the themes_dir guard)
+    out_dir = settings.themes_dir / canonical_theme_rel(media_type, sec["themes_subdir"], title, year, edition_key)
     out_dir.mkdir(parents=True, exist_ok=True)
     canonical_path = out_dir / "theme.mp3"
 
     # Place the canonical file. If canonical_path already exists with the same
     # inode as source, nothing to do. Otherwise hardlink (or copy on EXDEV).
     placement_kind = "hardlink"
+    from .canonical_health import _canonical_write_lock
+    # v0.51.344: the canonical writers' path lock, inode check to replace — a RESTORE FROM PLEX mid-stage is waited out
+    _canon_lock = _canonical_write_lock(canonical_path)
+    _canon_lock.acquire()
     try:
         if canonical_path.exists():
-            if canonical_path.stat().st_ino == source_path.stat().st_ino:
+            # v0.51.344: samefile = device AND inode — a media volume's coinciding inode number is not this link
+            if os.path.samefile(canonical_path, source_path):
                 placement_kind = "hardlink"  # already linked
             else:
                 # v0.51.228 (audit): stage into a sibling tmp + atomic os.replace.
@@ -765,10 +771,20 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
             except OSError as e:
                 if e.errno != 18:  # EXDEV (cross-device)
                     raise
-                shutil.copy2(source_path, canonical_path)
+                # v0.51.344: staged like the replace branch — a copy never sits half-written at the canonical path
+                _tmp = canonical_path.with_name(canonical_path.name + ".adopt.tmp")
+                _tmp.unlink(missing_ok=True)
+                try:
+                    shutil.copy2(source_path, _tmp)
+                    os.replace(_tmp, canonical_path)
+                except OSError:
+                    _tmp.unlink(missing_ok=True)  # never strand the staged temp
+                    raise
                 placement_kind = "copy"
     except OSError as e:
         raise AdoptError(f"placement failed: {e}") from e
+    finally:
+        _canon_lock.release()
 
     # Provenance: hash/exact matches share content with motif's canonical
     # (same sha as what ThemerrDB would produce), so they earn the 'auto'

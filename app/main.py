@@ -12,6 +12,7 @@ A single SIGTERM/SIGINT triggers a clean shutdown of all three.
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sqlite3
 import sys
@@ -29,7 +30,7 @@ from .core.auth import init_auth_schema, cleanup_expired_sessions
 from .core.events import log_event
 from .core.scheduler import start_scheduler
 from .core.worker import start_worker
-from .web.api import create_app
+from .web.api import canon_restore_forget, create_app
 
 
 # v0.51.262: one definition, consumed by BOTH the stdout and the file handler —
@@ -41,8 +42,27 @@ _LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 # sync day still fits without an operator ever needing to prune by hand.
 _LOG_FILE_MAX_BYTES = 10 * 1024 * 1024
 _LOG_FILE_BACKUPS = 5
-# v0.51.344: exit's RESTORE FROM PLEX wait, then 0.5 s to close publishing and 0.5 s to flush — inside docker's 10 s grace
+# v0.51.344: exit's RESTORE FROM PLEX deadline from the signal, then 0.5 s to close publishing, its record and 0.5 s to flush — inside docker's 10 s grace
 _RESTORE_EXIT_WAIT_S = 8.0
+# v0.51.344: what uvicorn gives in-flight requests at the signal — unset, a slow backup upload or download sat in front of the deadline
+_EXIT_DRAIN_S = 2
+
+
+class _Server(uvicorn.Server):
+    # v0.51.344: exit's clock starts at the signal — uvicorn drains in-flight requests before it re-raises it to motif's handler
+    signalled_at: float | None = None
+    restore_job: threading.Thread | None = None
+
+    def handle_exit(self, sig, frame) -> None:
+        if self.signalled_at is None:
+            self.signalled_at = time.monotonic()
+            try:
+                from .web.api import canon_restore_shutdown
+                self.restore_job = canon_restore_shutdown()  # v0.51.344: the cancel lands now, not after the drain
+            except Exception as e:  # noqa: BLE001
+                logging.getLogger("motif.main").warning("could not cancel RESTORE FROM PLEX at the signal — exit "
+                                                        "cancels it after the drain: %s", e)
+        super().handle_exit(sig, frame)
 
 
 def configure_logging(level: str, config_dir: Path | None = None) -> None:
@@ -353,11 +373,23 @@ def main() -> int:
         except sqlite3.Error as e:
             log.error("Canonical health: could not clear the restored database's check results (%s) — CHANGED "
                       "shows the backup's results until the next check", e)
+        # v0.51.344: the last RESTORE FROM PLEX run's marker lives beside the database, not in it — the page read that run as this database's
+        gone = canon_restore_forget(settings)
+        if gone is not None:
+            log.warning("Canonical health: discarded the last RESTORE FROM PLEX run's result (%s, started %s by %s) — it "
+                        "was recorded in the database this restore replaced; CANONICAL HEALTH shows no last run",
+                        gone.get("status") or "unreadable", gone.get("started_at") or "?", gone.get("actor") or "?")
     else:
         # v0.51.344: a rolled-back build (.341) stamps checks with no CHANGED candidates, and no migration re-runs on return.
         try:
             n, mark = forget_unmarked_checks(settings.db_path)
-            if n:
+            if n and mark is None:
+                # v0.51.344: the first start on a build that records check marks — .342/.343 wrote these WITH CHANGED candidates
+                log_event(settings.db_path, level="INFO", component="main",
+                          message=f"Canonical health: set aside {n} check result(s) earlier builds wrote — this build "
+                                  f"records check marks for the first time; CANONICAL HEALTH reads 'Not checked yet' and "
+                                  f"CHANGED is empty until the next check (the daily 03:25 UTC pass, or RUN CHECK)")
+            elif n:
                 log.warning("Canonical health: set aside %d check stamp(s) written after the last check this build "
                             "recorded (%s) — a build without CHANGED candidates wrote them; CANONICAL HEALTH reads "
                             "'Not checked yet' for them until the next check", n, mark or "none recorded yet")
@@ -809,23 +841,29 @@ def main() -> int:
             (",".join(settings.forward_auth_trusted_proxies) or "*")
             if settings.trust_forward_auth else None
         ),
+        timeout_graceful_shutdown=_EXIT_DRAIN_S,
     )
-    server = uvicorn.Server(config)
+    server = _Server(config)
     try:
         server.run()
     finally:
         # v0.51.342: before exit joins RESTORE FROM PLEX's fetch pool — its backoffs held a docker stop past the grace.
         restore_job = None
         try:
+            # v0.51.344: again after the signal handler — a START that landed during the drain, or a lock it could not take
             from .web.api import canon_restore_shutdown
             restore_job = canon_restore_shutdown()
         except Exception as e:  # noqa: BLE001
             log.warning("could not cancel RESTORE FROM PLEX at shutdown — exit waits for its Plex fetches: %s", e)
+        if restore_job is None:
+            restore_job = server.restore_job  # v0.51.344: the run the signal found, finished or not since
         # v0.51.342: docker stop SIGKILLs 10 s after SIGTERM — a 10 s join from here (~0.6 s in) exited at 10.6 s.
-        restore_by = time.monotonic() + _RESTORE_EXIT_WAIT_S
+        # v0.51.344: one deadline from the signal — the drain and the handler's flush ran inside it, not in front of it
+        restore_by = (time.monotonic() if server.signalled_at is None else server.signalled_at) + _RESTORE_EXIT_WAIT_S
         stop_event.set()
         for _t in worker_threads:
-            _t.join(timeout=10.0)
+            # v0.51.344: daemon threads — a 10 s join each held the restore's gate open past the grace with one mid-job
+            _t.join(timeout=max(0.0, restore_by - time.monotonic()))
         if restore_job is not None:
             # v0.51.342: in-flight fetches publish and stamp first — exit froze the job mid-write (a file, no stamp)
             restore_job.join(timeout=max(0.0, restore_by - time.monotonic()))
@@ -843,6 +881,13 @@ def main() -> int:
                 else:
                     log.warning("RESTORE FROM PLEX still had a write in progress %g s into exit — exit may cut it; "
                                 "RUN CHECK after the restart", _RESTORE_EXIT_WAIT_S + 0.5)
+                try:
+                    # v0.51.344: the job cannot reach its own audit row and event in time — exit records the run
+                    from .web.api import canon_restore_exit_record
+                    canon_restore_exit_record()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("could not record the RESTORE FROM PLEX exit left waiting on Plex: %s — its running "
+                                "marker stays, so the next start reports it cut off", e)
             try:
                 # v0.51.344: the job's last event is queued after the SIGTERM handler's drain — ≤0.8 s, inside the 10 s grace
                 from .core.events import flush_events
@@ -850,7 +895,19 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001
                 log.warning("events.flush_events() after the RESTORE FROM PLEX join raised: %s — its last event "
                             "may be lost", e)
+            if restore_job.is_alive():
+                # v0.51.344: the interpreter joins the restore pool's workers at exit — one inside a Plex read held it past docker's grace
+                log.warning("RESTORE FROM PLEX is still on Plex — motif leaves without waiting for that read; RUN CHECK "
+                            "after the restart")
         log.info("motif stopped")
+    if restore_job is not None and restore_job.is_alive():
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except (OSError, ValueError) as e:
+            log.warning("could not flush stdout/stderr before leaving: %s", e)
+        logging.shutdown()
+        os._exit(0)  # v0.51.344: past its own record, exit leaves the hung Plex read to the container
     return 0
 
 

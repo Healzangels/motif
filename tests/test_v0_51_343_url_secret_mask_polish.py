@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from app.core import bundle
-from app.core.config_file import _is_masked_url_credentials, mask_config_value, mask_url_credentials, unmask_url_credentials
+from app.core.config_file import mask_config_value, mask_url_credentials, unmask_url_credentials
 
 from tests.test_v0_51_341_config_secrets_preview import _H, _api, _bundle, _live
 
@@ -33,7 +33,17 @@ def test_an_at_sign_in_the_query_or_fragment_keeps_the_host(url):
     shown = mask_url_credentials(url)
     assert urlsplit(shown).hostname == urlsplit(url).hostname, shown
     assert shown == url, "nothing secret in it — shown whole"
-    assert not _is_masked_url_credentials(shown), "PATCH must not read it as a mask"
+    assert unmask_url_credentials(shown, "") == shown, "PATCH must not read it as a mask"  # v0.51.344: the rule PATCH runs, not the dead shape helper
+
+
+@pytest.mark.parametrize("submitted, stored", [
+    ("https://***-mirror.example/x", "https://u:PW-m1@host.example/x"),
+    ("https://mirror.example/x?note=***@y", "https://u:PW-m2@host.example/x"),
+    ("https://mirror.example/x#***@y", "https://u:PW-m3@host.example/x?token=T-m3"),
+])
+def test_the_marker_is_a_mask_only_at_the_start_of_the_authority(submitted, stored):
+    # v0.51.344: pins the branch PATCH runs — "***" without its "@", or "***@" past the authority, is typed text, never the stored userinfo's slot
+    assert unmask_url_credentials(submitted, stored) == submitted
 
 
 @pytest.mark.parametrize("url, secrets, shown", [
@@ -83,7 +93,8 @@ def test_a_fragment_secret_masks_and_round_trips(url, secrets, shown):
     masked = mask_url_credentials(url)
     assert masked == shown
     assert not any(s in masked for s in secrets), masked
-    assert _is_masked_url_credentials(masked), "PATCH must recognise the fragment mask"
+    with pytest.raises(ValueError):  # v0.51.344: PATCH reads the fragment mask as a mask — refused with nothing stored behind it, never written
+        unmask_url_credentials(masked, "")
     assert unmask_url_credentials(masked, url) == url
 
 
@@ -130,7 +141,8 @@ def test_mask_config_value_masks_a_fragment_secret_on_every_userinfo_key():
      "https://host.example/x?TOKEN=B-c4&token=A-c4"),
 ])
 def test_a_masked_name_takes_its_stored_value_case_blind_in_the_submitted_spelling(submitted, stored, expected):
-    assert _is_masked_url_credentials(submitted)
+    with pytest.raises(ValueError):  # v0.51.344: a mask — refused with nothing stored behind it
+        unmask_url_credentials(submitted, "")
     assert unmask_url_credentials(submitted, stored) == expected
 
 

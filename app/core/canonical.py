@@ -77,10 +77,11 @@ def canonical_theme_subdir(
     return base
 
 
-def download_theme_rel(media_type: str, themes_subdir: str, title: str, year: str | None,
-                       edition_key: str = "") -> str:
-    """The folder a download writes theme.mp3 into, relative to themes_dir."""
-    # v0.51.344: the download worker and RESTORE FROM PLEX's in-flight check build this one path — they must not drift
+def canonical_theme_rel(media_type: str, themes_subdir: str, title: str, year: str | None,
+                        edition_key: str = "") -> str:
+    """The folder an item's canonical theme.mp3 lives in, relative to themes_dir — the one spelling every writer uses."""
+    # v0.51.344: download, UPLOAD MP3, cloud backup, ADOPT, the v55 recovery walk and RESTORE FROM PLEX's in-flight check
+    # v0.51.344: (R2-F8) all build this one path — a collection nests under collections/; nothing composes it by hand
     prefix = "collections/" if media_type == "collection" else ""
     return f"{prefix}{themes_subdir}/{canonical_theme_subdir(title, year, edition_key)}"
 

@@ -134,13 +134,19 @@ def test_with_no_mark_every_stamp_is_set_aside_once(tmp_path, monkeypatch, caplo
     plex_enum.verify_canonical_health(db, themes)
     assert _changed_ids(db, themes) == [3], "premise: a live CHANGED candidate"
     _exec(db, "DELETE FROM runtime_settings WHERE key = ?", (plex_enum.CANONICAL_CHECK_MARK_KEY,))  # a pre-.344 check
+    from app import main as main_mod
+    events: list[dict] = []
+    monkeypatch.setattr(main_mod, "log_event", lambda _db, **k: events.append(k))
     _boot(monkeypatch, cd)
     rep = _report(db, themes)
     assert rep["checked"]["never"] == rep["checked"]["tracked"] == 3
     # v0.51.344: 'Not checked yet' tells the page CHANGED is empty — a set-aside row keeps no check result.
     assert rep["changed"] == []
     assert {t: f[1:] for t, f in _flags(db).items()} == dict.fromkeys((1, 2, 3), (None, None))
-    assert len(_main_lines(caplog, logging.WARNING, "Canonical health: set aside 3 check stamp(s)")) == 1
+    # v0.51.344: the first start on this build is not a rollback — an INFO event says so, no 'without CHANGED' WARNING
+    assert _main_lines(caplog, logging.WARNING, "Canonical health: set aside") == []
+    assert [(e["level"], e["component"]) for e in events] == [("INFO", "main")]
+    assert "set aside 3 check result(s)" in events[0]["message"] and "first time" in events[0]["message"]
     assert ch.forget_unmarked_checks(db) == (0, None), "nothing left to set aside on the next boot"
     plex_enum.verify_canonical_health(db, themes)
     assert _mark(db) is not None and _report(db, themes)["checked"]["never"] == 0

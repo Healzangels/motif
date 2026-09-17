@@ -145,8 +145,13 @@ def _label(lf, data, placements, ambiguous=False) -> str:
 
 
 @pytest.mark.parametrize("lf, data, placements, expected", [
-    (None, {"plex_independent_theme": 1}, [],
+    # v0.51.344: has_theme rides along — the line keys on the player's reading (has_theme 1, verified_ok not 0), not the flag alone
+    (None, {"plex_independent_theme": 1, "plex_has_theme": 1}, [],
      "nothing on disk · Plex serves its own theme"),
+    (None, {"plex_independent_theme": 1, "plex_has_theme": 1, "plex_theme_verified_ok": 0}, [],
+     "nothing on disk · Plex serves no theme (its last verify found none)"),
+    (None, {"plex_has_theme": 1, "plex_theme_verified_ok": 0}, [],
+     "nothing on disk · Plex serves no theme (its last verify found none)"),
     (None, {"plex_has_theme": 1}, [],
      "nothing on disk · Plex is serving a theme motif no longer manages "
      "(RE-DOWNLOAD TDB takes it over, PURGE clears it)"),

@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..config import Settings
-from .canonical import download_theme_rel
+from .canonical import canonical_theme_rel
 from .db import get_conn, transaction
 from .downloader import DownloadError, FailureKind, download_theme
 from .editions import edition_key_for_folder
@@ -1774,8 +1774,8 @@ class Worker:
         # leaf so an Extended theme doesn't overwrite the standard one.
         # _dl_edition_key resolved up-front (v1.21.92) for the override
         # scope; reused here for the staging path.
-        # v0.51.344: built by the helper RESTORE FROM PLEX's in-flight check uses (collections/ nesting included)
-        out_dir = self.settings.themes_dir / download_theme_rel(
+        # v0.51.344: built by the one helper every canonical writer and RESTORE FROM PLEX's in-flight check use
+        out_dir = self.settings.themes_dir / canonical_theme_rel(
             media_type, section_subdir, theme["title"], theme["year"], _dl_edition_key)
 
         # Dry-run: log what we would do and stop here (no YouTube hit, no rate-limit token consumed)

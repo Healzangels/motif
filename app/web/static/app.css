@@ -2690,7 +2690,8 @@ body.help-mode .settings-help-about { display: block; }
 #library-bulk-bar.is-wrapped > .btn { max-width: 100%; white-space: normal; }
 /* v0.51.344: a wrapped // MORE can open a row at the left edge, where its right-anchored panel went off-screen; drop it below the bar. */
 #library-bulk-bar.is-wrapped > .row-menu { position: static; }
-#library-bulk-bar.is-wrapped .row-menu-panel { left: 0; right: auto; }
+/* v0.51.344: a panel label wider than a 360-375px bar scrolls inside the panel — the panel never paints past the viewport. */
+#library-bulk-bar.is-wrapped .row-menu-panel { left: 0; right: auto; max-width: 100%; }
 /* v1.17.18: overflow menu styling — the panel anchors to the
    right edge of the // MORE summary button (the default
    .row-menu-panel rule does this via `right: 0`). Constrain
