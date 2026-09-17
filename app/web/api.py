@@ -2171,7 +2171,8 @@ _LIBRARY_SORTS_MAIN = {
         # Pending upstream update (blue TDB ↑ pill, not yet decided)
         # — only when motif has presence in THIS section AND the URL
         # actually differs (no-op suppression).
-        "WHEN COALESCE("
+        # v0.51.345: the detection joins first, so a row with no pending_updates skips the decision subqueries.
+        "WHEN COALESCE(pu_sec.kind, pu_global.kind) IS NOT NULL AND COALESCE("
         "  (SELECT pu.decision FROM pending_updates pu "
         "    WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id "
         "      AND pu.section_id = pi.section_id AND pu.edition_key = pi.edition_key),"
@@ -2265,6 +2266,33 @@ def _loudness_marker(norm_state, has_local_file: bool,
         # `is not None`, not truthiness — mirrors the filter's SQL `file_path IS NOT NULL`.
         return "outlier" if (loudness_i is not None and loudness_i > outlier_thresh) else "raw"
     return None
+
+
+# v0.51.345: the columns post-stat reads before the slice; _LibPostStatRow raises on any other.
+_LIB_POST_STAT_COLUMNS = (
+    "file_path", "media_folder", "placement_kind", "plex_independent_theme",
+    "last_place_attempt_reason", "failure_kind", "failure_acked_at", "mismatch_state",
+)
+
+
+class _LibPostStatRow(dict):
+    def get(self, key, default=None):
+        if key not in self:
+            raise KeyError(
+                f"post-stat filter read {key!r}, which the two-phase projection does not "
+                "carry — add it to _LIB_POST_STAT_COLUMNS")
+        return dict.get(self, key, default)
+
+
+# v0.51.345: media_folder is in placements' PK, so p_e/p_g can fan a row out; pi_only can't see it.
+_LIB_PLACEMENT_FANOUT_SQL = """
+    SELECT 1 FROM placements a
+     WHERE EXISTS (SELECT 1 FROM placements b
+                    WHERE b.media_type = a.media_type AND b.tmdb_id = a.tmdb_id
+                      AND b.section_id = a.section_id AND b.edition_key = a.edition_key
+                      AND +b.rowid <> a.rowid)
+     LIMIT 1
+"""
 
 
 def _library_main_query(
@@ -2656,7 +2684,8 @@ def _library_main_query(
         #   (pending_update suppressed in v1.12.119); the filter
         #   matches that suppression.
         PENDING_EXISTS = (
-            "(CASE WHEN COALESCE("
+            # v0.51.345: t-only probe first; referencing a join alias here measured +9.6 ms.
+            "(CASE WHEN EXISTS (SELECT 1 FROM pending_updates pu_t WHERE pu_t.media_type = t.media_type AND pu_t.tmdb_id = t.tmdb_id) AND COALESCE("
             "  (SELECT pu.decision FROM pending_updates pu "
             "    WHERE pu.media_type = t.media_type "
             "      AND pu.tmdb_id = t.tmdb_id "
@@ -2877,7 +2906,8 @@ def _library_main_query(
                 # exact predicate. Class-9 mirror-drift sibling
                 # of v1.18.65's TDB-pill priority fix.
                 attn_branches.append(
-                    "(COALESCE("
+                    # v0.51.345: same t-only probe as PENDING_EXISTS, before the decision subqueries.
+                    "(EXISTS (SELECT 1 FROM pending_updates pu_t WHERE pu_t.media_type = t.media_type AND pu_t.tmdb_id = t.tmdb_id) AND COALESCE("
                     "    (SELECT pu.decision FROM pending_updates pu "
                     "      WHERE pu.media_type = t.media_type "
                     "        AND pu.tmdb_id = t.tmdb_id "
@@ -3857,7 +3887,8 @@ def _library_main_query(
                 f"        AND _ec.section_id = pi.section_id) <= 1"
             )
         slim_from = "\n        ".join(slim_parts)
-        sql_count = f"SELECT COUNT(*) {slim_from} {sql_where}"
+        # v0.51.345: the wrapper lets SQLite omit unused one-row LEFT JOINs; same rows by construction.
+        sql_count = f"SELECT COUNT(*) FROM (SELECT 1 {slim_from} {sql_where} LIMIT -1)"
         count_params = params
 
     # v1.22.93: the themes join accepts the theme_id linkage too —
@@ -3897,7 +3928,6 @@ def _library_main_query(
     # Stable secondary sort by title so equal primary keys (lots of NULLs
     # in src/link) don't shuffle on every render.
     order_clause = f"ORDER BY {order_expr} {direction}, pi.title COLLATE NOCASE ASC"
-    sql_rows = f"{sql_select} {sql_from} {sql_where} {order_clause} LIMIT ? OFFSET ?"
     # Single round-trip for the three banner-meta scalars added in v1.10.0.
     # Was three separate queries per request — now one. Each scalar is
     # already independently indexed; combining is purely a round-trip win.
@@ -3935,18 +3965,118 @@ def _library_main_query(
         # filter on. Mirrors the dl_pills / pl_pills broken case.
         or attn_needs_post_stat
     )
-    sql_rows_unbounded = f"{sql_select} {sql_from} {sql_where} {order_clause}"
+    # v0.51.345: two-phase rows — phase 1 picks the page's identities, phase 2 builds sql_select for them.
+    _order_aliases = set(re.findall(r"\b([A-Za-z_]\w*)\s*\.\s*[A-Za-z_]", order_expr))
+    if needs_post_stat_pagination:
+        phase1_mode = "post_stat"
+    elif (status == "all" and tdb == "any" and no_pills
+          and where_extra == where_pi_only and _order_aliases <= {"pi"}):
+        phase1_mode = "pi_only"
+    else:
+        phase1_mode = "full"
+    window_total = (phase1_mode == "full"
+                    and sql_count == f"SELECT COUNT(*) {sql_from} {sql_where}")
+    post_stat_cols = list(_LIB_POST_STAT_COLUMNS)
+    if attn_needs_post_stat and "update" in attn_pills:
+        post_stat_cols.append("actionable_update")
+
+    def _phase1_sql(mode: str) -> str:
+        if mode == "pi_only":
+            return (f"SELECT pi.rating_key AS _rk, NULL AS _pe, NULL AS _pg "
+                    f"{sql_from_pi_only} {sql_where} {order_clause} LIMIT ? OFFSET ?")
+        if mode == "full":
+            total_col = ", COUNT(*) OVER () AS _total" if window_total else ""
+            return (f"SELECT pi.rating_key AS _rk, p_e.media_folder AS _pe, p_g.media_folder AS _pg{total_col} "
+                    f"{sql_from} {sql_where} {order_clause} LIMIT ? OFFSET ?")
+        cols = ", ".join(f"_q.{c}" for c in ("_rk", "_pe", "_pg", *post_stat_cols))
+        return (f"SELECT {cols} FROM ({sql_select}, pi.rating_key AS _rk, p_e.media_folder AS _pe, "
+                f"p_g.media_folder AS _pg {sql_from} {sql_where} {order_clause}) AS _q")
+
+    sql_page_from = sql_from.replace(
+        "FROM plex_items pi\n", "FROM _lib_page CROSS JOIN plex_items pi\n", 1)
+    # v0.51.345: phase 2 rides sql_from verbatim, so a reshaped FROM must fail loudly, not hydrate wrong.
+    if sql_page_from == sql_from:
+        raise RuntimeError("two-phase hydration: sql_from no longer opens with 'FROM plex_items pi'")
+    sql_hydrate_from = sql_from.replace(
+        "FROM plex_items pi\n", "FROM _lib_pick CROSS JOIN plex_items pi\n", 1)
+    sql_page = (
+        "WITH _lib_page(_ord, _rk, _pe, _pg, _pin) AS ("
+        "SELECT key, json_extract(value, '$[0]'), json_extract(value, '$[1]'), "
+        "json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)), "
+        # v0.51.345: one row per slot, phase-1 folder pair first, so a mid-request placement write can't drop it.
+        "_lib_pick(_ord, _rk, _pe, _pg) AS (SELECT _ord, _rk, _pe, _pg FROM ("
+        "SELECT _lib_page._ord AS _ord, _lib_page._rk AS _rk, "
+        "p_e.media_folder AS _pe, p_g.media_folder AS _pg, ROW_NUMBER() OVER ("
+        "PARTITION BY _lib_page._ord ORDER BY (_lib_page._pin = 1 "
+        "AND p_e.media_folder IS _lib_page._pe AND p_g.media_folder IS _lib_page._pg) DESC, "
+        f"p_e.media_folder, p_g.media_folder) AS _rn {sql_page_from} "
+        "WHERE pi.rating_key = _lib_page._rk) WHERE _rn = 1) "
+        f"{sql_select}, _lib_pick._ord AS _lib_ord {sql_hydrate_from} "
+        "WHERE pi.rating_key = _lib_pick._rk "
+        "AND p_e.media_folder IS _lib_pick._pe AND p_g.media_folder IS _lib_pick._pg "
+        "ORDER BY _lib_pick._ord"
+    )
+
+    def _hydrate(conn, idents, *, pin: bool):
+        if not idents:
+            return []
+        payload = json.dumps([[rk, pe, pg, 1 if pin else 0] for rk, pe, pg in idents])
+        return conn.execute(sql_page, [payload]).fetchall()
+
+    from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
+    _out_thresh = loudness_target + _loud_margin
+
+    def _mark_loudness(rows_: list[dict]) -> None:
+        # v0.51.200 (Tag 5): the 3-state title-cell loudness marker. Derived HERE (not in
+        # SQL) so the marker and the LOUDNESS filter predicate above share ONE rule (both use
+        # the same _OUTLIER_MARGIN_DB). leveled = norm_state normalized; outlier = raw AND
+        # louder than target+margin; raw = has a local file but not yet leveled. No local
+        # file → no marker. loudness_i may be NULL (un-audited) → not an outlier, just raw.
+        # v0.51.202: the marker + filter 'outlier' use the SAME loudness DEFINITION as
+        # // LEVEL OUTLIERS but are NOT eligibility-gated (bulk_normalize_counts also requires
+        # hardlink-placed + measurement-current + under-ceiling) — so they are a SUPERSET: an
+        # unplaced / over-ceiling / stale loud row shows amber here + in the filter but the
+        # button won't level it. Intentional (spot every loud theme at a glance), not "same set".
+        # The `> ` compare matches the SQL exactly (a stored ±inf from a pre-v0.51.163 build
+        # compares the same way it does in SQLite).
+        for it in rows_:
+            # v0.51.207: via the shared _loudness_marker so this and the INFO card chip
+            # (api_item) derive the state identically — no cross-surface drift.
+            it["loudness_marker"] = _loudness_marker(
+                it.get("norm_state"), it.get("file_path") is not None,
+                it.get("loudness_i"), _out_thresh)
+            # v0.51.202: loudness_i was only needed for the derivation above — nothing
+            # client-side reads it. Drop it so it doesn't ride in every row's JSON.
+            it.pop("loudness_i", None)
+
     with get_conn(db) as conn:
+        # v0.51.345: one read snapshot, so phase 2 hydrates exactly the rows phase 1 chose.
+        conn.execute("BEGIN")
         if needs_post_stat_pagination:
             total = -1  # filled in after stat-check
             missing_count = conn.execute(sql_missing_count).fetchone()[0]
-            all_rows = conn.execute(sql_rows_unbounded, params).fetchall()
-            rows = all_rows  # paginate later
+            id_rows = conn.execute(_phase1_sql("post_stat"), params).fetchall()
+            rows = []
         else:
-            total = conn.execute(sql_count, count_params).fetchone()[0]
+            if not window_total:
+                total = conn.execute(sql_count, count_params).fetchone()[0]
             missing_count = conn.execute(sql_missing_count).fetchone()[0]
-            rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
+            if (phase1_mode == "pi_only"
+                    and conn.execute(_LIB_PLACEMENT_FANOUT_SQL).fetchone()):
+                phase1_mode = "full"
+            page_params = params + [per_page, offset]
+            id_rows = conn.execute(_phase1_sql(phase1_mode), page_params).fetchall()
+            idents = [(r["_rk"], r["_pe"], r["_pg"]) for r in id_rows]
+            rows = _hydrate(conn, idents, pin=(phase1_mode == "full"))
+            if window_total:
+                if id_rows:
+                    total = id_rows[0]["_total"]
+                elif offset == 0:
+                    total = 0
+                else:
+                    total = conn.execute(sql_count, count_params).fetchone()[0]
         meta = conn.execute(sql_meta).fetchone()
+        conn.execute("COMMIT")
     plex_enumerated = bool(meta["plex_enumerated"])
     last_plex_enum_at = meta["last_plex_enum_at"]
     last_sync_at = meta["last_sync_at"]
@@ -3955,30 +4085,14 @@ def _library_main_query(
         and last_sync_at
         and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
     )
-    items = [dict(r) for r in rows]
-    # v0.51.200 (Tag 5): the 3-state title-cell loudness marker. Derived HERE (not in
-    # SQL) so the marker and the LOUDNESS filter predicate above share ONE rule (both use
-    # the same _OUTLIER_MARGIN_DB). leveled = norm_state normalized; outlier = raw AND
-    # louder than target+margin; raw = has a local file but not yet leveled. No local
-    # file → no marker. loudness_i may be NULL (un-audited) → not an outlier, just raw.
-    # v0.51.202: the marker + filter 'outlier' use the SAME loudness DEFINITION as
-    # // LEVEL OUTLIERS but are NOT eligibility-gated (bulk_normalize_counts also requires
-    # hardlink-placed + measurement-current + under-ceiling) — so they are a SUPERSET: an
-    # unplaced / over-ceiling / stale loud row shows amber here + in the filter but the
-    # button won't level it. Intentional (spot every loud theme at a glance), not "same set".
-    # The `> ` compare matches the SQL exactly (a stored ±inf from a pre-v0.51.163 build
-    # compares the same way it does in SQLite).
-    from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
-    _out_thresh = loudness_target + _loud_margin
-    for it in items:
-        # v0.51.207: via the shared _loudness_marker so this and the INFO card chip
-        # (api_item) derive the state identically — no cross-surface drift.
-        it["loudness_marker"] = _loudness_marker(
-            it.get("norm_state"), it.get("file_path") is not None,
-            it.get("loudness_i"), _out_thresh)
-        # v0.51.202: loudness_i was only needed for the derivation above — nothing
-        # client-side reads it. Drop it so it doesn't ride in every row's JSON.
-        it.pop("loudness_i", None)
+    if needs_post_stat_pagination:
+        _ps_names = ("_rk", "_pe", "_pg", *post_stat_cols)
+        items = [_LibPostStatRow(zip(_ps_names, r)) for r in id_rows]
+    else:
+        items = [dict(r) for r in rows]
+        for it in items:
+            it.pop("_lib_ord")
+        _mark_loudness(items)
     # v1.11.62: stat the canonical for each row that has a local_files
     # entry, so the UI can render a 'DL broken' state when motif's
     # canonical was deleted out from under it but the placement
@@ -4154,6 +4268,20 @@ def _library_main_query(
         # v1.22.82: the single pagination pass (see above).
         total = len(items)
         items = items[offset:offset + per_page]
+    if needs_post_stat_pagination:
+        # v0.51.345: hydrate the page in a fresh snapshot (no read txn over the stats); only deleted items drop.
+        idents = [(it["_rk"], it["_pe"], it["_pg"]) for it in items]
+        full_rows = []
+        if idents:
+            with get_conn(db) as conn:
+                full_rows = _hydrate(conn, idents, pin=True)
+        hydrated = [dict(r) for r in full_rows]
+        ords = [h.pop("_lib_ord") for h in hydrated]
+        _mark_loudness(hydrated)
+        for h, o in zip(hydrated, ords):
+            h["canonical_missing"] = items[o]["canonical_missing"]
+            h["placement_missing"] = items[o]["placement_missing"]
+        items = hydrated
     # v1.23.70: diagnostic timing for the tab-switch-lag investigation (the user:
     # "switching between library tabs / collections sometimes feels slow"). Logs
     # a WARNING when this subquery-heavy browse query crosses the threshold, and

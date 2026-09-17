@@ -6868,7 +6868,57 @@
 #   partial bundle is inside the window. The pre-VACUUM estimate counts live
 #   pages, so a database left fragmented by deletes can be refused though its
 #   VACUUM would fit — only near the 4 GiB cap.
-__version__ = "0.51.344"
+# 0.51.345: the library query in two phases — the same rows, the same
+#   bytes, in about half the time. The operator asked for library
+#   performance (2026-09-14); on a copy of the real library the
+#   correlated subqueries the old plan named cost 2.4 ms of a 44 ms page,
+#   so they were not the target. The cost was joining and sorting the
+#   whole tab for every page, walking OFFSET rows in full, and fetching
+#   every row unbounded for the DL/PL/ATTN filters that read the disk.
+#   (1) GET /api/library picks the page first and hydrates second. Phase
+#   one selects only the page's row identities (rating_key plus each
+#   placement folder) through the unchanged FROM, WHERE and ORDER BY —
+#   the default view through plex_items alone, a filtered view through
+#   the full join with COUNT(*) OVER () as the header total, a disk-read
+#   filter through the same projection the matchers read. Phase two
+#   builds the wide columns for those identities only, pinned to the
+#   folder pair phase one saw, so a placement that moved between the two
+#   reads keeps its slot and a row deleted between them is left out
+#   rather than re-expanded (one per-slot pick, ROW_NUMBER over the
+#   page). One BEGIN … COMMIT covers the paged path; the disk-reading
+#   path stats outside any read transaction, as before. The SQL text of
+#   every predicate, sort and shared constant is unchanged, so the
+#   /api/stats donut, the CSV export and the bulk endpoints cannot drift.
+#   Four small grafts: the NEEDS WORK sort and the TDB/ATTN update
+#   filters test the title-level pending row before the per-section
+#   lookups, and the slim count wraps its FROM. Preserved on purpose,
+#   byte for byte, because this tag claims identical answers: the
+#   collections header count drift under status=placed / LINK=PU, the
+#   multi-folder duplicate rows, ATTN restore/repush ignored beside
+#   broken, the dl_missing double slice, and the unused missing_count
+#   field — 0.51.346 fixes them.
+#   (2) Measured (interleaved A/B, 9 rounds, the July library copy of
+#   17,427 items): the movies page the 2 s poll loads 38 → 22 ms; its
+#   last page 76 → 27 ms; the DL/PL on and broken and ATTN broken+fail
+#   views ~245 → ~75 ms; TDB and ATTN update 41 → 21 ms; the NEEDS WORK
+#   sort 51 → 37 ms; SELECT ALL FILTERED on movies 3.2 → 1.6 s; the sum
+#   of 94 views 4.8 → 2.9 s; views at 50 ms or more 24 → 9; a cold
+#   start's first request 39 → 24 ms. No view slower by more than 1.5 ms
+#   in most rounds. Every request makes exactly the stat calls it made
+#   before, so on a slow mount the saving is the SQL share only.
+#   (3) Proof: every page of every request shape the page can send —
+#   130 shapes over the real library copy, 9,195 pages, and a seeded
+#   edge library (multi-folder placements, stale uploads, in-flight
+#   jobs, pending updates, orphans, editions), 9,018 pages, plus a
+#   second 238-scenario matrix — is byte-identical to the old answer,
+#   key order included, under SQLite 3.43.2, 3.45.1 (the CI runner),
+#   3.46.1 (the release image) and 3.50.4. Six deliberately broken
+#   variants (the fan-out guard off, the pin off, each graft narrowed to
+#   a section, the key order moved) each fail that comparison. A write
+#   landing between the two reads was probed and pinned by tests.
+#   Upgrade note: none — no schema, config or API change; a rollback
+#   restores the old plan with nothing to migrate.
+__version__ = "0.51.345"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

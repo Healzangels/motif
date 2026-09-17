@@ -98,6 +98,7 @@ this list grows, audit every existing site.
 | Bulk PUSH predicates (3 sites) | `app.js:~13909` / `~14066` / `~16236` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
 | Bulk LPS M-sidecar gate | `app.js:~13940` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
 | SRC SQL | `api.py:_SRC_LETTER_SQL` | DB-side equivalent — must agree with JS |
+| library rows (two-phase) | `api.py` `_library_main_query` | since v0.51.345 the query picks the page's identities first and hydrates second; a post-stat filter reads only `_LIB_POST_STAT_COLUMNS` (a new matcher column must join it — `_LibPostStatRow` raises KeyError otherwise), and every predicate/sort keeps its SQL text so the mirror sites here cannot drift |
 
 The forgetting cost is **silent UX wrong-classification**:
 v1.18.0 → v1.18.24 the inline render lagged computeSrcLetter
