@@ -6509,29 +6509,30 @@
 #   over its size cap is filed as motif-bundle-partial-<stamp>.tar.gz — its
 #   manifest is the archive's last member, so only the name can say so without
 #   inflating it; the chip still reads BUNDLE and its tooltip says a member was
-#   left out. While every bundle inside the retention window is partial,
-#   retention also keeps the newest complete one (nightly partial bundles
-#   rotated out the only bundle that held cookies.txt). A backup stamped later
-#   than now (a .336–.342 upload filed under its manifest's stamp, or a backup
-#   written while the clock ran ahead) is neither counted nor deleted and is
-#   named in a WARNING, and a nightly never deletes the backup it just wrote.
-#   Two uploads in one second each get their own name
-#   (motif-bundle-upload-<stamp>-2 up to -99): the 409 "delete it first" is
-#   gone, and a second upload can no longer replace one already previewed. A
-#   bundle whose database reads more than 5% over the 4 GiB cap from its live
-#   pages is refused before its VACUUM, not after it (inside that last 5% the
-#   VACUUM is still paid, then the snapshot is measured); a scheduled bundle
-#   refused over any cap now takes a plain snapshot with a WARNING event, where
-#   the nightly wrote nothing and told you to take a snapshot yourself. The
-#   retention hint says uploads and pre-restore copies never count, and when a
-#   complete bundle is kept. Checking a bundle: tar extension headers are
-#   refused before tarfile reads their payloads — at most 64 KiB of L/K/x/X
-#   headers per archive, and a global pax header, a GNU sparse header or a pax
-#   sparse 1.0 member on sight, none of which motif writes (a 510 KiB upload
-#   whose header declared 512 MiB held 1.3 GiB before any check). A disk that
-#   refuses the extraction directory or the saved upload answers 507 (out of
-#   space) or 500 in words, where the page got a wordless 500 it blamed on a
-#   proxy; a refusal names no absolute path; a failed close never turns a
+#   left out. While every kept bundle is partial — and, with WRITE A BUNDLE on,
+#   also while the window holds no bundle at all, only fallback snapshots ((7)
+#   widened it so) — retention also keeps the newest complete one (nightly
+#   partial bundles rotated out the only bundle that held cookies.txt). A backup
+#   stamped later than now (a .336–.342 upload filed under its manifest's stamp,
+#   or a backup written while the clock ran ahead) is neither counted nor
+#   deleted, is named in a WARNING and, since (7), flagged in the backup list; a
+#   nightly never deletes the backup it just wrote. Two uploads in one second
+#   each get their own name (motif-bundle-upload-<stamp>-2 up to -99): the 409
+#   "delete it first" is gone, and a second upload can no longer replace one
+#   already previewed. A bundle whose database reads more than 5% over the 4 GiB
+#   cap from its live pages is refused before its VACUUM, not after it (inside
+#   that last 5% the VACUUM is still paid, then the snapshot is measured); a
+#   scheduled bundle refused over any cap now takes a plain snapshot with a
+#   WARNING event, where the nightly wrote nothing and told you to take a
+#   snapshot yourself. The retention hint says uploads and pre-restore copies
+#   never count, and when a complete bundle is kept. Checking a bundle: tar
+#   extension headers are refused before tarfile reads their payloads — at most
+#   64 KiB of L/K/x/X headers per archive, and a global pax header, a GNU sparse
+#   header or a pax sparse 1.0 member on sight, none of which motif writes (a
+#   510 KiB upload whose header declared 512 MiB held 1.3 GiB before any check).
+#   A disk that refuses the extraction directory or the saved upload answers 507
+#   (out of space) or 500 in words, where the page got a wordless 500 it blamed
+#   on a proxy; a refusal names no absolute path; a failed close never turns a
 #   corrupt bundle into a disk fault; a write that makes no progress fails
 #   instead of looping forever; and a gzip stream read for too little data says
 #   that, instead of naming the archive's end it never reached. Restoring a
@@ -6562,13 +6563,13 @@
 #   since), and a kill after the move leaves the incoming stamp, so the next
 #   CHECK names the bytes on disk (R2-F4 from .342: a torn publish kept the
 #   old sha and anchors).
-#   Exit: after the 8 s wait for RESTORE FROM PLEX no new write starts — a
-#   row Plex answers later is skipped as "motif was shutting down — not
-#   written" and stays broken; a run cut off by the shutdown writes its audit
-#   row and a WARNING event ("… cut off by a motif shutdown after N restored
-#   — RUN CHECK after the restart") and keeps the traceback of a real error;
-#   a run you cancelled that is still finishing when motif exits reads
-#   cancelled, not cut off.
+#   Exit: after the 8 s wait for RESTORE FROM PLEX (counted from the stop
+#   signal since (7)) no new write starts — a row Plex answers later is
+#   skipped as "motif was shutting down — not written" and stays broken; a
+#   run cut off by the shutdown writes its audit row and a WARNING event
+#   ("… cut off by a motif shutdown after N restored — RUN CHECK after the
+#   restart") and keeps the traceback of a real error; a run you cancelled
+#   that is still finishing when motif exits reads cancelled, not cut off.
 #   The page: a watched run whose status comes back idle (motif restarted
 #   before it could record the run) says so and asks for RUN CHECK, where the
 #   last progress line stayed; CHECK or REPAIR refused because a restore is
@@ -6578,19 +6579,22 @@
 #   The library row's RESTORE FROM PLEX alert uses the page's words —
 #   "Restored N; skipped M (…)" — not reason codes or a 409's JSON. A START
 #   whose thread cannot start (RESTORE FROM PLEX, the AnimeThemes sweep, the
-#   orphan scan, the loudness audit) answers a 500 saying nothing ran —
-#   RESTORE FROM PLEX returns to idle, the other three read failed — where
-#   each stayed "running" until a restart. When the run's marker file cannot
-#   be written, the warnings say what a restart will then show.
+#   orphan scan, the loudness audit) answers a 500 saying nothing ran and
+#   reads failed — RESTORE FROM PLEX too, since (7); it first returned to
+#   idle — where each stayed "running" until a restart. When the run's
+#   marker file cannot be written, the warnings say what a restart will then
+#   show.
 #   Checks: the daily 03:20 UTC temp sweep also removes a killed restore's
-#   temps beside the canonical (theme.mp3.part, theme.mp3.<16 hex>.motif-tmp)
-#   once they are an hour old, never another name. At boot, check results
-#   written after the last check this build recorded are set aside with a
-#   WARNING — the checked stamp, the CHANGED candidate and the hash-miss memo
-#   together — so a rollback to .341 and back no longer leaves "every tracked
-#   canonical was present" over a changed file until the next check (R1-F2
-#   from .342). Every check that stamps rows moves that mark, a Plex
-#   refresh's section check included.
+#   temps beside the canonical (theme.mp3.<16 hex>.part and
+#   theme.mp3.<16 hex>.motif-tmp — (7) moved the store writer off the bare
+#   theme.mp3.part, which is yt-dlp's) once they are an hour old, never
+#   another name. At boot, check results written after the last check this
+#   build recorded are set aside — the checked stamp, the CHANGED candidate
+#   and the hash-miss memo together; an INFO event on the first .344 boot, a
+#   WARNING after a rollback (7) — so a rollback to .341 and back no longer
+#   leaves "every tracked canonical was present" over a changed file until
+#   the next check (R1-F2 from .342). Every check that stamps rows moves
+#   that mark, a Plex refresh's section check included.
 #   (3) Settings & secrets. The events log redacts a secret that is a URL
 #   fragment's first parameter (#access_token= was logged in clear; a later
 #   parameter already was redacted). A saved masked parameter takes back the
@@ -6628,28 +6632,31 @@
 #   unplaced download beside a serving Plex, which loses the card's "plex
 #   serves / SERVING" row with it; a backup row whose canonical file is gone
 #   (a dropped disk — Plex still serves, the card no longer offers its
-#   player); and a deep link to a backup row that has a placement. One gap
-#   stays: on an item with has_theme 1, a failed verify and nothing on disk,
-#   the headline still says Plex serves while the player that used to report
-#   "Plex reports a theme but it did not play" is gone. If lib/quick-play.js
-#   fails to load, the card renders without its players (and without
-#   // PREVIEW AT TARGET) instead of stopping at "loading…", and the console
-#   logs one error.
+#   player); and a deep link to a backup row that has a placement. That
+#   left one gap — has_theme 1, a failed verify and nothing on disk: the
+#   headline still said Plex serves while the player that used to report
+#   "Plex reports a theme but it did not play" was gone — closed in (7). If
+#   lib/quick-play.js fails to load, the card renders without its players
+#   (and without // PREVIEW AT TARGET) instead of stopping at "loading…",
+#   and the console logs one error.
 #   (5) Library bulk bar. On a narrow screen the bar wraps when SELECT ALL
-#   FILTERED, CLEAR and // MORE cannot share one row — at 375px they painted out
-#   to about 660px; the bar and its labels now stay inside the page at 375px and
-#   up, 56 → 127px tall at rest, and // MORE opens left-aligned below it. An
-#   open // MORE panel still paints past the edge once its counts are long —
-#   364px at a 360px viewport with three-digit counts, 381px at 375px with
-#   five-digit ones — because panel labels stay on one line on purpose. A bulk
-#   result label written after layout lays the bar out again at once, and a
-#   running bulk button never moves into // MORE, so its progress and result
-#   stay in sight; the bar returns to its template order afterwards. Trade-off:
-#   the wrap is measured, not width-gated, so a long enough running or result
-#   label can wrap the bar at any width — 56 → 90px at 768px for // RESTORING
-#   i/30, and 141px at 768px or 90px at 1280px for a long failure label — and
-#   the table below shifts for as long as the action runs (an LPS watcher can
-#   run 30 min). At rest, 768px and wider stay one row.
+#   FILTERED, CLEAR and // MORE cannot share one row — at 375px they painted
+#   out to about 660px; the bar and its labels now stay inside the page at
+#   375px and up, 56 → 127px tall at rest, and // MORE opens left-aligned
+#   below it. Panel labels stay on one line on purpose; since (7) the open
+#   panel is capped at the bar's width and a long label scrolls inside it,
+#   where it painted past the edge once its counts were long (364px at a
+#   360px viewport with three-digit counts, 381px at 375px with five-digit
+#   ones). A bulk result label written after layout lays the bar out again
+#   at once — while // MORE is open, when it closes (7) — and a running bulk
+#   button never moves into // MORE, so its progress and result stay in
+#   sight; the bar returns to its template order afterwards. Trade-off: the
+#   wrap is measured, not width-gated, so a long enough running or result
+#   label can wrap the bar at any width — 56 → 90px at 768px for
+#   // RESTORING i/30, and 141px at 768px or 90px at 1280px for a long
+#   failure label — and the table below shifts for as long as the action
+#   runs (an LPS watcher can run 30 min). At rest, 768px and wider stay one
+#   row.
 #   (6) Internal. One streaming file hash, canonical.hash_file, replaces 11
 #   hand-rolled loops (the same digests, sizes and errors), with a ratchet
 #   against a second; create_bundle_for(settings, stamp) spells a live
@@ -6662,24 +6669,205 @@
 #   pin each refusal's reason and sit at the tail budgets' boundaries; the
 #   pill give-back discovery reads ops.css, @media blocks, custom properties,
 #   !important and every selector of a shared list; comment and lint nits.
-#   UPGRADE NOTE: CANONICAL HEALTH reads "Not checked yet", with CHANGED
-#   empty, after the first .344 boot until a check runs — no check has
-#   recorded its mark yet, so every earlier result is set aside; // RUN CHECK
-#   checks every row at once. After a rollback to .343 or older,
-#   motif-bundle-partial-* files and same-second uploads named -2 … -99 drop
-#   out of the backup list — not shown, downloaded, deleted or pruned — so
-#   delete them from a shell (or before rolling back); back on .344, the
-#   older build's check results are set aside again. A backup whose stamp
-#   has non-ASCII digits is still unlisted (since .343) and never counted, so
-#   it cannot outrank a new backup; remove it from a shell. A backup dated in
-#   the future is no longer pruned: delete it from the backup list (motif.log
-#   names it at each scheduled backup). A nightly that falls back to a
-#   snapshot counts toward retention like any snapshot, and the
-#   complete-bundle keep applies only while a bundle is inside the window, so
-#   nightly fallbacks rotate the older bundles out after N nights. The
-#   pre-VACUUM estimate counts live pages, so a database left fragmented by
-#   deletes can be refused though its VACUUM would fit — only near the 4 GiB
-#   cap.
+#   (7) From the integration review of the merged tag. Backups & bundles:
+#   the first nightly after this upgrade reads each pre-.344 bundle once
+#   and renames any that .342/.343 wrote with motif.yaml or cookies.txt
+#   left out to motif-bundle-partial-<stamp>.tar.gz, logging each rename;
+#   the marker backups/.partial-names-checked records that the pass ran, so
+#   retention can no longer prune the wrong one. While WRITE A BUNDLE is
+#   on, retention keeps the newest complete bundle whenever no kept backup
+#   is one (each newer one a partial bundle or a fallback snapshot) — (1)'s
+#   keep applied only while a partial bundle sat in the window, so a run of
+#   fallback snapshots rotated every complete bundle out; with the toggle
+#   off that narrower rule stands. The retention hint says so, and the
+#   WRITE A BUNDLE hint says an over-cap run writes a plain snapshot. A
+#   backup stamped after now is flagged in the backup list, and its chip
+#   says retention neither counts nor deletes it; bundles uploaded in the
+#   same second list newest first by their -N. The restore preview refuses
+#   a motif.yaml that aliases a list or mapping, a merge key (<<: *anchor)
+#   included, naming the key — motif never writes either, and a chain of
+#   them could grow without bound while the preview held the staging lock;
+#   boot refuses the same file with the same words. Restore such a bundle's
+#   database with KEEP MY CURRENT CONFIG, or fix the file. A bundle header
+#   that declares a negative size is refused before it is read, and a
+#   refusal for an unexpected member echoes at most 200 characters of its
+#   name plus its length. A disk fault while an upload is being named
+#   answers 507 (no space) or 500 in the error's own words; every name for
+#   that second being taken answers 409 — try the upload again. Staging a
+#   database restore — a listed snapshot, a bundle's // STAGE RESTORE
+#   confirm, or an uploaded snapshot — is refused with a 409 while RESTORE
+#   FROM PLEX runs, as RUN CHECK and REPAIR ALL are; bundle previews and
+#   uploads still show their preview. The stage answer, its event and the
+#   settings banner say that what motif records until the restart
+#   (downloads, RESTORE FROM PLEX and repairs) is discarded with the
+#   database the swap replaces, the files staying on disk untracked — so
+#   restart promptly after staging, and RUN CHECK before REPAIR ALL after.
+#   The preview names your live cookies file as the one that stays, and the
+#   path motif reads after the swap only when the bundle's config names a
+#   different one; its config diff shows the settings page's // ENV
+#   OVERRIDE badge on each changed key an environment variable pins ("<VAR>
+#   is set — the file changes, the running value does not"), the summary
+#   line counts those keys, and the preview JSON carries env_overrides and
+#   env_override on those rows. The 03:20 sweep also removes the .bundle-*
+#   and .restore-upload.* temps a killed backup, inspection, staging or
+#   upload left behind, past the one-hour age gate, logging each.
+#   CANONICAL HEALTH & restores: a docker stop during RESTORE FROM PLEX now
+#   fits docker's 10 s grace whatever else is in flight — the exit deadline
+#   counts from the stop signal, in-flight requests get 2 s before uvicorn
+#   cancels them, a worker mid-download no longer holds the restore's
+#   publish gate open, and when the run is still on a Plex request that
+#   never answers, motif writes its record and leaves ("motif leaves
+#   without waiting for that read", then "motif stopped") where docker
+#   killed it mid-wait. A run still on Plex at the deadline has its audit
+#   row and event written by the exit itself — cut off, or cancelled with
+#   its result when you had pressed cancel — so the next start no longer
+#   reports a cancelled run as cut off by a restart; the marker keeps the
+#   run's counts and skip reasons, so after the restart the cut-off line
+#   ends with them (rows Plex answered for after the deadline read "motif
+#   was shutting down — not written") and the audit row carries a
+#   per-reason histogram (skipped_reasons). A START whose thread cannot
+#   start reads as a failed run in words for RESTORE FROM PLEX too ("motif
+#   could not start a thread (…); nothing ran"), not the idle page a
+#   watching tab took for a restart; on the AnimeThemes, loudness-audit and
+#   orphans pages the same failure shows motif's words instead of a JSON
+#   blob or a bare "500: Internal Server Error". If motif restarts during a
+#   run whose start marker could not be written, the watching page says
+#   the run stopped without a result and asks for RUN CHECK, listing the
+#   earlier run's marker as "last run …" rather than as this run's result.
+#   A database restored at boot also discards the last RESTORE FROM PLEX
+#   run's record, written against the database the restore replaced (one
+#   "discarded the last RESTORE FROM PLEX run's result" line; the page
+#   shows no last run until the next one). The first start on this build
+#   sets earlier builds' check results aside with an INFO event ("this
+#   build records check marks for the first time … CHANGED is empty until
+#   the next check"); the "a build without CHANGED candidates" WARNING now
+#   appears only after a real rollback. The run no longer ends when another
+#   writer holds the database lock while a row's incoming size and sha are
+#   stamped — the stamp waits through the same retry ladder as every other
+#   canonical writer, and a write-back that still loses the lock is logged
+#   and skipped for that row only. The link_failed / write_failed skip
+#   reasons on the page and in the restore status carry the error's words
+#   ("No space left on device"), never a path (the log keeps it). A restore
+#   whose read-back fails after the bytes landed records the size and sha
+#   of what it wrote, so the next CHECK no longer lists a freshly restored
+#   file as CHANGED and REPAIR no longer offers to re-download it. A row an
+#   edition swap re-keyed mid-run is skipped as "its canonical moved
+#   mid-run — not restored", never counted restored; a Plex answer that
+#   raises while it is read neither counts toward nor resets the no-answer
+#   stop rule; a present canonical with no recorded size or sha is a
+#   CHANGED candidate. Every writer of a canonical — download, UPLOAD MP3,
+#   DOWNLOAD PLEX BACKUP, ADOPT and the v55 recovery walk — spells the path
+#   one way, so a collection's hand-uploaded or Plex-backed theme lands
+#   under themes/collections/<library>/ where its download would, and a
+#   later download replaces it in place instead of recording a second file
+#   and leaving the first unreferenced on disk; renaming a Plex library
+#   folder moves the section's themes/collections/<old> tree and its rows
+#   with the plain tree (if that tree cannot be moved the log says so and
+#   its rows stay with their files). UPLOAD MP3 writes its canonical
+#   through a sibling temp and an atomic replace under the path's writer
+#   lock, so it can no longer write into an inode a restore is filling;
+#   ADOPT FROM PLEX and the sidecar adopt decide "already this link" by
+#   device and inode together, so a canonical whose inode number merely
+#   coincides with the Plex file's on another volume is replaced by the
+#   staged copy as before, not skipped with a success. The 03:20 sweep:
+#   RESTORE FROM PLEX's store writer stages to theme.mp3.<16 hex>.part and
+#   the sweep takes only motif's two unique staging names — never yt-dlp's
+#   own theme.mp3.part beside a queued or stalled download, which (2) had
+#   it taking; a crashed placement's leftover hardlink temp is aged by its
+#   own modification time, so a later placement of the same theme no longer
+#   keeps it alive night after night; the sweep waits at most 2 s for a
+#   canonical a restore is writing and leaves its temps for the next night,
+#   so a stuck restore can no longer keep motif from exiting on a docker
+#   stop; it looks one folder deep under each library's themes folder (and
+#   collections/), so leftovers in a folder the database no longer knows —
+#   after a database restore or an UNMANAGE — are cleaned too, the count
+#   walked logged; and a local_files or plex_items row whose path cannot be
+#   opened (an embedded NUL) is skipped instead of failing the whole job
+#   without a count.
+#   Settings & secrets: the events table, the /api/progress activity feed
+#   and outbound notification text redact a URL password that holds an
+#   unencoded "?", "#", "/" or "@", and a credentialed URL nested inside
+#   another URL's query or fragment (or joined by a comma, or inside
+#   compact JSON) — everything .343 hid plus the settings page's masking
+#   rule. A sync URL saved with such a password reads "***@host" in new
+#   events; existing rows are not rewritten. Sending null for a text
+#   setting through PATCH /api/config saves that setting's default (what
+#   motif.yaml's loader gives a null leaf, per (3); sync.cron: null too,
+#   once a 400) instead of an empty string, and clearing the COOKIES FILE
+#   field saves the default path shown as its placeholder
+#   (/config/cookies.txt) — an empty path read as the current directory,
+#   and every download then failed copying the "cookies file"; the five
+#   secret fields (plex.token, the API keys, downloads.proxy_url,
+#   notifications.apprise_external_url) still clear on null. A hand-edited
+#   cookies_file: '' on disk is unaffected (the loader keeps the file's
+#   spelling) — set the path or delete the line. A motif.yaml value YAML
+#   can parse but cannot build — a date that does not exist, an integer
+#   past Python's 4,300-digit limit — stops boot with "motif.yaml: <key>
+#   holds a date that does not exist" / "… an integer too long to read"
+#   instead of a raw ValueError, the words the restore preview already
+#   used for that file.
+#   The INFO card and the pages: a card with nothing on disk says "Plex
+#   serves no theme (its last verify found none)" when motif's last check
+#   of Plex found none, matching the missing player and the row's SRC
+#   letter — the headline says Plex serves only while the card's Plex
+#   player shows, which closes the gap (4) left. Library bulk bar: while
+#   // MORE is open, a running action's progress writes no longer rebuild
+#   the menu — a click in it lands, focus and scroll stay, and the bar lays
+#   out again when the menu closes; the wrapped panel is capped at the
+#   bar's width, so a long label parked in the menu scrolls inside the
+#   panel instead of painting past the screen — the overflow (5) measured
+#   at 360 and 375px is closed.
+#   Internal: canonical writers take the path's lock before publishing's
+#   gate, the incoming stamp follows the staged write, the hardlink leg
+#   hashes once, the publish gate covers the sidecar restore and the bulk
+#   stops queueing rows once it closes; the in-flight download memo is
+#   keyed per database file (two databases in one process — test runs,
+#   tooling — never answer a restore from each other's backlog) and moves
+#   with the download backlog; canon_restore_shutdown takes its lock
+#   non-blocking (a blocking take on the event-loop thread deadlocked
+#   against a status poll); unmask binds masked parameters in O(k), exact
+#   spelling within the same segment first, the secret-name regexes are
+#   linear, and the dead _is_masked_url_credentials guards are retargeted;
+#   _unreadable_scalar and _collection_alias sit in config_file, read by
+#   the boot loader and the preview alike. tests/conftest.py resets
+#   canonical_health's publish gate, lock and in-flight memo and the
+#   restore job's shutdown latch before every test, and the os.environ
+#   restore is pinned per test (a test that wrote os.environ bare leaked
+#   into the next test in its module, not only the next module);
+#   test_v0_51_261's _BUDGET is 1467.
+#   UPGRADE NOTE: CANONICAL HEALTH reads "Not checked yet", with CHANGED empty,
+#   after the first .344 boot until the daily 03:25 UTC pass or // RUN CHECK —
+#   no check has recorded its mark yet, so every earlier result is set aside,
+#   and an INFO event says so (one-time; nothing on disk is touched). The first
+#   nightly after the upgrade reads every pre-.344 bundle once and renames those
+#   that left a member out to motif-bundle-partial-<stamp>.tar.gz (one-time; the
+#   marker backups/.partial-names-checked records the pass). Collection themes
+#   uploaded or cloud-backed on earlier builds sit at themes/<library>/…; they
+#   keep working as they are (every reader follows the recorded path), and the
+#   next upload, backup or download for that collection writes the collections/
+#   path and leaves the older file on disk for you to remove. A bare
+#   theme.mp3.part stranded by a pre-.344 publish is no longer swept — remove it
+#   by hand, or re-download the title (a new publish never reuses it). After a
+#   rollback to .343 or older, motif-bundle-partial-* files and same-second
+#   uploads named -2 … -99 drop out of the backup list — not shown, downloaded,
+#   deleted or pruned — so delete them from a shell (or before rolling back);
+#   back on .344, the older build's check results are set aside again, with the
+#   rollback WARNING. A rollback stops appending the counts line to a cut-off
+#   run and loses the staging refusal and the // ENV OVERRIDE badge; no schema
+#   or file format changed — the marker's new keys are additive and older builds
+#   ignore them — and a row a restore stamped after a failed read-back keeps its
+#   published sha on either build. A backup whose stamp has non-ASCII digits is
+#   still unlisted (since .343) and never counted, so it cannot outrank a new
+#   backup; remove it from a shell. A backup dated in the future is no longer
+#   pruned: it is flagged in the backup list and its chip says so (motif.log
+#   names it at each scheduled backup) — delete it there. A nightly that falls
+#   back to a snapshot counts toward retention like any snapshot; with WRITE A
+#   BUNDLE on, the newest complete bundle is kept whenever no kept backup is
+#   one, so a run of fallback snapshots or partial bundles no longer rotates the
+#   last complete bundle out — with it off, the keep applies only while a
+#   partial bundle is inside the window. The pre-VACUUM estimate counts live
+#   pages, so a database left fragmented by deletes can be refused though its
+#   VACUUM would fit — only near the 4 GiB cap.
 __version__ = "0.51.344"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +

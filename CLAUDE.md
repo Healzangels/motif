@@ -89,14 +89,14 @@ this list grows, audit every existing site.
 
 | Site | File:line | Purpose |
 |---|---|---|
-| `computeSrcLetter` | `app.js:~11196` | SRC pill T/U/A vs P/– classification |
-| `renderLibraryRow` inline-SRC | `app.js:~11453` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
+| `computeSrcLetter` | `app.js:~11231` | SRC pill T/U/A vs P/– classification |
+| `renderLibraryRow` inline-SRC | `app.js:~11488` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
 | row quick-play | `lib/quick-play.js` (the rule, plus the `fileSrc` / `plexSrc` URL builders the INFO card's four players share since v0.51.343; loaded by base.html + required by `tests/js/test_quick_play.js`) · `app.js` `quickPlayToggle` / `bindQuickPlay` / the slot in `renderLibraryRow` | the row's leading ▶ plays what the INFO card headline says plays (v0.51.333); since v0.51.344 `computeQuickPlay` also gates the INFO card's Plex player, and every `window.motifQuickPlay` call in app.js is guarded (one `console.error` at boot when the lib is missing) |
 | SRC filter prune | `lib/src-filter.js` `keepOfferedLetters` (loaded by base.html + required by `tests/js/test_src_filter.js`) · `app.js` `_pruneSrcFilterToOfferedChips` in `loadLibrary` + the SRC ALL branch | the filter holds only letters whose chip this page offers — AT off /anime, A/M on /collections; no server gate on purpose (at- ids come from URL shape) (v0.51.338) |
-| `updateLibrarySelectionUi` selection bucket | `app.js:~13717` | themed-vs-not counts for bulk-bar (v1.18.24) |
-| `isPlexAgentRow` | `app.js:~17644` | "Plex already supplying" confirm prompt gate (v1.18.75) |
-| Bulk PUSH predicates (3 sites) | `app.js:~13874` / `~14031` / `~16193` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
-| Bulk LPS M-sidecar gate | `app.js:~13905` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
+| `updateLibrarySelectionUi` selection bucket | `app.js:~13752` | themed-vs-not counts for bulk-bar (v1.18.24) |
+| `isPlexAgentRow` | `app.js:~17687` | "Plex already supplying" confirm prompt gate (v1.18.75) |
+| Bulk PUSH predicates (3 sites) | `app.js:~13909` / `~14066` / `~16236` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
+| Bulk LPS M-sidecar gate | `app.js:~13940` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
 | SRC SQL | `api.py:_SRC_LETTER_SQL` | DB-side equivalent — must agree with JS |
 
 The forgetting cost is **silent UX wrong-classification**:
@@ -698,7 +698,16 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
   log scrubber (`app/core/events.py`) redacts: (a) `detail` dict VALUES
   whose KEY contains `token|secret|password|cookie|auth|api_key|bearer`
   etc., (b) URL userinfo (`://user:pass@host` → `://***@host`) in any
-  string, and (c) sensitive URL query params (`?token=`/`?X-Plex-Token=`/
+  string — since v0.51.344 with the settings mask's rule (`_split_userinfo`:
+  userinfo runs to the LAST `@` before the first `?` or `#`, so a password
+  holding `/` or `@` is hidden; one holding `?` or `#` is caught by the
+  pre-.344 first-`@` pass below), one URL at a time
+  (`_URL_CREDENTIALS_RE` stops at `?`/`#`, so a credentialed URL nested in
+  another URL's query or fragment is redacted on its own; two joined by a
+  comma, or packed in compact JSON, are redacted as one run — the secrets
+  go, and the first URL's host with them), plus the pre-.344 first-`@` pass
+  run LAST so nothing .343 hid shows —
+  and (c) sensitive URL query params (`?token=`/`?X-Plex-Token=`/
   `?api_key=` → `=***`) as of v1.21.17, and fragment params too — a
   fragment's first one (`#access_token=`) since v0.51.344, through the same
   `_URL_PARAM_SECRET_RE` the settings mask uses. It does NOT pattern-match secret

@@ -74,7 +74,11 @@ uses for `P`. The INFO card headline's backup sentence uses the same test (v0.51
 a backup row whose item has no Plex theme (has_theme 0) or whose theme failed
 verify (verified_ok 0) reads "… on disk as backup · Plex serves no theme
 (PROMOTE TO ACTIVE deploys it)" (v0.51.344; has_theme 0 does not record that
-Plex ever served), and its row ▶ plays motif's file. Since v0.51.344 the INFO
+Plex ever served), and its row ▶ plays motif's file. The nothing-on-disk
+headline uses the same test too (v0.51.344, R1-F15): has_theme 1 with
+verified_ok 0 reads "nothing on disk · Plex serves no theme (its last verify
+found none)", matching the absent player and the row's `–` — the headline says
+"Plex serves" only while the card's Plex player shows. Since v0.51.344 the INFO
 card's Plex player (bare card, deep link, loaded row) renders exactly when
 `computeQuickPlay` returns kind `plex`. A 204 from the Plex proxy (Plex claims
 a theme it will not serve, or Plex unreachable) reverts the glyph and the

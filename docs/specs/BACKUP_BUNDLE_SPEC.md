@@ -67,16 +67,33 @@ under the partial shape: the manifest is the archive's LAST member, so only the
 name can say so without inflating the archive. `create_bundle` refuses a stamp
 that already has a bundle of either shape. The list rows carry `partial`.
 
-`prune_backups(config_dir, retention, now_stamp=, keep=)` runs after each
-scheduled backup. It keeps the newest `retention` names that count and deletes
-the older ones, with three exceptions: it never deletes `keep` (the file the
-job just wrote); a name stamped later than `now_stamp` (read after the create)
-is neither counted nor deleted, with a WARNING naming it; and while every
-bundle inside the window is partial, the newest complete bundle below the
-window is kept as well (logged). With no bundle inside the window (bundle mode
-off, or nightly fallback snapshots) that keep does not apply. A name whose
-stamp has non-ASCII digits matches no shape, so it is never listed, counted
-or pruned.
+`prune_backups(config_dir, retention, now_stamp=, keep=,
+protect_complete_bundle=)` runs after each scheduled backup. It keeps the
+newest `retention` names that count and deletes the older ones, with three
+exceptions: it never deletes `keep` (the file the job just wrote); a name
+stamped later than `now_stamp` (read after the create) is neither counted nor
+deleted, with a WARNING naming it — `list_backups(now_stamp=)` flags such a
+row `future`, and its chip in the list says so (R1-F21); and the newest
+complete bundle below the window is kept as well (logged) while no kept
+backup is a complete bundle: with `protect_complete_bundle` (the scheduler
+passes WRITE A BUNDLE) whenever the window holds none — every kept name a
+partial bundle or a fallback snapshot — and without it only while the window
+holds at least one bundle and every one is partial (R1-F5; the first .344
+rule let a run of fallback snapshots rotate every complete bundle out). A name
+whose stamp has non-ASCII digits matches no shape, so it is never listed,
+counted or pruned. Same-second uploads sort newest first by their `-N` (the
+bare name as 1, so `-10` sits above `-2` and the bare upload last of its
+second; before R1-F22 the name sort put `-10` below `-2`).
+
+(v0.51.344, R1-F4) v0.51.342/.343 wrote a bundle that left a member out under
+the complete name. `bundle.rename_legacy_partials(config_dir)` runs at the
+start of each nightly until it settles: with no `backups/.partial-names-checked`
+marker it streams each `motif-bundle-<stamp>.tar.gz` once (`bundle_left_out`,
+the manifest only, no extraction) and renames any whose manifest notes
+`left_out` to `motif-bundle-partial-<stamp>.tar.gz`, logging each; a bundle it
+cannot read, or whose partial name already exists, keeps its name. The marker
+is written once every rename succeeded, so a failed rename is retried the next
+night; a failure of the pass itself is logged and the nightly goes on.
 
 Not in the bundle: the theme files. 13 GB of already-compressed MP3 is a job
 for the appdata / share backup tools the box already runs (or `rsync`); an
@@ -139,16 +156,23 @@ leading with a kind chip — `BUNDLE` (green), `SNAPSHOT` (dim), `PRE-RESTORE`
 one list endpoint; the name gate admits `motif-bundle-<stamp>.tar.gz`). An
 uploaded or a partial bundle keeps the `BUNDLE` chip; its tooltip says it sits
 outside retention, or that `motif.yaml` or `cookies.txt` was left out over its
-size cap when it was made (v0.51.344).
+size cap when it was made (v0.51.344). A retained row stamped after now
+(`future`) sits at the top of the list and its chip tooltip leads with
+"stamped after now — retention neither counts nor deletes it; delete it here
+if it is not wanted" (R1-F21; before that only the container log said so).
 
 **SCHEDULED BACKUPS.** One more checkbox under ENABLE: `WRITE A BUNDLE` —
 "each scheduled run writes a bundle (the snapshot is inside it) instead of a
-bare snapshot; retention counts both kinds." Off by default so an existing
-schedule keeps its behaviour until the operator opts in. (v0.51.344) Both
-hints say uploaded bundles sit outside retention; the retention hint adds that
-pre-restore copies never count, that the newest complete bundle is kept while
-every kept bundle left a member out, and that a backup stamped later than now
-is neither counted nor deleted. The scheduler and `// CREATE BUNDLE NOW` both
+bare snapshot; when the database or its census is over a bundle's cap, that
+run writes a plain snapshot instead and says so; retention counts both kinds."
+Off by default so an existing schedule keeps its behaviour until the operator
+opts in. (v0.51.344) Both hints say uploaded bundles sit outside retention
+(from v0.51.343 on — a bundle uploaded on an earlier version is filed under
+its own stamp and counts); the retention hint adds that pre-restore copies
+never count, that while WRITE A BUNDLE is on and no kept backup is a complete
+bundle (each newer one a partial bundle or a fallback snapshot) the newest
+complete bundle is kept as well, and that a backup stamped later than now is
+neither counted nor deleted. The scheduler and `// CREATE BUNDLE NOW` both
 call `bundle.create_bundle_for(settings, now_stamp)`, the one spelling of a
 live install's `create_bundle` arguments.
 
@@ -170,13 +194,35 @@ staged, shows a **restore preview** card:
   (v0.51.344) A value YAML cannot build is named by its dotted key — `<key>
   holds an integer too long to read` / `a date that does not exist` — never by
   its value; a diff value past Python's int-to-text limit shows as `(a N-bit
-  integer, too long to show)`.
+  integer, too long to show)`. `_unreadable_scalar` lives in `config_file`
+  and the boot loader reads it too, so such a file stops boot with
+  `motif.yaml: <key> holds …` instead of a raw `ValueError` (R3-F11).
+- (v0.51.344, R1-F9) a `motif.yaml` that aliases a list or mapping — `*anchor`
+  on a sequence or a mapping, a merge key `<<: *anchor` included — is refused
+  on the composer's graph before anything is built (`config_file.
+  _collection_alias`, before `construct_document`): `<key> is a YAML alias of
+  a list or mapping, which motif never writes` (a merge key reports as
+  `<parent>.<<`). A chain of them (a YAML alias bomb) expands without bound at
+  construction and held `STAGING_LOCK` while it did; the walk is bounded by
+  the file. The same walk runs first in `config_file.load_config_text`, so the
+  boot refuses the same file with the same words (`motif.yaml: <key> is a YAML
+  alias …`). Such a bundle's database restores with KEEP MY CURRENT CONFIG.
 - (v0.51.344) a manifest `created_at` that is not an ISO stamp comes back null
   and the line reads `date unknown` (an upload's name never reads it); the
-  cookies line names `cookies_target` whenever it is known, so a cookies file
-  the restore leaves as it is is named too; the STAGE confirm names only the
+  cookies line names the LIVE file (`cookies_live`) as the one that stays, and
+  `cookies_target` — the path the boot reads after the swap — only when the
+  bundle's config names a different one (R1-F14; the first .344 cut named the
+  post-swap path as the file that stays); the STAGE confirm names only the
   members the restore replaces, with one "stays as it is" clause for each it
   leaves live.
+- (v0.51.344, R3-F9) each `config_diff` row whose key an environment variable
+  pins carries `env_override: <VAR>`, and the preview carries `env_overrides`
+  (`{dotted key: env var}`, as GET `/api/config` does, from
+  `config_file.env_overrides_present`); the card renders the settings page's
+  `// ENV OVERRIDE` badge on those rows, titled `<VAR> is set — the file
+  changes, the running value does not`, and the summary line counts them
+  (`N keys differ … (K under an env override — …)`). The restore writes the
+  file; the running value stays the variable's.
 
 `// STAGE RESTORE` then stages the DB (as today) plus the config and cookies;
 the pending banner reads "A restore is staged (database + config)". At boot
@@ -211,10 +257,25 @@ was left out when the bundle was made (N bytes, over its C-byte cap)`, then `—
 it is not restored, and your motif.yaml | cookies file is left as it is`. The
 response's `left_as_is` is a list of `{member, why}` (a `cookies.txt` key
 would be redacted by the events scrubber), its `message` — the restore card's
-line — ends with each `why` as a sentence, and the WARNING event reads
-`…; applies on restart.` plus the same sentences (a restore that leaves
-nothing live keeps its message byte-identical), with `left_as_is` in its
-detail.
+line — ends with `bundle.STAGED_DISCARDS_NOTE` and then each `why` as a
+sentence, and the WARNING event reads `…; applies on restart.` plus the note
+plus the same sentences, with `left_as_is` in its detail (R3-F1). The note —
+"What motif records until the restart — downloads, RESTORE FROM PLEX and
+repairs — is discarded with the database the swap replaces; the files stay on
+disk, untracked." — is one constant, so the stage answer, the event and the
+settings page's pending banner cannot drift (the banner carries it as a
+literal; `tests/test_v0_51_344_restore_staging_gate.py` holds it to the
+constant); a snapshot staging's answer and event carry it too. Restart
+promptly after staging, and RUN CHECK before REPAIR ALL afterwards.
+
+(v0.51.344, R3-F1) While RESTORE FROM PLEX runs, staging — a listed snapshot,
+a bundle's `// STAGE RESTORE` confirm, or an uploaded snapshot — is refused
+with a 409 `RESTORE FROM PLEX is running — stage the restore when it
+finishes`, the gate RUN CHECK and REPAIR ALL already had (check-then-act under
+`_CANON_RESTORE_LOCK`); a bundle preview or a bundle upload still previews.
+The upload's gate runs after the body is read (the bundle-or-snapshot decision
+needs the bytes) and before its temp is written, so a 409 leaves no
+`.restore-upload.*` behind.
 
 (v0.51.342) Create and restore read one member-cap table: database 4 GiB,
 manifest 64 MiB, `motif.yaml` 1 MiB, `cookies.txt` 16 MiB. An over-cap
@@ -301,17 +362,33 @@ Mirrors the four snapshot endpoints under one list:
   upload renamed onto it. Two uploads in one second get two names — the 409
   "delete it first" is gone, and an upload already previewed is never
   replaced — and identical bytes uploaded twice are two files. With all 99
-  names of a second taken the answer is a 503 ending "try the upload again".
+  names of a second taken the answer is a 409 ending "try the upload again"
+  (R1-F10 — it was a 503, which the page reads, like any 502–504, as the
+  proxy timing out).
 - A disk fault before a bundle is judged is a 507 (ENOSPC / EDQUOT) or a 500 in
   words, never a wordless 500: the extraction directory for a check or a
   staging — `could not write the extraction beside the bundle | motif.db
   (<strerror>) — <name> was not judged; free space or fix permissions there,
   then try again` — and saving an upload — `could not save the upload in the
   backups directory | the config directory (<strerror>) — nothing was kept;
-  free space or fix permissions there, then try again`. A refusal read from
-  the archive names the error type and `strerror`, and a snapshot that cannot
-  be opened reads `unreadable: <strerror>`: the absolute path goes to the log
-  only.
+  free space or fix permissions there, then try again` — including the
+  `O_EXCL` claim and the rename onto the upload's name, which sat outside that
+  mapping until R1-F10. A refusal read from the archive names the error type
+  and `strerror`, and a snapshot that cannot be opened reads
+  `unreadable: <strerror>`: the absolute path goes to the log only.
+- (R1-F24) A header whose size is negative (base-256) is refused before it is
+  read — `not a motif bundle: a header with a negative size, which motif never
+  writes` — where it charged the raw budget a credit; a refusal for an
+  unexpected member echoes at most 200 characters of the name plus its length
+  (`unexpected member '…' (N characters)`), where a 64 KiB longname was echoed
+  whole into the 422.
+- (R1-F20) The 03:20 daily sweep (`bundle.sweep_stale_bundle_temps`, run
+  beside `plex_enum.sweep_stale_placement_temps`) removes the `.bundle-*` dirs
+  and `.restore-upload.*` files a killed create / inspect / stage / upload
+  left in the backups dir, beside `motif.db` and in `config_dir`: only past an
+  hour (mtime or ctime, whichever is later), never one this process holds
+  (`claim_temp` / `release_temp`), and under `STAGING_LOCK`, so never inside a
+  staging; each removal is logged.
 
 ## 8. Tests
 
@@ -370,7 +447,9 @@ Mirrors the four snapshot endpoints under one list:
   archive's end" words; that refusal logs a WARNING like every other read-time
   refusal; a failed close of the extracted database is logged and never
   replaces the read fault already in flight, so a corrupt bundle is never
-  reported as a disk fault.
+  reported as a disk fault. (R1-F24) `_proc_member` refuses a negative size
+  first: a base-256 header can declare one, and the budget then took it as a
+  credit, leaning on tarfile's own `_block` guard.
 - **Bind mounts.** Docker refuses a rename over a single-file bind mount
   (EBUSY/EXDEV/EPERM), so the boot writes those files in place after a
   `.prerestore-<stamp>` copy. The cookies file keeps the mode the host gave
