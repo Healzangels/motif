@@ -7001,7 +7001,31 @@
 #   Upgrade note: no schema or config change. The missing_count key is
 #   gone from the /api/library JSON. A rollback restores the old filter
 #   answers and the paged SELECT ALL; there is nothing to migrate.
-__version__ = "0.51.346"
+# 0.51.347: the dashboard carousel moves by hand. The operator asked
+#   to "click and drag to go backwards in the carousel ... in case we
+#   want to go back to an entry that's scrolled off screen". Auto-
+#   scroll is on by default and 1.24.61 hides the strip's scrollbar
+#   while it runs, so a mouse had no way back to a poster that had
+#   already passed — only a trackpad swipe or shift+wheel.
+#   Press and drag the strip now: it follows the pointer one for one,
+#   dragging right goes back, and it stops at the first and last
+#   poster. The cursor says so (grab, grabbing while dragging) and no
+#   title is selected under the drag. A plain click still opens the
+#   INFO card; the click that ends a drag does not, so letting go
+#   over a poster no longer opens it. Auto-scroll freezes while you
+#   drag and carries on from where the strip was left, and the 30 s
+#   dashboard poll never rebuilds the strip mid-drag. Touchscreens
+#   and pens keep their own scrolling, which already went both ways.
+#   Proof: the real app.js runs under node against a scripted pointer
+#   — the drag distance and both clamps, the slop that keeps a click
+#   a click, the one swallowed click and the ones after it, the
+#   frozen and resumed auto-scroll, a touch pointer, a secondary
+#   button, a cancelled pointer, the poster's own image drag, and the
+#   deferred rebuild; twelve deliberately broken variants each fail
+#   it. Checked live on a seeded instance: 20 posters, dragged left
+#   400 px and back to the start, a click opened the card and a drag
+#   did not. Upgrade note: none — no schema, config or API change.
+__version__ = "0.51.347"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

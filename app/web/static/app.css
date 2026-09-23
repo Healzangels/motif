@@ -7826,6 +7826,8 @@ body.dash-customize-mode .dash-customize-link:hover {
      (so manual scroll is obviously available); --autoscroll hides it below. */
   scrollbar-width: thin;
   scrollbar-color: var(--line-bright) transparent;
+  /* v0.51.347: the strip is hand-draggable (the user: go back to an entry that scrolled off) */
+  cursor: grab;
 }
 /* v1.24.66: WebKit — a slim, persistently-visible horizontal scrollbar when
    auto-scroll is OFF, so it's clearly hand-scrollable (the user: "when autoscroll
@@ -7874,6 +7876,10 @@ body.dash-customize-mode .dash-customize-link:hover {
   background: var(--bg-elev-2);
   transition: border-color var(--motion-normal) ease, box-shadow var(--motion-normal) ease;
 }
+/* v0.51.347: while a hand-drag runs, grabbing wins over the cards' own pointer and no title selects under it */
+.recent-strip-dragging,
+.recent-strip-dragging .recent-card { cursor: grabbing; }
+.recent-strip-dragging { user-select: none; }
 .recent-card:hover .recent-poster,
 .recent-card:focus-visible .recent-poster {
   border-color: var(--green-deep);

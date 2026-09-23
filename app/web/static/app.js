@@ -2205,7 +2205,8 @@
     } catch (_) { return; }
     if (!items.length) { block.style.display = 'none'; return; }
     const hash = items.map((it) => `${it.rating_key}:${it.placed_at}`).join('|');
-    if (strip.dataset.lastHash === hash) { block.style.display = ''; return; }
+    // v0.51.347: never rebuild the strip out from under a hand-drag — the next poll picks the new set up.
+    if (strip.dataset.lastHash === hash || _setupCarouselAutoScroll._dragging) { block.style.display = ''; return; }
     strip.dataset.lastHash = hash;
     strip.textContent = '';
     items.forEach((it) => {
@@ -2326,6 +2327,8 @@
     const stored = localStorage.getItem(KEY);
     cb.checked = stored === null ? true : stored === '1';
     let rafId = null;
+    // v0.51.347: the live hand-drag, or null — declared above tick() so the loop can bail while the operator drags.
+    let drag = null;
     let lastTs = 0;  // v0.51.285: previous rAF timestamp, 0 = no delta yet
     let scrollPos = 0;  // v0.51.286: float scroll position — see the advance step in tick()
     let _carouselEndHold = 0;  // v0.51.113: Date.now() ms to hold at the strip's end, or 0
@@ -2364,8 +2367,10 @@
       // captured prev (the old read-lastTs-then-overwrite pair was order-coupled).
       const prev = lastTs;
       lastTs = ts;
+      // v0.51.347: and while a hand-drag is live — pointer capture can keep :hover on the strip, but never rely on it.
       if (document.hidden
           || !document.hasFocus()
+          || drag
           || strip.matches(':hover')
           || document.querySelector('dialog[open]')) return;
       // v0.51.285: clamp the frame gap so resuming after a long throttled
@@ -2398,6 +2403,47 @@
     }
     function start() { if (!rafId) rafId = requestAnimationFrame(tick); }
     function stop() { if (rafId) { cancelAnimationFrame(rafId); rafId = null; lastTs = 0; } }
+    // v0.51.347 (the user): drag the strip by hand — auto-scroll is ON by default and v1.24.61 hides the scrollbar
+    // while it runs, so a mouse had no way back to a poster that scrolled off. MOUSE only: touch and pen keep the
+    // native inertial scroll, which already goes both ways. After a drag the tick re-seeds from the new position
+    // through the v0.51.286 float check, so auto-scroll carries on from where the strip was left.
+    let press = null;
+    const DRAG_SLOP = 5;  // px before a press is a drag — a plain click must still open the INFO card
+    function swallowClick(e) { e.stopPropagation(); e.preventDefault(); }
+    function endDrag() {
+      press = null;
+      if (!drag) return;
+      const id = drag.id;
+      drag = null;
+      strip.classList.remove('recent-strip-dragging');
+      _setupCarouselAutoScroll._dragging = false;
+      if (strip.hasPointerCapture && strip.hasPointerCapture(id)) strip.releasePointerCapture(id);
+      // the click that ENDS a drag lands on whatever poster is under the pointer — swallow exactly that one
+      strip.addEventListener('click', swallowClick, true);
+      setTimeout(() => strip.removeEventListener('click', swallowClick, true), 0);
+    }
+    strip.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'mouse' || e.button !== 0) return;
+      press = { x: e.clientX, scroll: strip.scrollLeft, id: e.pointerId };
+    });
+    strip.addEventListener('pointermove', (e) => {
+      if (!press || e.pointerId !== press.id) return;
+      const dx = e.clientX - press.x;
+      if (!drag) {
+        if (Math.abs(dx) < DRAG_SLOP) return;
+        drag = press;
+        _setupCarouselAutoScroll._dragging = true;  // loadRecentlyAdded defers its rebuild while this is true
+        strip.classList.add('recent-strip-dragging');
+        if (strip.setPointerCapture) strip.setPointerCapture(drag.id);
+      }
+      strip.scrollLeft = drag.scroll - dx;  // 1:1 with the pointer; scrollLeft clamps itself at both ends
+      e.preventDefault();
+    });
+    strip.addEventListener('pointerup', endDrag);
+    strip.addEventListener('pointercancel', endDrag);
+    strip.addEventListener('lostpointercapture', endDrag);
+    // a poster's native image drag would steal the press mid-gesture and leave the strip stuck
+    strip.addEventListener('dragstart', (e) => e.preventDefault());
     cb.addEventListener('change', () => {
       localStorage.setItem(KEY, cb.checked ? '1' : '0');
       applyScrollbarVis();

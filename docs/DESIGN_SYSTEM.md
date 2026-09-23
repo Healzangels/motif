@@ -297,6 +297,15 @@ When a UI affords a "select all across pages" action (SELECT ALL FILTERED at `lo
 
 Every `Set.clear()` must be paired with `Map.clear()` (pytest guard in the cache test suite asserts call-site counts match). Bulk-bar count badges + click handlers walk the Map's values so the action covers the entire selection, not just the visible page. Off-page-warning workarounds (pre-v1.16.10 PUSH / ACK / ADOPT+LPS) become unnecessary once the cache is in place. See `libraryState.selectedRows` for the canonical implementation.
 
+### Hand-drag for a self-scrolling strip (v0.51.347)
+
+A strip that scrolls itself and hides its scrollbar while it does (the dashboard carousel, `.recent-strip`) must still be movable by hand, or an entry that scrolls past is unreachable with a mouse. The idiom, in `_setupCarouselAutoScroll`:
+
+* **Mouse only** (`pointerType === 'mouse'`, primary button): touch and pen keep the native inertial scroll, which already goes both ways.
+* **A slop of ~5px** before a press becomes a drag, so a plain click still opens what it clicked; the click that *ends* a real drag is swallowed once by a capture-phase listener removed on the next tick.
+* **Pointer capture** while dragging, `scrollLeft = start - dx` (1:1, and the browser clamps at both ends), `.recent-strip-dragging` for the `grabbing` cursor and `user-select: none`, and `preventDefault` on the poster's own `dragstart`.
+* **The self-scroll loop bails on an explicit drag flag**, never on `:hover` alone (capture can keep or drop hover), and re-seeds its float position afterwards so it carries on from where the strip was left. Any poll that rebuilds the strip defers while the flag is set.
+
 ### Status-text auto-dismiss in `finally` block (v1.17.2 / v1.17.5)
 
 Every `.form-status` span that shows a transient `✓ saved` / `✗ <error>` / `✓ embedded 1/1` text after a button click must auto-dismiss after a few seconds. Canonical pattern (`bindTestNotification` is the reference):
