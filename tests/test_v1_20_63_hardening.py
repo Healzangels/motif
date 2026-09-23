@@ -164,10 +164,11 @@ def test_api_canon_fs_breadcrumb_behavioral(monkeypatch, caplog):
     # Reset the first-warn flag so this test sees the warning.
     monkeypatch.setattr(api, "_CANON_FS_OSERROR_WARNED", False)
 
-    def _boom(self):
+    def _boom(self, **kw):
         raise OSError("simulated dead mount")
 
-    monkeypatch.setattr(Path, "is_file", _boom)
+    # v0.51.346: the library reads each flag with one Path.stat() — is_file() is no longer on that path
+    monkeypatch.setattr(Path, "stat", _boom)
     items = [{"file_path": "x.mp3", "media_folder": "/data/x"}]
     with caplog.at_level(logging.WARNING, logger="app.web.api"):
         out = api._annotate_canonical_state(items, themes_dir=Path("/themes"))

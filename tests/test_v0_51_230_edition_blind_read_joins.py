@@ -85,11 +85,41 @@ def test_the_multiplication_is_actually_gone():
         "the edition-scoped join must report the 2 real copies and their 200 real bytes")
 
 
-def test_missing_count_matches_the_action_it_describes():
-    """sql_missing_count is supposed to mirror DOWNLOAD MISSING (section+edition scoped
-    since v1.11.0 / v1.23.65). Title-wide made the 4K tab read 0 missing for a title that
-    was only downloaded in the standard section — while the button would enqueue it."""
-    i = API_PY.index("sql_missing_count = f\"\"\"")
-    block = API_PY[i:API_PY.index('"""', i + 30)]
-    assert "AND lf.section_id = pi.section_id" in block
-    assert "AND lf.edition_key = pi.edition_key" in block
+def test_download_missing_is_section_scoped(tmp_path, monkeypatch):
+    """v0.51.346: sql_missing_count is gone; the DOWNLOAD MISSING action it mirrored holds the
+    section scope. A title downloaded only in the standard section is missing on the 4K tab."""
+    monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
+    monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
+    from fastapi.testclient import TestClient
+    from app.config import Settings
+    from app.core.auth import create_admin, init_auth_schema
+    from app.web import api
+    monkeypatch.setattr(api, "log_event", lambda *a, **k: None)
+    s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
+    init_db(s.db_path)
+    init_auth_schema(s.db_path)
+    create_admin(s.db_path, username="testadmin", password="testpassword")
+    c = sqlite3.connect(s.db_path)
+    for sid, fourk in (("1", 0), ("2", 1)):
+        c.execute("INSERT INTO plex_sections (section_id, title, type, is_anime, is_4k, themes_subdir, included,"
+                  " discovered_at, last_seen_at) VALUES (?, ?, 'movie', 0, ?, ?, 1, ?, ?)",
+                  (sid, f"S{sid}", fourk, f"sub{sid}", NOW, NOW))
+    c.execute("INSERT INTO themes (id, media_type, tmdb_id, title, upstream_source, last_seen_sync_at,"
+              " first_seen_sync_at, youtube_url) VALUES (1, 'movie', 120, 'Two Cuts', 'imdb', ?, ?,"
+              " 'https://www.youtube.com/watch?v=abcdefghijk')", (NOW, NOW))
+    for rk, sid in (("std", "1"), ("uhd", "2")):
+        c.execute("INSERT INTO plex_items (rating_key, section_id, media_type, theme_id, guid_tmdb, title,"
+                  " first_seen_at, last_seen_at) VALUES (?, ?, 'movie', 1, 120, 'Two Cuts', ?, ?)", (rk, sid, NOW, NOW))
+    c.execute("INSERT INTO local_files (media_type, tmdb_id, section_id, edition_key, file_path, downloaded_at,"
+              " source_video_id) VALUES ('movie', 120, '1', '', 'm/std.mp3', ?, 'v')", (NOW,))
+    c.commit()
+    tc = TestClient(api.create_app(s))
+    hdr = {"X-Authentik-Username": "testadmin"}
+    r = tc.post("/api/library/download-missing", json={"tab": "movies", "fourk": False}, headers=hdr)
+    assert (r.status_code, r.json()["enqueued"]) == (200, 0)
+    r = tc.post("/api/library/download-missing", json={"tab": "movies", "fourk": True}, headers=hdr)
+    assert r.status_code == 200 and r.json()["enqueued"] >= 1
+    sections = {row[0] for row in c.execute("SELECT section_id FROM jobs WHERE job_type = 'download'")}
+    c.close()
+    assert "2" in sections

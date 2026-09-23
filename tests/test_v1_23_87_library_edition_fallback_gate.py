@@ -181,14 +181,9 @@ def test_stats_endpoint_ok_with_gated_query(client):
 def test_all_read_sites_gate_the_fallback():
     src = (Path(__file__).resolve().parent.parent / "app" / "web" / "api.py").read_text()
     gate = "SELECT COUNT(DISTINCT _ec.edition_key) FROM plex_items _ec"
-    # main browse + slim filter-count + 3 stats blocks, each gating p_g AND lf_g.
-    # v1.24.41: +1 — the RE-PUSH count mini-render (_REPUSH_COUNT_FROM) gates its
-    # own p_g '' fallback the same way, so the count matches the rendered RP rows.
-    # v1.24.43: +1 — the AWAIT count mini-render (_AWAIT_COUNT_FROM) gated its lf_g
-    # '' fallback the same way. v0.50.34: −1 — the AWAIT badge + its count machinery
-    # were removed (the attn_pills=await FILTER, which rides the main browse gate,
-    # stays), so that dedicated gate is gone.
-    assert src.count(gate) == 11, f"expected 11 '' fallback gates, got {src.count(gate)}"
+    # v0.51.346: one gate per '' fallback join (p_g / lf_g) at every read site — not a literal count of sites.
+    joins = src.count("p_g.edition_key = ''") + src.count("lf_g.edition_key = ''")
+    assert joins >= 2 and src.count(gate) == joins, (joins, src.count(gate))
 
 
 def test_v1_23_87_version_pin():

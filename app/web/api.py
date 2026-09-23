@@ -34,10 +34,12 @@ import csv
 import io
 import json
 import math
+import queue
 import re
 import sqlite3
 import threading
 import time
+from stat import S_ISREG
 from urllib.parse import quote
 
 from fastapi import (
@@ -70,6 +72,7 @@ from ..core.editions import (
 )
 from ..core.events import log_event, now_iso, now_iso_ms
 from ..core.plex import PlexClient, PlexConfig, THEME_UPLOAD_CEILING_BYTES
+from ..core.plex_enum import _CANONICAL_ABSENT_ERRNOS  # v0.51.346: is_file()'s ignore list, for the library's one stat
 from ..core.runtime import is_dry_run, set_dry_run
 from ..core.sections import (
     list_sections, refresh_sections, set_section_inclusion,
@@ -1413,7 +1416,8 @@ _REPUSH_COUNT_SQL = f"SELECT COUNT(*) {_REPUSH_COUNT_FROM} WHERE {_LIB_STALE_PU_
 # every other reason (incl. genuinely-retriable rows) in AWAIT.
 _LIB_AWAIT_SQL = (
     "(COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL "
-    " AND COALESCE(p_e.media_folder, p_g.media_folder) IS NULL "
+    # v0.51.346: the stale-aware folder the row renders — a stale plex_upload paints PL await, so it awaits here too.
+    f" AND ({_LIB_EFF_MEDIA_FOLDER}) IS NULL "
     " AND COALESCE(pi.plex_independent_theme, 0) = 0 "
     " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
     "     IS NOT 'plex_rejected:over_ceiling' "
@@ -1423,6 +1427,14 @@ _LIB_AWAIT_SQL = (
     # filter/attention. NULL-safe IS NOT keeps every other reason in AWAIT.
     " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
     "     IS NOT 'backup_only')")
+# v0.51.346: PL=off is the gray PL dot — not placed (stale-aware) and not the amber await state renderLibraryRow paints.
+_LIB_PL_OFF_SQL = (
+    f"(({_LIB_EFF_MEDIA_FOLDER}) IS NULL "
+    " AND NOT (COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL "
+    "          AND COALESCE(pi.plex_independent_theme, 0) = 0 "
+    # v0.51.346: both terminal reasons, as _LIB_AWAIT_SQL excludes them — an over-ceiling row is gray, not awaiting
+    "          AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason, '') "
+    "              NOT IN ('backup_only', 'plex_rejected:over_ceiling')))")
 # v1.24.44: per-(tab, fourk) breakdown for the RE-PUSH badge so the topbar pill
 # CYCLES through every impacted section on successive clicks (incl. collections) —
 # like FAIL/UPD. Same plex_items-anchored shape as the count.
@@ -1557,6 +1569,12 @@ _REVERT_REDUNDANT_SQL = """COALESCE(pv_sec.youtube_url, pv_global.youtube_url) I
                          AND COALESCE(pv_sec.hidden_url, pv_global.hidden_url) IS NULL
                          AND COALESCE(pv_sec.youtube_url, pv_global.youtube_url) = t.youtube_url)
                       )"""
+# v0.51.346: the ATTN restore predicate as one text, so the SQL chip and its post-stat 0/1 column cannot drift.
+_LIB_ATTN_RESTORE_SQL = (
+    f"(({_PREV_URL_DIFFERS_SQL})\n"
+    f" AND NOT ({_REVERT_REDUNDANT_SQL})\n"
+    f" AND ({_LIB_SRC_LETTER_SQL}) IN ('-', 'M'))"
+)
 
 # v1.19.4: SQL fragment for "this row is NOT a pure SRC=P row".
 # Used by every pending-update gate that filters on
@@ -1938,6 +1956,57 @@ def _pending_update_detected_sql(t: str = "t", pi: str = "pi") -> str:
     return f"(COALESCE({kind_sec}, {kind_global}) IS NOT NULL)"
 
 
+# v0.51.346: the ATTN update chip as one text, so the SQL chip and its post-stat 0/1 column cannot drift.
+_LIB_ATTN_UPDATE_SQL = (
+    # v0.51.345: same t-only probe as PENDING_EXISTS, before the decision subqueries.
+    "(EXISTS (SELECT 1 FROM pending_updates pu_t WHERE pu_t.media_type = t.media_type AND pu_t.tmdb_id = t.tmdb_id) AND COALESCE("
+    "    (SELECT pu.decision FROM pending_updates pu "
+    "      WHERE pu.media_type = t.media_type "
+    "        AND pu.tmdb_id = t.tmdb_id "
+    "        AND pu.section_id = pi.section_id AND pu.edition_key = pi.edition_key), "
+    "    (SELECT pu.decision FROM pending_updates pu "
+    "      WHERE pu.media_type = t.media_type "
+    "        AND pu.tmdb_id = t.tmdb_id "
+    "        AND pu.section_id = '' AND pu.edition_key = pi.edition_key)"
+    "  , 'pending') = 'pending' "
+    f"  AND {_pending_update_detected_sql('t', 'pi')} "
+    # v1.19.72: SRC=— exception for new_theme_available
+    # mirrors the JS computeTdbPill / title-glyph gates.
+    # Pre-v1.19.72 the attn_pills=update filter chip
+    # hid the very rows v1.19.71 surfaces — visible blue
+    # !UPD on the row, but clicking the ATTN!update
+    # chip filtered them out. Class-9 mirror-drift.
+    f"   AND (({_LIB_SRC_LETTER_SQL}) != '-'"
+    f"        OR {_pending_update_new_theme_kind_sql('t', 'pi')}) "
+    # Has-something check: motif must track this
+    # section's row, otherwise ACCEPT is a no-op
+    # (no canonical to update). v1.19.72: widened
+    # with the new kind so SRC=— rows pass.
+    "   AND ("
+    "     EXISTS (SELECT 1 FROM local_files lf2 "
+    "              WHERE lf2.media_type = t.media_type "
+    "                AND lf2.tmdb_id = t.tmdb_id "
+    "                AND lf2.section_id = pi.section_id) "
+    "     OR EXISTS (SELECT 1 FROM user_overrides uo2 "
+    "                 WHERE uo2.media_type = t.media_type "
+    "                   AND uo2.tmdb_id = t.tmdb_id "
+    "                   AND uo2.section_id = pi.section_id) "
+    "     OR COALESCE(p_e.media_folder, p_g.media_folder) IS NOT NULL "
+    "     OR pi.local_theme_file = 1"
+    f"    OR {_pending_update_new_theme_kind_sql('t', 'pi')}"
+    "   )"
+    # URL-diff check: the new TDB URL must actually
+    # differ from what's currently applied. Rows
+    # where they already match (legacy urls_match
+    # entries that weren't cleaned up) are no-ops.
+    # v1.22.10: actionable-gate via the shared helper (was
+    # inlined) so this attn_pills=update filter can't drift from
+    # the pill columns / tdb filters / NEEDS WORK sort.
+    f"   AND {_pending_update_actionable_sql('t', 'pi')}"
+    ")"
+)
+
+
 # v1.14.30: canonical sfa-aware FROM/JOIN/WHERE for per-(title,
 # section) failure counts — the SAME predicate /api/stats
 # `failures_total` (the v1.14.8 rewrite) and the library filter
@@ -2272,6 +2341,18 @@ def _loudness_marker(norm_state, has_local_file: bool,
 _LIB_POST_STAT_COLUMNS = (
     "file_path", "media_folder", "placement_kind", "plex_independent_theme",
     "last_place_attempt_reason", "failure_kind", "failure_acked_at", "mismatch_state",
+    "needs_repush",  # v0.51.346: ATTN repush beside broken
+)
+
+
+# v0.51.346: every field SELECT ALL FILTERED's cached rows are read for (bulk bar, libKey, bulk handlers); a Proxy test pins it
+_LIB_SELECTION_COLUMNS = (
+    "rating_key", "section_id", "plex_media_type", "plex_title", "folder_path", "edition_key",
+    "plex_has_theme", "plex_local_theme", "plex_theme_verified_ok", "plex_independent_theme",
+    "theme_tmdb", "theme_media_type", "youtube_url", "failure_kind", "failure_acked_at", "upstream_source",
+    "tdb_dropped_at", "file_path", "source_video_id", "source_kind", "mismatch_state", "media_folder",
+    "placement_kind", "placement_provenance", "job_in_flight", "pending_update", "pending_update_kind",
+    "canonical_missing",
 )
 
 
@@ -2342,6 +2423,7 @@ def _library_main_query(
     loudness_target: float = -18.0,
     cookies_present: bool = False,
     themes_dir: Path | None = None,
+    selection: bool = False,
 ) -> dict:
     """Sync helper for /api/library — runs all SQL in one threadpool call
     so the FastAPI event loop isn't blocked. v1.10.2 perf pass:
@@ -2845,6 +2927,7 @@ def _library_main_query(
     # OR-filter with a Python attn-matcher (same pattern as the
     # dl_pills / pl_pills broken handling). Trades a larger
     # unbounded SQL result for correct OR semantics.
+    # v0.51.346: sole broken takes this path too — the route no longer reroutes it to status=dl_missing.
     attn_needs_post_stat = (
         attn_pills is not None and "broken" in attn_pills
     )
@@ -2905,54 +2988,7 @@ def _library_main_query(
                 # = 'pending'), so the filter must mirror that
                 # exact predicate. Class-9 mirror-drift sibling
                 # of v1.18.65's TDB-pill priority fix.
-                attn_branches.append(
-                    # v0.51.345: same t-only probe as PENDING_EXISTS, before the decision subqueries.
-                    "(EXISTS (SELECT 1 FROM pending_updates pu_t WHERE pu_t.media_type = t.media_type AND pu_t.tmdb_id = t.tmdb_id) AND COALESCE("
-                    "    (SELECT pu.decision FROM pending_updates pu "
-                    "      WHERE pu.media_type = t.media_type "
-                    "        AND pu.tmdb_id = t.tmdb_id "
-                    "        AND pu.section_id = pi.section_id AND pu.edition_key = pi.edition_key), "
-                    "    (SELECT pu.decision FROM pending_updates pu "
-                    "      WHERE pu.media_type = t.media_type "
-                    "        AND pu.tmdb_id = t.tmdb_id "
-                    "        AND pu.section_id = '' AND pu.edition_key = pi.edition_key)"
-                    "  , 'pending') = 'pending' "
-                    f"  AND {_pending_update_detected_sql('t', 'pi')} "
-                    # v1.19.72: SRC=— exception for new_theme_available
-                    # mirrors the JS computeTdbPill / title-glyph gates.
-                    # Pre-v1.19.72 the attn_pills=update filter chip
-                    # hid the very rows v1.19.71 surfaces — visible blue
-                    # !UPD on the row, but clicking the ATTN!update
-                    # chip filtered them out. Class-9 mirror-drift.
-                    f"   AND (({_LIB_SRC_LETTER_SQL}) != '-'"
-                    f"        OR {_pending_update_new_theme_kind_sql('t', 'pi')}) "
-                    # Has-something check: motif must track this
-                    # section's row, otherwise ACCEPT is a no-op
-                    # (no canonical to update). v1.19.72: widened
-                    # with the new kind so SRC=— rows pass.
-                    "   AND ("
-                    "     EXISTS (SELECT 1 FROM local_files lf2 "
-                    "              WHERE lf2.media_type = t.media_type "
-                    "                AND lf2.tmdb_id = t.tmdb_id "
-                    "                AND lf2.section_id = pi.section_id) "
-                    "     OR EXISTS (SELECT 1 FROM user_overrides uo2 "
-                    "                 WHERE uo2.media_type = t.media_type "
-                    "                   AND uo2.tmdb_id = t.tmdb_id "
-                    "                   AND uo2.section_id = pi.section_id) "
-                    "     OR COALESCE(p_e.media_folder, p_g.media_folder) IS NOT NULL "
-                    "     OR pi.local_theme_file = 1"
-                    f"    OR {_pending_update_new_theme_kind_sql('t', 'pi')}"
-                    "   )"
-                    # URL-diff check: the new TDB URL must actually
-                    # differ from what's currently applied. Rows
-                    # where they already match (legacy urls_match
-                    # entries that weren't cleaned up) are no-ops.
-                    # v1.22.10: actionable-gate via the shared helper (was
-                    # inlined) so this attn_pills=update filter can't drift from
-                    # the pill columns / tdb filters / NEEDS WORK sort.
-                    f"   AND {_pending_update_actionable_sql('t', 'pi')}"
-                    ")"
-                )
+                attn_branches.append(_LIB_ATTN_UPDATE_SQL)  # v0.51.346: shared with the post-stat attn_update column
             elif p == "cookies":
                 # v1.15.17: cookies-needed STATUS pill. Filters to
                 # rows whose failure_kind = 'cookies_expired'. NOT
@@ -3024,11 +3060,7 @@ def _library_main_query(
                 # renderLibraryRow). So the pill is the menu gate
                 # (`has_previous_url && !revert_redundant`) AND the
                 # isRestore condition, via the shared SQL constants.
-                attn_branches.append(
-                    f"(({_PREV_URL_DIFFERS_SQL})\n"
-                    f" AND NOT ({_REVERT_REDUNDANT_SQL})\n"
-                    f" AND ({_LIB_SRC_LETTER_SQL}) IN ('-', 'M'))"
-                )
+                attn_branches.append(_LIB_ATTN_RESTORE_SQL)  # v0.51.346: shared with the post-stat attn_restore column
             elif p == "repush":
                 # v1.24.40: re-push needed (orange ⟳ title glyph + RP LINK
                 # badge). Reuses _LIB_STALE_PU_SQL — the SAME single source of
@@ -3078,9 +3110,8 @@ def _library_main_query(
                 # IS NULL` matched both NO placement AND
                 # plex_upload's empty-string placement → off
                 # over-included pushed rows.
-                branches.append(
-                    "(COALESCE(p_e.placement_kind, p_g.placement_kind) IS NULL)"
-                )
+                # v0.51.346: the gray dot the row paints (LPS and backup rows in, amber await rows out), one text with _row_matches_pl.
+                branches.append(_LIB_PL_OFF_SQL)
             # v1.12.70: 'await' — canonical exists but no placement
             # row (typically post-DEL: the user removed the file from
             # the Plex folder but motif's canonical still lives in
@@ -3093,15 +3124,8 @@ def _library_main_query(
                 # v0.51.68 (complexity audit): also exclude over_ceiling, matching
                 # _LIB_AWAIT_SQL (v1.24.46) — this branch had drifted, keeping the
                 # doomed-upload terminal rows in the pl=await filter.
-                branches.append(
-                    "(COALESCE(p_e.media_folder, p_g.media_folder) IS NULL "
-                    " AND COALESCE(p_e.placement_kind, p_g.placement_kind) IS NULL "
-                    " AND COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL "
-                    " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
-                    "     IS NOT 'backup_only' "
-                    " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
-                    "     IS NOT 'plex_rejected:over_ceiling')"
-                )
+                # v0.51.346: _LIB_AWAIT_SQL itself — this copy read the raw folder and no LPS gate, so a stale upload and an LPS row flipped.
+                branches.append(_LIB_AWAIT_SQL)
             # v1.18.30: removed the pl_pills='pushed' SQL branch.
             # Its predicate was the literal same SQL as
             # link_pills='pu' (placement_kind = 'plex_upload') so
@@ -3755,67 +3779,6 @@ def _library_main_query(
           ON ps.section_id = pi.section_id AND ps.included = 1
     """
     sql_where = f"WHERE {tab_where}{where_extra}"
-    # v1.11.14: COUNT path now picks the minimum FROM for the requested
-    # filter. The heavy LEFT JOIN themes correlated subquery (×N rows on
-    # an N-item library) was firing for every filter chip click in
-    # v1.11.0+, making "downloaded", "manual", "placed", etc. take
-    # 30+ seconds on a 10K-item library. Filters that don't reference
-    # t.* in the WHERE skip the themes JOIN; lf and p use pi.guid_tmdb
-    # directly (loses orphan-adopted matches in COUNT only — the row
-    # query keeps the full themes JOIN for accuracy).
-    # v1.12.23: pill axes also need their relevant table JOINs in
-    # the slim count path. tdb_pills references t; src_pills /
-    # dl_pills / link_pills reference lf and p; pl_pills references
-    # p. Without these flags the count query would 500 on missing
-    # column references.
-    needs_themes_for_count = (
-        status in ("themed", "untracked", "has_theme", "failures", "updates")
-        or tdb != "any"
-        or bool(tdb_pills)
-        # v1.12.100: src_pills now route through _SRC_LETTER_SQL which
-        # references t.upstream_source for the orphan/svid branch. The
-        # slim count path's lf+p joins aren't enough; we also need t.
-        # Pre-fix selecting any SRC pill 500'd with
-        # "no such column: t.upstream_source" because the count query
-        # was assembled without the themes JOIN.
-        or bool(src_pills)
-        # v1.13.85: attn_pills predicates reference t.failure_kind,
-        # t.failure_acked_at, sfa.acked_at, EXISTS(pending_updates),
-        # _SRC_LETTER_SQL — none reachable from sql_from_pi_only or
-        # the slim path. Route attn_pills through the full FROM so
-        # the count agrees with the row select. Pre-fix the slim
-        # path silently dropped the predicate and returned the
-        # unfiltered section total ("28 MATCHES" with 0 rendered
-        # rows under ?attn_pills=update — the user's repro).
-        or bool(attn_pills)
-    )
-    needs_lf_for_count = (
-        status in (
-            "manual", "plex_agent", "untracked", "has_theme",
-            "downloaded", "unplaced",
-        )
-        # v1.13.32: pl_pills "await" branch references COALESCE(lf_e.file_path, lf_g.file_path)
-        # ("COALESCE(p_e.media_folder, p_g.media_folder) IS NULL AND COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL", see
-        # ~line 1098). The slim count path was missing this trigger,
-        # so a filter combo that landed only on PL=await (no
-        # tdb_pills, no src_pills, etc. → not needs_themes_for_count)
-        # produced sql_count without lf joined and 500'd with
-        # "no such column: COALESCE(lf_e.file_path, lf_g.file_path)". Added bool(pl_pills) so
-        # the count joins lf whenever PL is filtering. The rows
-        # query already uses the full sql_from with lf joined.
-        or bool(src_pills) or bool(dl_pills) or bool(link_pills)
-        or bool(pl_pills)
-        # v0.51.198: the loudness axis reads lf_e/lf_g norm_state/loudness_i, so the
-        # COUNT must join lf too or it 500s "no such column".
-        or bool(loudness_pills)
-    )
-    needs_p_for_count = (
-        status in (
-            "manual", "plex_agent", "untracked", "has_theme",
-            "placed", "unplaced",
-        )
-        or bool(src_pills) or bool(pl_pills) or bool(link_pills)
-    )
     # v1.13.85: include attn_pills in the no_pills check so the
     # COUNT fast-path (sql_from_pi_only — no themes/lf/p/sfa
     # joins) is NOT taken when attn_pills is the only active
@@ -3833,96 +3796,11 @@ def _library_main_query(
         sql_count = (f"SELECT COUNT(*) {sql_from_pi_only} "
                      f"WHERE {tab_where}{where_pi_only}")
         count_params = params
-    elif needs_themes_for_count:
-        # Filter references t.* (themed, untracked, has_theme, failures,
-        # or any tdb!='any') — fall back to the full FROM with the
-        # correlated subquery.
+    else:
+        # v0.51.346: a filtered header counts the rows' own FROM; the guid-keyed slim count missed theme_id links (collections read 0).
         sql_count = f"SELECT COUNT(*) {sql_from} {sql_where}"
         count_params = params
-    else:
-        # Build a slim FROM with only the JOINs the WHERE references.
-        # lf / p use pi.guid_tmdb directly (good enough for COUNT;
-        # orphan-adopted items are rare and miscount slightly here).
-        slim_parts = [sql_from_pi_only.strip()]
-        if needs_p_for_count:
-            # v1.21.59 (dup-proof): two-tier split mirrors the row query so
-            # the header count agrees with the rendered rows.
-            _slim_mt = ("(CASE pi.media_type WHEN 'show' THEN 'tv' "
-                        "ELSE pi.media_type END)")
-            slim_parts.append(
-                f"LEFT JOIN placements p_e\n"
-                f"  ON p_e.media_type = {_slim_mt}\n"
-                f" AND p_e.tmdb_id = pi.guid_tmdb AND p_e.section_id = pi.section_id\n"
-                f" AND p_e.edition_key = pi.edition_key\n"
-                f"LEFT JOIN placements p_g\n"
-                f"  ON p_g.media_type = {_slim_mt}\n"
-                f" AND p_g.tmdb_id = pi.guid_tmdb AND p_g.section_id = pi.section_id\n"
-                f" AND p_g.edition_key = ''\n"
-                # v1.23.87: gate the '' placement fallback on single-edition
-                # (guid_tmdb key) so the filter-pill COUNTS match the rows.
-                f" AND (SELECT COUNT(DISTINCT _ec.edition_key) FROM plex_items _ec"
-                f"      WHERE _ec.guid_tmdb = pi.guid_tmdb"
-                f"        AND _ec.section_id = pi.section_id) <= 1"
-            )
-        if needs_lf_for_count:
-            # v1.21.59 (dup-proof): two-tier split mirrors the row query.
-            _slim_mt2 = ("(CASE pi.media_type WHEN 'show' THEN 'tv' "
-                         "ELSE pi.media_type END)")
-            slim_parts.append(
-                f"LEFT JOIN local_files lf_e\n"
-                f"  ON lf_e.media_type = {_slim_mt2}\n"
-                f" AND lf_e.tmdb_id = pi.guid_tmdb AND lf_e.section_id = pi.section_id\n"
-                f" AND lf_e.edition_key = pi.edition_key\n"
-                f"LEFT JOIN local_files lf_g\n"
-                f"  ON lf_g.media_type = {_slim_mt2}\n"
-                f" AND lf_g.tmdb_id = pi.guid_tmdb AND lf_g.section_id = pi.section_id\n"
-                f" AND lf_g.edition_key = ''\n"
-                # v1.23.87: gate the '' download fallback on single-edition here —
-                # the slim count joins p_e conditionally, so the p_e-present escape
-                # the row query uses isn't available; a placed sibling sharing a ''
-                # download is a rare transitional shape a distinct-folder library
-                # doesn't have, so single-edition is close enough for the count.
-                f" AND (SELECT COUNT(DISTINCT _ec.edition_key) FROM plex_items _ec"
-                f"      WHERE _ec.guid_tmdb = pi.guid_tmdb"
-                f"        AND _ec.section_id = pi.section_id) <= 1"
-            )
-        slim_from = "\n        ".join(slim_parts)
-        # v0.51.345: the wrapper lets SQLite omit unused one-row LEFT JOINs; same rows by construction.
-        sql_count = f"SELECT COUNT(*) FROM (SELECT 1 {slim_from} {sql_where} LIMIT -1)"
-        count_params = params
 
-    # v1.22.93: the themes join accepts the theme_id linkage too —
-    # Plex collections (and guid-less legacy-agent items) carry
-    # NULL guid_tmdb and link via plex_items.theme_id (the v1.18.2
-    # title_norm resolve), so the guid-only join made them invisible
-    # to the missing-themes banner (the Collections tab always read
-    # 0 missing even with TDB themes available). Same OR shape as
-    # worker.py's new-themes-visibility check. COUNT(DISTINCT
-    # pi.rating_key) dup-proofs the OR fan-out (a pathological row
-    # whose guid and theme_id point at different themes rows would
-    # otherwise count twice).
-    sql_missing_count = f"""
-        SELECT COUNT(DISTINCT pi.rating_key)
-        FROM plex_items pi
-        INNER JOIN plex_sections ps
-          ON ps.section_id = pi.section_id AND ps.included = 1
-        INNER JOIN themes t
-          ON (t.id = pi.theme_id
-              OR (t.tmdb_id = pi.guid_tmdb
-                  AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)))
-        LEFT JOIN local_files lf
-          ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
-         -- v0.51.230 (audit): section+edition scope, mirroring the DOWNLOAD MISSING
-         -- action query this count is supposed to describe (v1.11.0 / v1.23.65).
-         -- Pre-fix the join was title-wide, so a title downloaded in the standard
-         -- section had SOME local_files row and `lf.file_path IS NULL` went false —
-         -- the 4K tab reported 0 missing while DOWNLOAD MISSING would enqueue it.
-         AND lf.section_id = pi.section_id
-         AND lf.edition_key = pi.edition_key
-        WHERE {tab_where}
-          AND lf.file_path IS NULL
-          AND t.upstream_source != 'plex_orphan'
-    """
     order_expr = _LIBRARY_SORTS_MAIN.get(sort, _LIBRARY_SORTS_MAIN["title"])
     direction = "DESC" if sort_dir == "desc" else "ASC"
     # Stable secondary sort by title so equal primary keys (lots of NULLs
@@ -3977,8 +3855,19 @@ def _library_main_query(
     window_total = (phase1_mode == "full"
                     and sql_count == f"SELECT COUNT(*) {sql_from} {sql_where}")
     post_stat_cols = list(_LIB_POST_STAT_COLUMNS)
+    post_stat_exprs = ""
     if attn_needs_post_stat and "update" in attn_pills:
-        post_stat_cols.append("actionable_update")
+        # v0.51.346: the update chip's own SQL as 0/1 — actionable_update has no SRC gate and a section-wide placement probe.
+        post_stat_cols.append("attn_update")
+        post_stat_exprs += f", CASE WHEN {_LIB_ATTN_UPDATE_SQL} THEN 1 ELSE 0 END AS attn_update"
+    if attn_needs_post_stat and "restore" in attn_pills:
+        # v0.51.346: the restore chip's own SQL as 0/1 — has_previous_url/revert_redundant would read a NULL redundancy as 0.
+        post_stat_cols.append("attn_restore")
+        post_stat_exprs += f", CASE WHEN {_LIB_ATTN_RESTORE_SQL} THEN 1 ELSE 0 END AS attn_restore"
+    if selection:
+        # v0.51.346: SELECT ALL's one statement is the post-stat one: the selection plus the matchers' own inputs (server-only)
+        post_stat_cols = ([c for c in _LIB_SELECTION_COLUMNS if c != "canonical_missing"]
+                          + [c for c in post_stat_cols if c not in _LIB_SELECTION_COLUMNS])
 
     def _phase1_sql(mode: str) -> str:
         if mode == "pi_only":
@@ -3990,7 +3879,7 @@ def _library_main_query(
                     f"{sql_from} {sql_where} {order_clause} LIMIT ? OFFSET ?")
         cols = ", ".join(f"_q.{c}" for c in ("_rk", "_pe", "_pg", *post_stat_cols))
         return (f"SELECT {cols} FROM ({sql_select}, pi.rating_key AS _rk, p_e.media_folder AS _pe, "
-                f"p_g.media_folder AS _pg {sql_from} {sql_where} {order_clause}) AS _q")
+                f"p_g.media_folder AS _pg{post_stat_exprs} {sql_from} {sql_where} {order_clause}) AS _q")
 
     sql_page_from = sql_from.replace(
         "FROM plex_items pi\n", "FROM _lib_page CROSS JOIN plex_items pi\n", 1)
@@ -4049,18 +3938,17 @@ def _library_main_query(
             # client-side reads it. Drop it so it doesn't ride in every row's JSON.
             it.pop("loudness_i", None)
 
+    # v0.51.346: no missing_count statement — its banner went in v1.10.10; DOWNLOAD MISSING owns that predicate.
     with get_conn(db) as conn:
         # v0.51.345: one read snapshot, so phase 2 hydrates exactly the rows phase 1 chose.
         conn.execute("BEGIN")
-        if needs_post_stat_pagination:
+        if needs_post_stat_pagination or selection:
             total = -1  # filled in after stat-check
-            missing_count = conn.execute(sql_missing_count).fetchone()[0]
             id_rows = conn.execute(_phase1_sql("post_stat"), params).fetchall()
             rows = []
         else:
             if not window_total:
                 total = conn.execute(sql_count, count_params).fetchone()[0]
-            missing_count = conn.execute(sql_missing_count).fetchone()[0]
             if (phase1_mode == "pi_only"
                     and conn.execute(_LIB_PLACEMENT_FANOUT_SQL).fetchone()):
                 phase1_mode = "full"
@@ -4075,17 +3963,10 @@ def _library_main_query(
                     total = 0
                 else:
                     total = conn.execute(sql_count, count_params).fetchone()[0]
-        meta = conn.execute(sql_meta).fetchone()
+        # v0.51.346: SELECT ALL paints no banner, so it reads no meta scalars
+        meta = None if selection else conn.execute(sql_meta).fetchone()
         conn.execute("COMMIT")
-    plex_enumerated = bool(meta["plex_enumerated"])
-    last_plex_enum_at = meta["last_plex_enum_at"]
-    last_sync_at = meta["last_sync_at"]
-    plex_scan_stale = bool(
-        plex_enumerated
-        and last_sync_at
-        and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
-    )
-    if needs_post_stat_pagination:
+    if needs_post_stat_pagination or selection:
         _ps_names = ("_rk", "_pe", "_pg", *post_stat_cols)
         items = [_LibPostStatRow(zip(_ps_names, r)) for r in id_rows]
     else:
@@ -4093,16 +3974,12 @@ def _library_main_query(
         for it in items:
             it.pop("_lib_ord")
         _mark_loudness(items)
-    # v1.11.62: stat the canonical for each row that has a local_files
-    # entry, so the UI can render a 'DL broken' state when motif's
-    # canonical was deleted out from under it but the placement
-    # survives. Cheap (one stat per row, current page only); skipped
-    # entirely when themes_dir isn't configured.
-    items = _annotate_canonical_state(items, themes_dir=themes_dir)
-    if status == "dl_missing":
-        items = [it for it in items if it.get("canonical_missing")]
-        total = len(items)
-        items = items[offset:offset + per_page]
+        # v1.11.62: stat the canonical for each row that has a local_files
+        # entry, so the UI can render a 'DL broken' state when motif's
+        # canonical was deleted out from under it but the placement
+        # survives. Cheap (one stat per row, current page only); skipped
+        # entirely when themes_dir isn't configured.
+        items = _annotate_canonical_state(items, themes_dir=themes_dir)
 
     # v1.12.81: post-SQL filter for DL=broken / PL=broken. Both
     # require a stat-check that doesn't live in any column. When
@@ -4161,7 +4038,11 @@ def _library_main_query(
                 it.get("media_folder") or is_plex_upload
             ):
                 return True
-            if p == "off" and not it.get("media_folder") and not it.get("file_path") and not is_plex_upload:
+            # v0.51.346: the gray dot, as _LIB_PL_OFF_SQL — LPS and both terminal reasons are off, an awaiting row is not.
+            if p == "off" and not it.get("media_folder") and not is_plex_upload and not (
+                    it.get("file_path") and not is_lps
+                    and it.get("last_place_attempt_reason")
+                        not in ("backup_only", "plex_rejected:over_ceiling")):
                 return True
             # v0.51.68 (complexity audit): exclude the terminal reasons (backup_only,
             # over_ceiling) like _LIB_AWAIT_SQL — this pl post-stat copy had NEITHER,
@@ -4188,10 +4069,18 @@ def _library_main_query(
     # combining two axes (e.g. DL=ON + PL=BROKEN) made page 2 always
     # empty and collapsed `total` to a single page's count.
     _post_stat_filtered = False
+    if status == "dl_missing":
+        # v0.51.346: each post-stat stage stats only the flag it reads, for the rows still in; the page gets the rest.
+        _annotate_canonical_state(items, themes_dir=themes_dir, placement=False)
+        # v0.51.346: filter only, like the pill blocks — its own slice made a PL/ATTN pill beside it slice twice.
+        items = [it for it in items if it.get("canonical_missing")]
+        _post_stat_filtered = True
     if dl_pills and ("broken" in dl_pills or "on" in dl_pills):
+        _annotate_canonical_state(items, themes_dir=themes_dir, placement=False)
         items = [it for it in items if _row_matches_dl(it, dl_pills)]
         _post_stat_filtered = True
     if pl_pills and ("broken" in pl_pills or "on" in pl_pills):
+        _annotate_canonical_state(items, themes_dir=themes_dir, canonical=False)
         items = [it for it in items if _row_matches_pl(it, pl_pills)]
         _post_stat_filtered = True
     # v1.15.39: attn_pills mixed-with-broken — OR every selected
@@ -4220,10 +4109,8 @@ def _library_main_query(
                     if it.get("failure_kind") == "cookies_expired":
                         return True
                 elif p == "update":
-                    # SQL: actionable_update (decision='pending' AND
-                    # src!='-' AND has-something AND URL-diff).
-                    # Row already carries actionable_update flag.
-                    if it.get("actionable_update"):
+                    # v0.51.346: attn_update is CASE WHEN _LIB_ATTN_UPDATE_SQL, the update chip's own predicate.
+                    if it.get("attn_update"):
                         return True
                 elif p == "mismatch":
                     if it.get("mismatch_state") == "pending":
@@ -4260,15 +4147,31 @@ def _library_main_query(
                             and it.get("last_place_attempt_reason")
                                 not in ("backup_only", "plex_rejected:over_ceiling")):
                         return True
+                elif p == "restore":
+                    # v0.51.346: restore and repush had no post-stat branch, so beside broken they matched nothing.
+                    if it.get("attn_restore"):
+                        return True
+                elif p == "repush":
+                    # v0.51.346: needs_repush is CASE WHEN _LIB_STALE_PU_SQL, the repush chip's own predicate.
+                    if it.get("needs_repush"):
+                        return True
             return False
 
+        # v0.51.346: this path means broken is a pill — the one ATTN matcher that reads a stat, the canonical's
+        _annotate_canonical_state(items, themes_dir=themes_dir, placement=False)
         items = [it for it in items if _row_matches_attn(it)]
         _post_stat_filtered = True
+    if selection:
+        # v0.51.346: no slice; each row's canonical is a live stat (RESTORE counts it), a placement only where a PL pill read it
+        _annotate_canonical_state(items, themes_dir=themes_dir, placement=False)
+        return _library_selection_payload(items, (*_ps_names, "canonical_missing"), tab=tab, fourk=fourk)
     if _post_stat_filtered:
         # v1.22.82: the single pagination pass (see above).
         total = len(items)
         items = items[offset:offset + per_page]
     if needs_post_stat_pagination:
+        # v0.51.346: every returned row carries both flags, each a live stat this request made
+        _annotate_canonical_state(items, themes_dir=themes_dir)
         # v0.51.345: hydrate the page in a fresh snapshot (no read txn over the stats); only deleted items drop.
         idents = [(it["_rk"], it["_pe"], it["_pg"]) for it in items]
         full_rows = []
@@ -4282,6 +4185,14 @@ def _library_main_query(
             h["canonical_missing"] = items[o]["canonical_missing"]
             h["placement_missing"] = items[o]["placement_missing"]
         items = hydrated
+    plex_enumerated = bool(meta["plex_enumerated"])
+    last_plex_enum_at = meta["last_plex_enum_at"]
+    last_sync_at = meta["last_sync_at"]
+    plex_scan_stale = bool(
+        plex_enumerated
+        and last_sync_at
+        and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
+    )
     # v1.23.70: diagnostic timing for the tab-switch-lag investigation (the user:
     # "switching between library tabs / collections sometimes feels slow"). Logs
     # a WARNING when this subquery-heavy browse query crosses the threshold, and
@@ -4296,7 +4207,7 @@ def _library_main_query(
             "slow /api/library query: %sms tab=%s fourk=%s section=%s status=%s "
             "rows=%d total=%d (subquery cost or sync/enum CPU contention?)",
             _q_ms, tab, fourk, section_id or "-", status, len(items), total)
-    return {"total": total, "missing_count": missing_count,
+    return {"total": total,
             "page": page, "per_page": per_page,
             "tab": tab, "fourk": fourk, "items": items,
             "query_ms": _q_ms,
@@ -4307,7 +4218,7 @@ def _library_main_query(
 
 
 # v1.20.63 (class-9 hot-path): _annotate_canonical_state runs a
-# per-row is_file() on every /api/library render. A swallowed OSError
+# per-row stat() on every /api/library render. A swallowed OSError
 # (flaky NFS, perm error on /data) silently paints the row *_missing=
 # True even when the file is fine — a wrong UI badge with no log
 # signal. First occurrence warns (operator sees it at boot); the rest
@@ -4317,7 +4228,7 @@ _CANON_FS_OSERROR_WARNED = False
 
 def _warn_canon_fs(which: str, path, e) -> None:
     global _CANON_FS_OSERROR_WARNED
-    msg = ("_annotate_canonical_state: %s is_file() OSError on %s "
+    msg = ("_annotate_canonical_state: %s stat() OSError on %s "
            "(treating as missing): %s")
     if not _CANON_FS_OSERROR_WARNED:
         _CANON_FS_OSERROR_WARNED = True
@@ -4326,7 +4237,103 @@ def _warn_canon_fs(which: str, path, e) -> None:
         log.debug(msg, which, path, e)
 
 
-def _annotate_canonical_state(items: list[dict], *, themes_dir: Path | None) -> list[dict]:
+# v0.51.346: one stat pool for every library request — daemon threads, so a stat stuck on a dead mount never holds exit
+_LIB_STAT_WORKERS = 16
+# v0.51.346: a request queues at most _LIB_STAT_WORKERS batches of this many stats, so a light page never waits out a heavy backlog
+_LIB_STAT_BATCH = 8
+_LIB_STAT_JOBS: queue.SimpleQueue = queue.SimpleQueue()
+_LIB_STAT_THREADS: list[threading.Thread] = []
+_LIB_STAT_WAITING: set[queue.SimpleQueue] = set()
+_LIB_STAT_LOCK = threading.Lock()
+_LIB_STAT_RELEASED = object()
+# v0.51.346: set by the exit release — a request still in its SQL then must not start stats that could hang exit
+_LIB_STAT_CLOSED = threading.Event()
+
+
+def _lib_stat_worker() -> None:
+    while True:
+        fn, batch, done, idx = _LIB_STAT_JOBS.get()
+        try:
+            out = [fn(job) for job in batch]
+        # v0.51.346: not swallowed — raised again on the request's thread, which owns the failure
+        except BaseException as e:  # noqa: BLE001
+            done.put((idx, None, e))
+        else:
+            done.put((idx, out, None))
+
+
+def _lib_stat_map(fn, jobs: list) -> list:
+    """v0.51.346: fn over jobs on the library stat pool — results in job order, the next batch sent as one completes."""
+    if not jobs:
+        return []
+    if len(_LIB_STAT_THREADS) < _LIB_STAT_WORKERS:
+        with _LIB_STAT_LOCK:
+            while len(_LIB_STAT_THREADS) < _LIB_STAT_WORKERS:
+                t = threading.Thread(target=_lib_stat_worker, name=f"library-stat_{len(_LIB_STAT_THREADS)}",
+                                     daemon=True)
+                t.start()
+                _LIB_STAT_THREADS.append(t)
+    # v0.51.346: small pages still fan out to every worker; big ones cap each batch
+    size = min(_LIB_STAT_BATCH, -(-len(jobs) // _LIB_STAT_WORKERS))
+    batches = [jobs[i:i + size] for i in range(0, len(jobs), size)]
+    results: list = [None] * len(batches)
+    done: queue.SimpleQueue = queue.SimpleQueue()
+    with _LIB_STAT_LOCK:
+        if _LIB_STAT_CLOSED.is_set():
+            raise RuntimeError("motif is exiting: this library request's file stats were not started")
+        _LIB_STAT_WAITING.add(done)
+    try:
+        sent = in_flight = 0
+        while sent < len(batches) or in_flight:
+            while sent < len(batches) and in_flight < _LIB_STAT_WORKERS:
+                _LIB_STAT_JOBS.put((fn, batches[sent], done, sent))
+                sent += 1
+                in_flight += 1
+            msg = done.get()
+            if msg is _LIB_STAT_RELEASED:
+                raise RuntimeError("motif is exiting: this library request's file stats were left waiting on the disk")
+            idx, out, err = msg
+            in_flight -= 1
+            if err is not None:
+                raise err
+            results[idx] = out
+    finally:
+        with _LIB_STAT_LOCK:
+            _LIB_STAT_WAITING.discard(done)
+    return [r for out in results for r in out]
+
+
+def library_stat_release() -> int:
+    """v0.51.346: motif is exiting — wake each library request still waiting on a stat (its client is gone); how many."""
+    with _LIB_STAT_LOCK:
+        _LIB_STAT_CLOSED.set()
+        waiting = list(_LIB_STAT_WAITING)
+    for done in waiting:
+        done.put(_LIB_STAT_RELEASED)
+    return len(waiting)
+
+
+def _lib_stat_missing(job) -> tuple[bool, OSError | None]:
+    """v0.51.346: one stat gives today's is_file() (+ the canonical's size) reading — missing, and an OSError worth a breadcrumb."""
+    canonical, path = job
+    try:
+        st = path.stat()
+    except OSError as e:
+        # v0.51.346: is_file()'s own ignore list reads missing silently; any other errno reads missing with a breadcrumb
+        return True, (None if e.errno in _CANONICAL_ABSENT_ERRNOS else e)
+    except ValueError as e:
+        log.debug("_annotate_canonical_state: %r is not a statable path (%s) — reads missing, as is_file() did", path, e)
+        return True, None
+    # v0.51.167: a 0-byte theme.mp3 is a corrupt/failed download
+    # (downloader.py:589 removes + re-downloads one), functionally
+    # missing. Mirror verify_canonical_health's zero-byte check so the
+    # live red DL dot + dl_pills=broken filter agree with the stored
+    # canonical_present flag (the two paths MUST match — CLAUDE.md).
+    return not S_ISREG(st.st_mode) or (canonical and st.st_size == 0), None
+
+
+def _annotate_canonical_state(items: list[dict], *, themes_dir: Path | None,
+                              canonical: bool = True, placement: bool = True) -> list[dict]:
     """Add canonical_missing=True to each row whose lf.file_path points
     at a file that no longer exists under themes_dir. Best-effort —
     OSError on stat (permissions, dead mount) treats as missing.
@@ -4338,44 +4345,74 @@ def _annotate_canonical_state(items: list[dict], *, themes_dir: Path | None) -> 
     out of sync (Plex deleted it, file moved manually, etc.) without
     motif noticing yet.
     """
+    # v0.51.346: a row already carrying a flag keeps that read — each flag is one stat per row per request
+    todo = [(it, canonical and "canonical_missing" not in it, placement and "placement_missing" not in it)
+            for it in items]
     if not themes_dir:
-        for it in items:
-            it["canonical_missing"] = False
-            it["placement_missing"] = False
+        for it, c, p in todo:
+            if c:
+                it["canonical_missing"] = False
+            if p:
+                it["placement_missing"] = False
         return items
-    for it in items:
-        rel = it.get("file_path")
-        if not rel:
-            it["canonical_missing"] = False
-        else:
-            try:
-                cpath = themes_dir / rel
-                # v0.51.167: a 0-byte theme.mp3 is a corrupt/failed download
-                # (downloader.py:589 removes + re-downloads one), functionally
-                # missing. Mirror verify_canonical_health's zero-byte check so the
-                # live red DL dot + dl_pills=broken filter agree with the stored
-                # canonical_present flag (the two paths MUST match — CLAUDE.md).
-                it["canonical_missing"] = (
-                    not cpath.is_file() or cpath.stat().st_size == 0)
-            except OSError as e:
-                it["canonical_missing"] = True
-                _warn_canon_fs("canonical", themes_dir / rel, e)
-        media_folder = it.get("media_folder")
-        if not media_folder:
-            it["placement_missing"] = False
-        else:
-            try:
-                it["placement_missing"] = not (Path(media_folder) / "theme.mp3").is_file()
-            except OSError as e:
-                it["placement_missing"] = True
-                _warn_canon_fs("placement", Path(media_folder) / "theme.mp3", e)
+    jobs: list = []
+    for it, c, p in todo:
+        if c and it.get("file_path"):
+            jobs.append((True, themes_dir / it.get("file_path")))
+        if p and it.get("media_folder"):
+            jobs.append((False, Path(it.get("media_folder")) / "theme.mp3"))
+    reads = _lib_stat_map(_lib_stat_missing, jobs)
+    n = 0
+    # v0.51.346: applied in row order, canonical then placement — the JSON key order and the breadcrumb order stay put
+    for it, c, p in todo:
+        if c:
+            if not it.get("file_path"):
+                it["canonical_missing"] = False
+            else:
+                it["canonical_missing"], err = reads[n]
+                if err is not None:
+                    _warn_canon_fs("canonical", jobs[n][1], err)
+                n += 1
+        if p:
+            if not it.get("media_folder"):
+                it["placement_missing"] = False
+            else:
+                it["placement_missing"], err = reads[n]
+                if err is not None:
+                    _warn_canon_fs("placement", jobs[n][1], err)
+                n += 1
     return items
+
+
+def _library_selection_payload(items: list[dict], names, *, tab: str, fourk: bool) -> dict:
+    """v0.51.346: SELECT ALL FILTERED's body — the selection columns these rows carry, named once, then one list per row."""
+    columns = [c for c in _LIB_SELECTION_COLUMNS if c in names]
+    return {"total": len(items), "tab": tab, "fourk": fourk, "columns": columns,
+            "rows": [[it[c] for c in columns] for it in items]}
+
+
+# v0.51.346: rows per json.dumps in a SELECT ALL body — one dumps of the whole 2.4 MB holds the GIL 10.5 ms on an M1, a chunk 0.5
+_LIB_SELECTION_CHUNK = 500
+
+
+def _library_response(fn, db: Path, *, selection: bool, **kw):
+    """v0.51.346: a SELECT ALL body is built AND rendered here in the threadpool — FastAPI never jsonable_encodes it on the loop."""
+    if not selection:
+        return fn(db, **kw)
+    payload = fn(db, selection=True, **kw)
+    rows = payload.pop("rows")
+    head = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    parts = [json.dumps(rows[i:i + _LIB_SELECTION_CHUNK], ensure_ascii=False, allow_nan=False, separators=(",", ":"))[1:-1]
+             for i in range(0, len(rows), _LIB_SELECTION_CHUNK)]
+    # v0.51.346: byte for byte what JSONResponse renders (its separators, key order, rows last)
+    return Response((head[:-1] + ',"rows":[' + ",".join(parts) + "]}").encode(), media_type="application/json")
 
 
 def _library_not_in_plex(
     db: Path, *, tab: str, fourk: bool,
     q: str, page: int, per_page: int,
     sort: str = "title", sort_dir: str = "asc",
+    selection: bool = False,
 ) -> dict:
     """Return ThemerrDB rows whose tmdb_id has no matching plex_items
     in the requested tab. Synthesizes plex-shaped fields so the frontend
@@ -4499,6 +4536,13 @@ def _library_not_in_plex(
         LIMIT ? OFFSET ?
     """
     offset = (page - 1) * per_page
+    if selection:
+        # v0.51.346: SELECT ALL — this page's own statement unbounded (LIMIT -1), no count, no meta
+        with get_conn(db) as conn:
+            cur = conn.execute(sql_rows, params + [-1, 0])
+            names = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+        return _library_selection_payload([dict(r) for r in rows], names, tab=tab, fourk=fourk)
     with get_conn(db) as conn:
         total = conn.execute(sql_count, params).fetchone()[0]
         rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
@@ -4511,7 +4555,7 @@ def _library_not_in_plex(
                WHERE status = 'success'"""
         ).fetchone()[0]
     items = [dict(r) for r in rows]
-    return {"total": total, "missing_count": 0,
+    return {"total": total,
             "page": page, "per_page": per_page,
             "tab": tab, "fourk": fourk, "items": items,
             "plex_enumerated": True,
@@ -14372,6 +14416,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # between the route enum and the SQL dispatch table.
         sort: str = Query("title", pattern="^(title|year|tdb|src|dl|pl|link|imdb|attention|edition)$"),
         sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
+        # v0.51.346: SELECT ALL FILTERED — every matching row in one unpaged {columns, rows} body; page/per_page ignored
+        selection: bool = Query(False),
         db: Path = Depends(get_db_path),
     ):
         """Unified browse: every item Plex sees in the requested tab/sub-tab,
@@ -14389,7 +14435,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # tdb sub-filter is redundant for not_in_plex (everything in
             # that view is tracked), so it's not threaded through.
             return await run_in_threadpool(
-                _library_not_in_plex, db, tab=tab, fourk=fourk,
+                _library_response, _library_not_in_plex, db, selection=selection, tab=tab, fourk=fourk,
                 q=q, page=page, per_page=per_page,
                 sort=sort, sort_dir=sort_dir,
             )
@@ -14429,37 +14475,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         attn_set = _pset(attn_pills,
                          {"fail", "cookies", "update", "mismatch", "await",
                           "broken", "restore", "repush"})
-        # v1.12.23: 'broken' DL pill alone routes through the existing
-        # dl_missing path (post-SQL stat-check). Combined with on/off
-        # selections it's ignored for now — would require refactoring
-        # the post-SQL annotator to OR with the SQL pre-filter.
-        # v1.14.91: also fire the routing for status='has_theme' (the
-        # THEMED chip). dl_missing semantically implies has_theme —
-        # a tracked canonical that's missing on disk is by definition
-        # a themed row. Pre-fix the user reported THEMED + ↺ (broken)
-        # showed every themed row (the broken pill silently dropped
-        # because the routing only triggered for status=='all'), since
-        # there's no SQL branch for broken in the attn_pills loop and
-        # the override was the only path that narrowed the result set.
-        effective_status = status
-        if dl_set == {"broken"} and status in ("all", "has_theme"):
-            effective_status = "dl_missing"
-            dl_set = set()  # consumed by status routing
-        # v1.13.68: 'broken' attn pill alone — same shape as the
-        # dl_pills broken case. canonical_missing isn't a column,
-        # so route through dl_missing for the SQL pre-filter then
-        # let _annotate_canonical_state apply the stat. Mixed
-        # selections (broken + others) fall through and get
-        # post-stat narrowing in the same path that dl_pills uses.
-        # v1.14.91: also fire for status='has_theme' (see the
-        # dl_set comment above for the equivalence rationale).
-        if attn_set == {"broken"} and status in ("all", "has_theme"):
-            effective_status = "dl_missing"
-            attn_set = set()
+        # v0.51.346: 'broken' alone stays a post-stat pill — rerouted to dl_missing it also demanded a placement the red dot does not.
         cookies_present = bool(settings.cookies_file
                                and settings.cookies_file.exists())
         return await run_in_threadpool(
-            _library_main_query, db, tab=tab, fourk=fourk,
+            _library_response, _library_main_query, db, selection=selection, tab=tab, fourk=fourk,
             all_res=all_res,
             # v1.18.1: section_id is collections-only; the helper
             # ignores it for other tabs (where it falls through to
@@ -14468,7 +14488,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # section) — the helper's per-section filter then no-ops.
             section_id=("" if all_res
                         else (section_id if tab == "collections" else "")),
-            q=q, status=effective_status, tdb=tdb,
+            q=q, status=status, tdb=tdb,
             page=page, per_page=per_page,
             sort=sort, sort_dir=sort_dir,
             src_pills=src_set, tdb_pills=tdb_set,

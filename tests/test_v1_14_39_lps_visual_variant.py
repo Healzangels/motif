@@ -81,7 +81,9 @@ def test_attn_pills_await_predicate_excludes_lps_state():
     anchor = src.index('_LIB_AWAIT_SQL = (')
     block = src[anchor:anchor + 500]
     assert "COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL" in block
-    assert "COALESCE(p_e.media_folder, p_g.media_folder) IS NULL" in block
+    # v0.51.346: the await predicate reads the stale-aware folder the row renders, not the raw COALESCE.
+    from app.web import api
+    assert api._LIB_EFF_MEDIA_FOLDER in api._LIB_AWAIT_SQL
     assert "COALESCE(pi.plex_independent_theme, 0) = 0" in block
     # and the filter branch references the shared constant (no inline copy).
     assert "attn_branches.append(_LIB_AWAIT_SQL)" in src

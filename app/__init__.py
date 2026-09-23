@@ -6896,7 +6896,7 @@
 #   collections header count drift under status=placed / LINK=PU, the
 #   multi-folder duplicate rows, ATTN restore/repush ignored beside
 #   broken, the dl_missing double slice, and the unused missing_count
-#   field — 0.51.346 fixes them.
+#   field — 0.51.346 fixes all but the duplicate rows.
 #   (2) Measured (interleaved A/B, 9 rounds, the July library copy of
 #   17,427 items): the movies page the 2 s poll loads 38 → 22 ms; its
 #   last page 76 → 27 ms; the DL/PL on and broken and ATTN broken+fail
@@ -6918,7 +6918,90 @@
 #   landing between the two reads was probed and pinned by tests.
 #   Upgrade note: none — no schema, config or API change; a rollback
 #   restores the old plan with nothing to migrate.
-__version__ = "0.51.345"
+# 0.51.346: the library follow-up to 0.51.345 — the filters now return
+#   what the rows show, every file check is made once and in parallel,
+#   and SELECT ALL FILTERED is one request.
+#   (1) Filters match the rows. The header count equals the rows the
+#   pages return on every filter, so collections under PLACED,
+#   DOWNLOADED or LINK=PU no longer read 0. ATTN RESTORE, RE-PUSH and
+#   UPDATE keep their own rows when picked beside ↺ broken: before,
+#   RESTORE and RE-PUSH matched nothing there, and UPDATE also listed
+#   downloaded, unplaced titles whose row shows no blue !. STATUS
+#   dl_missing beside a PL or ATTN disk pill pages once, so page 2 is
+#   no longer empty. An uploaded theme that needs a re-push matches PL
+#   AWAIT and ATTN AWAIT, as its amber PL dot shows; PL AWAIT no longer
+#   lists Let-Plex-Serve rows; PL OFF is the gray dot (Let-Plex-Serve
+#   and backup-only rows in, rows awaiting placement out); DL or ATTN
+#   ↺ broken on its own also lists a missing download with no
+#   placement, because its DL dot is red. Any two pills of one axis now
+#   return exactly the rows of each pill alone, merged — a test walks
+#   every pair against the row's own dot logic under node. A theme
+#   Plex refused for its size reads terminal everywhere now: its PL
+#   dot is gray instead of amber (the amber read as "push me" on a
+#   theme that cannot be pushed), PL OFF lists it, and no AWAIT pill
+#   does — the ⊘ glyph still says why. The ↺ glyph on a title opens
+#   ATTN ↺ broken instead of the DOWNLOAD MISSING view, which also
+#   demanded a placement: a Let-Plex-Serve or backup-only row whose
+#   download went missing showed the glyph and then opened a list
+#   without its own row.
+#   (2) GET /api/library no longer returns missing_count. Nothing has
+#   read it since the missing-themes banner left in v1.10.10, and its
+#   query cost about 12 ms on every movies page. DOWNLOAD MISSING is
+#   unchanged and now holds that predicate alone.
+#   (3) Each theme file and each Plex-folder theme is checked with one
+#   stat (a present file took two). A disk-reading filter checks only
+#   the files its matcher reads, and the page it returns gets the rest.
+#   The checks run on one pool of 16 threads; a request keeps at most
+#   16 batches of 8 in flight, so a heavy filter cannot hold another
+#   tab's page behind it. Every flag is still a live check made by the
+#   request that returns it. A check stuck on a dead mount no longer
+#   keeps motif up past docker's 10 s stop grace: the exit wakes the
+#   waiting requests and closes the pool (a hung check held 0.51.345 up
+#   past 25 s; this build exits in about 3 s).
+#   (4) SELECT ALL FILTERED asks the server once (?selection=true):
+#   every matching row, unpaged, as the 28 columns the bulk bar and its
+#   actions read, built and encoded off the event loop in 500-row
+#   chunks. It now selects exactly what the list shows: under // ALL it
+#   took no 4K row and no row of a second section (10,607 of 10,635 on
+#   the library copy), and on a collections section chip it selected
+#   every section. EXPORT CSV and the bulk ADOPT scan still page, over
+#   that same scope — so rows picked under one collections section
+#   chip are skipped when exporting or adopting from another (switch
+#   the chip back, or pick under // ALL), and EXPORT CSV under // ALL
+#   writes a line per resolution for a title held in both.
+#   (5) Measured by the tag's own gate, interleaved through the route,
+#   9 rounds per side, on a healthy copy of the real library (17,427
+#   items, every canonical and sidecar present) with 0.5 ms injected
+#   per file check — the operator's server measures 0.43-0.57 ms:
+#   the movies page 81 → 26 ms, tv 70 → 30, anime 112 → 28,
+#   collections 29 → 16, the last movies page 35 → 21, NEEDS WORK
+#   151 → 45; DL on 3.4 s → 165 ms, PL on 3.3 s → 125 ms, DL broken
+#   2.9 s → 190 ms, ATTN broken+fail 3.4 s → 216 ms; SELECT ALL
+#   FILTERED on movies 6.2 s → 328 ms (54 requests → 1), on tv
+#   1.1 s → 89 ms, on movies DL on 38.1 s → 291 ms, and under // ALL
+#   6.2 s → 325 ms for the 10,635 rows it now takes (10,607 before).
+#   The same request now makes half the file checks (a movies page 67
+#   → 36; PL on 4,856 → 540; SELECT ALL with DL on 53,416 → 2,183).
+#   With a free file check (a warm local SSD, not this deployment) the
+#   plain pages are still 6-42% faster, but DL broken and a lone ATTN
+#   broken cost 16-30% more: they no longer reroute through the
+#   download-missing view, so they read the whole tab. Exit with a
+#   hung file check on a dead mount: 0.51.345 was still up after 25 s,
+#   this build exits in 2.7-3.5 s. A light page loaded during a heavy
+#   filter's checks: 126 ms before, 30 ms now.
+#   (6) Proof: the stats and selection steps change no paged byte —
+#   every page of 130 request shapes over the library copy, a seeded
+#   edge library and a fan-out library, plus a 238-scenario route
+#   matrix, is byte-identical (0 differences on about 19,000 pages),
+#   under SQLite 3.43.2, 3.46.1 (the release image) and 3.50.4. Every
+#   difference from 0.51.345 was classified and checked against (1)
+#   and (2), with none unexplained. SELECT ALL equals the paged walk
+#   projected to its columns on all 130 shapes of all three libraries.
+#   Multi-folder duplicate rows are unchanged on purpose.
+#   Upgrade note: no schema or config change. The missing_count key is
+#   gone from the /api/library JSON. A rollback restores the old filter
+#   answers and the paged SELECT ALL; there is nothing to migrate.
+__version__ = "0.51.346"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

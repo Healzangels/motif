@@ -45,9 +45,7 @@ def test_backend_await_predicates_exclude_backup_only():
     # _LIB_AWAIT_SQL (attn filter)
     i = API_PY.index("_LIB_AWAIT_SQL = (")
     assert "IS NOT 'backup_only'" in API_PY[i:i + 1100]
-    # the pl_pills=await SQL branch
-    j = API_PY.index('elif p == "await":\n                # v0.51.36')
-    assert "IS NOT 'backup_only'" in API_PY[j:j + 1000]
+    # v0.51.346: pl_pills=await is _LIB_AWAIT_SQL itself; the behavioural test below holds its exclusion.
     # _row_matches_attn / _row_matches_pl await branches (Python) — v0.51.68 replaced
     # the bare `!= "backup_only"` with a tuple that also excludes over_ceiling.
     assert 'not in ("backup_only", "plex_rejected:over_ceiling")' in API_PY

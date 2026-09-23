@@ -10,6 +10,8 @@ MISSING enqueued nothing there — even with TDB themes available.
 Both queries now accept the theme_id linkage (the worker.py OR
 shape); rows that already have a local file stay excluded, so
 nothing re-downloads.
+
+v0.51.346: missing_count left GET /api/library (no reader since v1.10.10); these pins now hold the action.
 """
 from __future__ import annotations
 
@@ -107,17 +109,10 @@ def _seed_linked_collections(db: Path) -> None:
         conn.commit()
 
 
-def test_collections_missing_count_sees_theme_id_links(app_client):
-    client, db = app_client
-    _seed_linked_collections(db)
-    r = client.get("/api/library?tab=collections", headers=_H)
-    assert r.status_code == 200
-    data = r.json()
-    assert data["missing_count"] == 1, (
-        "v1.22.93: the guid-less theme_id-linked collection with no "
-        "local file must count as missing (pre-fix: 0 — the banner "
-        "never showed for collections); the one WITH a file must not"
-    )
+def _download_jobs(db: Path) -> list[tuple]:
+    with sqlite3.connect(db) as conn:
+        return conn.execute(
+            "SELECT media_type, tmdb_id FROM jobs WHERE job_type = 'download' ORDER BY id").fetchall()
 
 
 def test_download_missing_enqueues_theme_id_linked(app_client):
@@ -141,8 +136,8 @@ def test_download_missing_enqueues_theme_id_linked(app_client):
     )
 
 
-def test_guid_linked_movie_still_counted(app_client):
-    """Regression guard: the original guid-only path still counts."""
+def test_guid_linked_movie_still_enqueued(app_client):
+    """Regression guard: the original guid-only path still enqueues."""
     client, db = app_client
     now = now_iso()
     with sqlite3.connect(db) as conn:
@@ -171,15 +166,15 @@ def test_guid_linked_movie_still_counted(app_client):
             (now, now),
         )
         conn.commit()
-    r = client.get("/api/library?tab=movies", headers=_H)
+    r = client.post("/api/library/download-missing", json={"tab": "movies"}, headers=_H)
     assert r.status_code == 200
-    assert r.json()["missing_count"] == 1
+    assert r.json()["enqueued"] == 1
+    assert _download_jobs(db) == [("movie", 9001)]
 
 
-def test_double_linked_row_counts_once(app_client):
+def test_double_linked_row_enqueues_once(app_client):
     """A row carrying BOTH linkages (guid + theme_id to the same
-    record) must count once — COUNT(DISTINCT pi.rating_key) guards
-    the OR fan-out."""
+    record) must enqueue once — SELECT DISTINCT guards the OR fan-out."""
     client, db = app_client
     now = now_iso()
     with sqlite3.connect(db) as conn:
@@ -209,6 +204,7 @@ def test_double_linked_row_counts_once(app_client):
             (tid, now, now),
         )
         conn.commit()
-    r = client.get("/api/library?tab=movies", headers=_H)
+    r = client.post("/api/library/download-missing", json={"tab": "movies"}, headers=_H)
     assert r.status_code == 200
-    assert r.json()["missing_count"] == 1
+    assert r.json()["enqueued"] == 1
+    assert _download_jobs(db) == [("movie", 9002)]

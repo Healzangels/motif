@@ -291,7 +291,7 @@ A header checkbox in a paginated table needs two semantics that look identical b
 
 When a UI affords a "select all across pages" action (SELECT ALL FILTERED at `loadLibrary`), maintain a parallel `Map<key, row>` populated by:
 
-1. the pagination loop that adds keys to the Set,
+1. the one `?selection=true` request (v0.51.346; it was a pagination loop) that adds keys to the Set,
 2. a sync pass on every visible-page render (refreshes cached row data for the current page),
 3. each per-row checkbox toggle.
 

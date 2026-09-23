@@ -129,9 +129,8 @@ def test_row_matches_attn_implements_all_six_pills():
     # The "cookies" matcher matches v1.15.38 (cookies_expired,
     # no ack).
     assert 'it.get("failure_kind") == "cookies_expired"' in fn_body
-    # The "update" matcher reads actionable_update (matches
-    # the SQL's tight predicate).
-    assert 'it.get("actionable_update")' in fn_body
+    # v0.51.346: the "update" matcher reads attn_update, the chip's own SQL projected post-stat.
+    assert 'it.get("attn_update")' in fn_body
     # The "mismatch" matcher.
     assert 'it.get("mismatch_state") == "pending"' in fn_body
     # The "await" matcher includes the LPS exclusion.

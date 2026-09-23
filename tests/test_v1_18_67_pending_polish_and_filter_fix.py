@@ -200,6 +200,13 @@ def _attn_update_branch() -> str:
     return src[upd_idx:upd_end]
 
 
+def _attn_update_sql() -> str:
+    # v0.51.346: the chip's SQL is _LIB_ATTN_UPDATE_SQL (shared with the post-stat attn_update column); read its text.
+    from app.web import api
+    assert "attn_branches.append(_LIB_ATTN_UPDATE_SQL)" in _attn_update_branch()
+    return api._LIB_ATTN_UPDATE_SQL
+
+
 def test_attn_update_filter_uses_section_scoped_coalesce():
     """The 'update' attn_pill SQL filter must use COALESCE(pu_sec
     decision, pu_global decision) = 'pending' — matching the row-
@@ -207,7 +214,7 @@ def test_attn_update_filter_uses_section_scoped_coalesce():
     filter used an unsectioned EXISTS subquery which kept matching
     rows whose ONLY pending decision was the title-global '' row,
     even after the user KEEP-CURRENTed the per-section row."""
-    upd_branch = _attn_update_branch()
+    upd_branch = _attn_update_sql()
     # Pre-fix shape that must NOT survive.
     assert "EXISTS (SELECT 1 FROM pending_updates pu " not in upd_branch.split(
         "AND pu.decision = 'pending'"
@@ -216,14 +223,15 @@ def test_attn_update_filter_uses_section_scoped_coalesce():
         "be replaced by the section-scoped COALESCE"
     )
     # The section-scoped COALESCE pattern must be present.
-    assert "COALESCE(" in upd_branch
-    assert "pu.section_id = pi.section_id" in upd_branch
-    assert "pu.section_id = ''" in upd_branch
-    # The decision check fires on the COALESCE result.
-    assert ") = 'pending'" in upd_branch, (
+    # v0.51.346: read the decision COALESCE itself — the rendered detection helper also names pu.section_id.
+    assert "'pending') = 'pending'" in upd_branch, (
         "v1.18.67: decision='pending' must be checked on the "
         "COALESCE expression, not on an inner WHERE"
     )
+    decision = upd_branch[upd_branch.index("COALESCE("):upd_branch.index("'pending') = 'pending'")]
+    assert "pu.decision" in decision
+    assert "pu.section_id = pi.section_id" in decision
+    assert "pu.section_id = ''" in decision
 
 
 def test_attn_update_filter_marker_explains_mirror_drift():
@@ -271,7 +279,7 @@ def test_attn_update_filter_keeps_src_letter_and_presence_gates():
     presence + URL-diff check) must SURVIVE the section-scope fix
     — they're independent invariants. Pin so the rewrite didn't
     accidentally drop them."""
-    upd_branch = _attn_update_branch()
+    upd_branch = _attn_update_sql()
     # SRC letter gate (excludes pure-P / pure-'-' rows).
     assert ") != '-'" in upd_branch
     # Presence-check (local_files OR user_overrides OR placements
@@ -283,4 +291,5 @@ def test_attn_update_filter_keeps_src_letter_and_presence_gates():
     # v1.22.10: urls_match + URL-diff now in the shared actionable helper
     # (which this attn_pills=update branch invokes). The SRC + presence gates
     # above stay inline — they're independent invariants.
-    assert "_pending_update_actionable_sql" in upd_branch
+    from app.web import api
+    assert api._pending_update_actionable_sql("t", "pi") in upd_branch

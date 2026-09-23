@@ -149,8 +149,9 @@ def test_post_stat_rows_keep_their_slot_across_a_write_before_hydration(client, 
     fired = []
     stat_pass = api._annotate_canonical_state
 
-    def stat_pass_then_write(items, *, themes_dir):
-        out = stat_pass(items, themes_dir=themes_dir)
+    # v0.51.346: each post-stat stage passes which flag it reads — the write still lands before hydration
+    def stat_pass_then_write(items, **flags):
+        out = stat_pass(items, **flags)
         if not fired:
             fired.append(victim)
             with contextlib.closing(sqlite3.connect(db)) as c, c:

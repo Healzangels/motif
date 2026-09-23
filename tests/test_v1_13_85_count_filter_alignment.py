@@ -84,21 +84,14 @@ def test_no_pills_check_includes_attn_pills():
     )
 
 
-def test_needs_themes_for_count_includes_attn_pills():
-    """The `needs_themes_for_count` boolean must include
-    `attn_pills` so attn-pill requests route through the full
-    sql_from (with t / lf / p / sfa joins). Pre-fix the slim
-    count path couldn't evaluate attn predicates — silent
-    drift between header count and body rows."""
-    src = (REPO / "app" / "web" / "api.py").read_text()
-    # Find the needs_themes_for_count assignment block.
-    anchor = src.index("needs_themes_for_count = (")
-    block = src[anchor:anchor + 1500]
-    # Must include the v1.13.85 attn_pills line.
-    assert "or bool(attn_pills)" in block, (
-        "attn_pills must be in needs_themes_for_count so the "
-        "count routes to the full FROM (themes + sfa joined)"
-    )
+def test_attn_pills_header_total_counts_through_the_rows_from(db):
+    """v0.51.346: needs_themes_for_count went with the slim count — every filtered view now
+    counts through the rows' own FROM. The invariant it guarded: an attn_pills request's header
+    total is the rows it returns, never the unfiltered section (5 here)."""
+    from app.web.api import _library_main_query
+    body = _library_main_query(db, tab="movies", fourk=False, q="", status="all", page=1, per_page=50,
+                               attn_pills={"update"})
+    assert body["total"] == len(body["items"]) != 5
 
 
 # ── behavioral: count vs row select agreement ────────────────

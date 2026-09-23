@@ -30,7 +30,7 @@ from .core.auth import init_auth_schema, cleanup_expired_sessions
 from .core.events import log_event
 from .core.scheduler import start_scheduler
 from .core.worker import start_worker
-from .web.api import canon_restore_forget, create_app
+from .web.api import canon_restore_forget, create_app, library_stat_release
 
 
 # v0.51.262: one definition, consumed by BOTH the stdout and the file handler —
@@ -847,6 +847,14 @@ def main() -> int:
     try:
         server.run()
     finally:
+        try:
+            # v0.51.346: the drain gave up on a library request stuck on a stat (a hung mount) — its thread held exit past the grace
+            stuck = library_stat_release()
+            if stuck:
+                log.warning("%d library request(s) still waited on a file stat after the drain (a hung mount?) — motif "
+                            "leaves them", stuck)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not release the library requests waiting on a file stat — exit waits on them: %s", e)
         # v0.51.342: before exit joins RESTORE FROM PLEX's fetch pool — its backoffs held a docker stop past the grace.
         restore_job = None
         try:

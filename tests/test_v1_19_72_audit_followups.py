@@ -188,39 +188,21 @@ def test_h2_attn_update_filter_widens_src_gate():
     """The attn_pills=update SQL must allow new_theme_available
     rows through its SRC=— gate. The widening + the new kind
     helper must coexist."""
-    # Anchor: the v1.19.72 marker on the attn-pills SRC=—
-    # widening. There are two `urls_match prompts on P rows`
-    # sites in api.py; the v1.19.72 marker is unique to the
-    # attn site so anchoring on it doesn't drift.
-    marker_idx = API_PY.index(
-        "v1.19.72: SRC=— exception for new_theme_available\n"
-        "                    # mirrors the JS computeTdbPill"
-    )
-    # The widening must immediately follow the marker.
-    block = API_PY[marker_idx: marker_idx + 600]
-    assert (
-        "_pending_update_new_theme_kind_sql('t', 'pi')" in block
-    )
+    # v0.51.346: the chip's SQL is _LIB_ATTN_UPDATE_SQL; read its rendered text, whitespace-folded.
+    from app.web import api
+    fold = lambda s: " ".join(s.split())  # noqa: E731
+    kind = api._pending_update_new_theme_kind_sql("t", "pi")
+    assert fold(f"(({api._LIB_SRC_LETTER_SQL}) != '-' OR {kind})") in fold(api._LIB_ATTN_UPDATE_SQL)
 
 
 def test_h2_attn_update_filter_widens_presence_gate():
     """Same query — presence gate also widened (local_files OR
     overrides OR placements OR sidecar OR new_theme_kind)."""
-    # Find the SRC=— widening and walk forward to find the
-    # presence gate (containing `local_theme_file = 1`).
-    src_idx = API_PY.index(
-        "v1.19.72: SRC=— exception for new_theme_available\n"
-        "                    # mirrors the JS computeTdbPill"
-    )
-    # Walk forward ~3000 chars to capture the presence gate.
-    block = API_PY[src_idx: src_idx + 3000]
-    # The presence gate must include a new_theme_kind OR-branch.
-    pre_count = block.count("_pending_update_new_theme_kind_sql")
-    assert pre_count >= 2, (
-        f"v1.19.72 H2: expected >=2 references to the kind helper "
-        f"in the attn_update query (one in SRC=— gate, one in "
-        f"presence gate), found {pre_count}"
-    )
+    # v0.51.346: the presence gate's last OR-branch, read from the rendered _LIB_ATTN_UPDATE_SQL.
+    from app.web import api
+    fold = lambda s: " ".join(s.split())  # noqa: E731
+    kind = api._pending_update_new_theme_kind_sql("t", "pi")
+    assert fold(f"OR pi.local_theme_file = 1 OR {kind} )") in fold(api._LIB_ATTN_UPDATE_SQL)
 
 
 # ── M1: acceptUpdate confirm dialog 3rd branch ──────────────────

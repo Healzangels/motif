@@ -365,25 +365,12 @@ def test_production_attn_update_filter_has_strict_predicates():
     (`attn_branches.append(`) so this test still finds the SQL
     branch, not the Python matcher."""
     api_py = (REPO / "app" / "web" / "api.py").read_text()
-    # Find the SQL-side attn `update` branch via its
-    # `attn_branches.append(` follow-up — that's unique to the
-    # SQL branch (the Python matcher uses `return True`).
-    branches = [
-        i for i in range(len(api_py))
-        if api_py.startswith('elif p == "update":', i)
-        # Distinguisher: the SQL attn branch's body starts with
-        # `attn_branches.append(` within the immediate next ~50
-        # chars (after the comment block walked back to indent).
-        # The tdb_pills branch uses `branches.append`. The
-        # v1.15.39 Python matcher returns True. Look ahead 4000
-        # chars to allow for the multi-line SQL inside the
-        # append call.
-        and 'attn_branches.append(' in api_py[i:i + 4000]
-    ]
-    assert branches, "attn_pills=update SQL branch missing"
-    anchor = branches[-1]
-    # 8000 chars covers the multi-line SQL string we added.
-    block = api_py[anchor:anchor + 8000]
+    # v0.51.346: the SQL branch appends _LIB_ATTN_UPDATE_SQL (shared with the post-stat attn_update column).
+    attn_axis = api_py.index("if attn_pills and not attn_needs_post_stat:")
+    upd_idx = api_py.index('elif p == "update":', attn_axis)
+    assert "attn_branches.append(_LIB_ATTN_UPDATE_SQL)" in api_py[upd_idx:api_py.index('elif p == "cookies":', upd_idx)]
+    from app.web import api
+    block = api._LIB_ATTN_UPDATE_SQL
     # New v1.13.86 predicates must all be present:
     assert "lf2.section_id = pi.section_id" in block, (
         "has-something check (lf2 join) must be present"
@@ -396,7 +383,7 @@ def test_production_attn_update_filter_has_strict_predicates():
     # the components; v1.22.10 composed them into one gate). The attn update
     # branch invokes it — so its actionability gate can't drift from the pill
     # columns / tdb filters / NEEDS WORK sort.
-    assert "_pending_update_actionable_sql" in block, (
+    assert api._pending_update_actionable_sql("t", "pi") in block, (
         "v1.22.10: attn_pills=update branch must invoke the actionable-gate "
         "helper (carries the urls_match + URL-diff branches)"
     )

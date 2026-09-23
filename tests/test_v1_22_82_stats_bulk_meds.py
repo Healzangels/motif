@@ -39,17 +39,14 @@ API_PY = (REPO / "app" / "web" / "api.py").read_text()
 
 
 def test_post_stat_blocks_share_one_pagination():
-    i = API_PY.index("_post_stat_filtered = False")
-    region = API_PY[i:i + 4500]
-    # The three filter blocks only set the flag; exactly ONE
-    # total+slice pair survives, in the epilogue.
-    assert region.count("_post_stat_filtered = True") == 3
-    j = region.index("if _post_stat_filtered:")
-    epilogue = region[j:j + 300]
-    assert "total = len(items)" in epilogue
-    assert "items = items[offset:offset + per_page]" in epilogue
-    # No per-block slicing left before the epilogue.
-    assert region[:j].count("items = items[offset:offset + per_page]") == 0
+    # v0.51.346: the whole query function, not a window — dl_missing sliced before this region and paged twice.
+    fn = API_PY[API_PY.index("def _library_main_query("):API_PY.index("\ndef _warn_canon_fs(")]
+    slice_stmt = "items = items[offset:offset + per_page]"
+    j = fn.index("if _post_stat_filtered:")
+    assert fn.count(slice_stmt) == 1 and fn.index(slice_stmt) > j
+    assert fn.count("total = len(items)") == 1 and fn.index("total = len(items)") > j
+    flags = [k for k in range(len(fn)) if fn.startswith("_post_stat_filtered = True", k)]
+    assert flags and all(k < j for k in flags)
 
 
 # ── (2) start_progress inside the try ────────────────────────

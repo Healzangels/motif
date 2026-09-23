@@ -277,13 +277,11 @@ def test_filtered_totals_equal_paged_rows_for_every_count_shape(client):
     assert by_rk(all_rows(cl, tab="movies", fourk="true"))["m101-4k"]["pending_update"] == 0
 
 
-@pytest.mark.xfail(strict=True, reason="pre-existing: the slim COUNT joins placements via pi.guid_tmdb; a "
-                   "collection links via theme_id with a NULL guid_tmdb, so LINK=PU reads total 0 while its "
-                   "row renders. Kept on purpose in v0.51.345; fixing it flips this to XPASS.")
-def test_known_slim_count_drift_on_collections(client):
+def test_collections_link_pu_header_counts_its_theme_id_linked_rows(client):
+    # v0.51.346: was a strict xfail — the guid-keyed slim COUNT read 0 for a guid-less collection's LINK=PU row.
     cl, db = client
     seed(db)
-    all_rows(cl, per_page=1, tab="collections", link_pills="pu")
+    assert keys(all_rows(cl, per_page=1, tab="collections", link_pills="pu")) == ["c105"]
 
 
 def test_count_wrapper_counts_joined_tuples_not_items(client):

@@ -51,88 +51,84 @@ case so this fix is targeted.
 """
 from __future__ import annotations
 
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
 
 
 REPO = Path(__file__).resolve().parent.parent
 API_PY = REPO / "app" / "web" / "api.py"
+AUTH = {"X-Authentik-Username": "testadmin"}
+# v0.51.346: a run clock, never a fixed date (a seeded date ages into every recency window)
+NOW = datetime.now(timezone.utc).isoformat(timespec="seconds")
+# (rating_key, canonical on disk?, placed?, plex_independent_theme, reason); "u-none" has no theme at all.
+ROWS = [("t-ok", True, True, 0, None), ("t-gone-placed", False, True, 0, None),
+        ("t-gone-backup", False, False, 1, "backup_only"), ("u-none", None, False, 0, None)]
 
 
-def _routing_block() -> str:
-    """The route handler block that does the broken-pill routing."""
-    src = API_PY.read_text()
-    # Anchor on the v1.12.23 marker that opens the routing block.
-    anchor = src.index(
-        "v1.12.23: 'broken' DL pill alone routes through the existing"
-    )
-    return src[anchor:anchor + 2500]
+# v0.51.346: no route rewrite to status=dl_missing any more, so the v1.14.91 routing literals became behaviour.
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
+    monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
+    from app.config import Settings
+    from app.core.auth import create_admin, init_auth_schema
+    from app.core.db import init_db
+    from app.web import api
+    monkeypatch.setattr(api, "log_event", lambda *a, **k: None)
+    s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
+    s._cfg.paths.themes_dir = str(tmp_path / "themes")
+    init_db(s.db_path)
+    init_auth_schema(s.db_path)
+    create_admin(s.db_path, username="testadmin", password="testpassword")
+    with sqlite3.connect(s.db_path) as c:
+        c.execute("INSERT INTO plex_sections (section_id, title, type, is_anime, is_4k, themes_subdir, included,"
+                  " discovered_at, last_seen_at) VALUES ('1', 'Movies', 'movie', 0, 0, 'movies', 1, ?, ?)", (NOW, NOW))
+        for n, (rk, on_disk, placed, lps, reason) in enumerate(ROWS, start=1):
+            if on_disk is not None:
+                c.execute("INSERT INTO themes (id, media_type, tmdb_id, title, upstream_source, last_seen_sync_at,"
+                          " first_seen_sync_at) VALUES (?, 'movie', ?, ?, 'imdb', ?, ?)", (n, 500 + n, rk, NOW, NOW))
+                c.execute("INSERT INTO local_files (media_type, tmdb_id, section_id, file_path, downloaded_at,"
+                          " source_video_id, last_place_attempt_reason) VALUES ('movie', ?, '1', ?, ?, 'v', ?)",
+                          (500 + n, f"movies/{rk}.mp3", NOW, reason))
+                if on_disk:
+                    (tmp_path / "themes" / "movies").mkdir(parents=True, exist_ok=True)
+                    (tmp_path / "themes" / "movies" / f"{rk}.mp3").write_bytes(b"theme")
+                if placed:
+                    c.execute("INSERT INTO placements (media_type, tmdb_id, section_id, media_folder, placed_at,"
+                              " placement_kind) VALUES ('movie', ?, '1', ?, ?, 'hardlink')",
+                              (500 + n, str(tmp_path / "media" / rk), NOW))
+            c.execute("INSERT INTO plex_items (rating_key, section_id, media_type, theme_id, title,"
+                      " plex_independent_theme, first_seen_at, last_seen_at) VALUES (?, '1', 'movie', ?, ?, ?, ?, ?)",
+                      (rk, n if on_disk is not None else None, rk, lps, NOW, NOW))
+    return TestClient(api.create_app(s))
 
 
-def test_dl_pills_broken_routing_includes_has_theme():
-    """The dl_pills broken-only override must fire for both
-    status='all' AND status='has_theme'. Pre-fix only 'all'
-    was checked, so a THEMED + DL=broken combo silently
-    dropped the broken filter."""
-    block = _routing_block()
-    assert (
-        'if dl_set == {"broken"} and status in ("all", "has_theme"):'
-        in block
-    )
+def _rks(client, **params):
+    r = client.get("/api/library", params={"tab": "movies", "per_page": 50, **params}, headers=AUTH)
+    assert r.status_code == 200, r.text
+    assert r.json()["total"] == len(r.json()["items"])
+    return {it["rating_key"] for it in r.json()["items"]}
 
 
-def test_attn_pills_broken_routing_includes_has_theme():
-    """Same fix for the attn_pills broken pill (the ↺ chip
-    the user reported). The override must fire for THEMED too,
-    since dl_missing implies has_theme."""
-    block = _routing_block()
-    assert (
-        'if attn_set == {"broken"} and status in ("all", "has_theme"):'
-        in block
-    )
+@pytest.mark.parametrize("axis", ["dl_pills", "attn_pills"])
+def test_themed_plus_broken_narrows_to_the_canonical_missing_rows(client, axis):
+    """THEMED + ↺ must not show every themed row (the v1.14.91 report). Since v0.51.346 it also keeps a
+    canonical-missing row with no placement — its DL dot paints red too."""
+    broken = {"t-gone-placed", "t-gone-backup"}
+    assert _rks(client, status="has_theme", **{axis: "broken"}) == broken
+    assert _rks(client, **{axis: "broken"}) == broken
 
 
-def test_v1_14_91_marker_explains_the_has_theme_expansion():
-    """A v1.14.91 marker on the routing block documents WHY the
-    has_theme expansion is safe (semantic equivalence) so a
-    future 'tighten the routing' refactor sees the rationale."""
-    block = _routing_block()
-    assert "v1.14.91" in block
-    # The rationale must mention the implication / equivalence.
-    assert (
-        "implies has_theme" in block
-        or "implies" in block.lower()
-        or "themed by definition" in block
-    )
-
-
-def test_routing_does_not_fire_for_untracked_status():
-    """status='untracked' (UNTHEMED chip) + broken should NOT
-    route through dl_missing. dl_missing requires file_path
-    NOT NULL — untracked rows have file_path NULL — empty
-    intersection. Overriding to dl_missing would break the
-    user's explicit untracked filter."""
-    block = _routing_block()
-    # The conditions must be exactly status in ("all", "has_theme") —
-    # NOT a wildcard. Pin both via the literal substring above.
-    # And confirm 'untracked' isn't in any of the override conditions.
-    # Slice just the override conditions (lines starting with
-    # `if dl_set` / `if attn_set`).
-    cond_lines = [
-        line.strip() for line in block.splitlines()
-        if line.strip().startswith("if dl_set ==")
-        or line.strip().startswith("if attn_set ==")
-    ]
-    assert len(cond_lines) == 2, (
-        f"Expected exactly 2 routing conditions; found "
-        f"{len(cond_lines)}: {cond_lines}"
-    )
-    for line in cond_lines:
-        assert "untracked" not in line, (
-            f"Routing condition must not include untracked: {line}"
-        )
-        assert "manual" not in line, (
-            f"Routing condition must not include manual: {line}"
-        )
+@pytest.mark.parametrize("axis", ["dl_pills", "attn_pills"])
+def test_unthemed_plus_broken_matches_nothing(client, axis):
+    """UNTHEMED rows have no canonical, so broken beside the untracked status is empty — never every untracked row."""
+    assert _rks(client, status="untracked") == {"u-none"}
+    assert _rks(client, status="untracked", **{axis: "broken"}) == set()
 
 
 def test_attn_pills_broken_in_sql_loop_remains_unhandled():

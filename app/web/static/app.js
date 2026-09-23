@@ -11676,10 +11676,13 @@
     // (worker stamps last_place_attempt_reason='backup_only') + the backend await
     // predicates (_LIB_AWAIT_SQL / pl_pills=await / _row_matches_attn) — same
     // contract-drift class as the v1.18.16 plex_upload exclusion above.
+    // v0.51.346: over-ceiling is terminal too (v1.24.46 / v0.51.68 took it out of every AWAIT predicate) — the amber
+    // dot read as "PUSH me" on a theme Plex refuses; the ⊘ glyph above says why, and PL=off now lists it.
     const awaitingApproval = !it.job_in_flight && !!it.file_path
                           && !it.media_folder && !lpsState
                           && !isPlexUpload
-                          && it.last_place_attempt_reason !== 'backup_only';
+                          && it.last_place_attempt_reason !== 'backup_only'
+                          && it.last_place_attempt_reason !== 'plex_rejected:over_ceiling';
     const placementBroken = !!placed && !!it.placement_missing;
     // v1.18.25 introduced the 'pushed' (cyan) PL state to mark
     // plex_upload placements (API push, no folder sidecar) apart
@@ -11960,7 +11963,8 @@
       // v1.11.62: motif's canonical was deleted but the placement
       // is still in the Plex folder. RESTORE FROM PLEX recovers.
       glyphHtml =
-        `<a class="title-glyph title-glyph-broken" title="Canonical missing — Plex copy intact (RESTORE FROM PLEX)." href="/${libraryState.tab}?status=dl_missing">↺</a>`;
+        // v0.51.346: the ATTN broken pill, not status=dl_missing — that view also demands a placement, which this glyph does not
+        `<a class="title-glyph title-glyph-broken" title="Canonical missing — Plex copy intact (RESTORE FROM PLEX)." href="/${libraryState.tab}?attn_pills=broken">↺</a>`;
     }
     if (glyphHtml) titleGlyphs.push(glyphHtml);
 
@@ -16765,6 +16769,11 @@
         fourk: libraryState.fourk ? 'true' : 'false',
         per_page: String(perPage),
       });
+      // v0.51.346: the view's own scope, as loadLibrary sends it — without it // ALL selected no 4K row, a section chip every section
+      if (libraryState.allRes) params.set('all_res', 'true');
+      if (libraryState.tab === 'collections' && libraryState.section_id && !libraryState.allRes) {
+        params.set('section_id', libraryState.section_id);
+      }
       if (libraryState.q) params.set('q', libraryState.q);
       if (libraryState.status !== 'all') params.set('status', libraryState.status);
       if (libraryState.tdb && libraryState.tdb !== 'any') {
@@ -16810,35 +16819,31 @@
     // v1.10.49: SELECT ALL FILTERED — pulls every page of the current
     // filter and adds each row's key to libraryState.selected. Useful
     // for 'manual + TDB tracked → DOWNLOAD ALL' and similar bulk
-    // workflows. Uses a high per_page (200, the API max) to keep
-    // round-trips bounded.
+    // workflows.
     document.getElementById('library-select-all-filtered-btn')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget;
       btn.disabled = true;
       const origLabel = btn.textContent;
       btn.textContent = '// LOADING…';
       try {
+        // v0.51.346: one unpaged request (the 200-row walk took 54 on /movies); the bulk code's columns, a list per row
         const params = buildLibraryFilterParams(200);
-        let page = 1;
+        params.delete('per_page');
+        params.set('selection', 'true');
+        const data = await api('GET', '/api/library?' + params.toString());
+        const cols = data.columns || [];
         let collected = 0;
-        while (true) {
-          params.set('page', String(page));
-          const data = await api('GET', '/api/library?' + params.toString());
-          for (const it of (data.items || [])) {
-            // v1.16.10: store the full row data in selectedRows so
-            // the bulk-action count badges + handlers can operate
-            // on the entire filtered set (not just the visible
-            // page's libraryState.items).
-            const k = libKey(it);
-            libraryState.selected.add(k);
-            libraryState.selectedRows.set(k, it);
-            collected++;
-          }
-          const total = data.total || 0;
-          const perPage = data.per_page || 200;
-          if (page * perPage >= total) break;
-          page++;
-          if (page > 200) break;  // safety; never expected
+        for (const vals of (data.rows || [])) {
+          const it = {};
+          cols.forEach((c, i) => { it[c] = vals[i]; });
+          // v1.16.10: store the full row data in selectedRows so
+          // the bulk-action count badges + handlers can operate
+          // on the entire filtered set (not just the visible
+          // page's libraryState.items).
+          const k = libKey(it);
+          libraryState.selected.add(k);
+          libraryState.selectedRows.set(k, it);
+          collected++;
         }
         // Reflect new state in the visible page checkboxes.
         document.querySelectorAll('#library-body input[data-lib-select]').forEach((cb) => {
