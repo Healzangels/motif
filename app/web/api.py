@@ -2352,6 +2352,9 @@ _LIB_SELECTION_COLUMNS = (
     "theme_tmdb", "theme_media_type", "youtube_url", "failure_kind", "failure_acked_at", "upstream_source",
     "tdb_dropped_at", "file_path", "source_video_id", "source_kind", "mismatch_state", "media_folder",
     "placement_kind", "placement_provenance", "job_in_flight", "pending_update", "pending_update_kind",
+    # v0.51.348: the bulk PUSH predicates read the place reason now (a backup_only or over-ceiling row is terminal,
+    # not awaiting), so a selected off-page row must carry it or those counts read undefined and offer the push again.
+    "last_place_attempt_reason",
     "canonical_missing",
 )
 

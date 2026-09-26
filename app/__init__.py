@@ -7025,7 +7025,28 @@
 #   it. Checked live on a seeded instance: 20 posters, dragged left
 #   400 px and back to the start, a click opened the card and a drag
 #   did not. Upgrade note: none — no schema, config or API change.
-__version__ = "0.51.347"
+# 0.51.348: bulk PUSH stops offering themes Plex will refuse. A row
+#   whose last placement attempt ended in a TERMINAL state — a backup
+#   that defers to Plex on purpose, or a theme Plex rejected for its
+#   size (it refuses over ~10MB) — has not been "awaiting placement"
+#   on its own row since 0.51.36 and 0.51.347. The three bulk-PUSH
+#   predicates never read that reason, so // PUSH TO PLEX counted
+#   those rows in its (N), the click sent them, and each came back a
+#   per-item failure. They are now excluded from the count, the badge
+#   and the candidates, and the confirm and the nothing-to-push notice
+#   say a backup or too large for Plex among the reasons rows were
+#   skipped. A retryable failure (a full disk, say) is still offered.
+#   GET /api/library?selection=true carries last_place_attempt_reason
+#   with the rest of the row now: SELECT ALL FILTERED hands the bulk
+#   bar off-page rows, and without the field those rows read as
+#   pushable again — the page's own field-coverage test caught that
+#   while this fix was being written.
+#   That test now drives every bulk handler three times, with the
+#   request answered, refused and failing outright, so the handlers'
+#   error branches are under it too. A read of a row field outside
+#   the selection columns hid in one of those branches and survived
+#   the 0.51.346 review; it goes red now.
+__version__ = "0.51.348"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

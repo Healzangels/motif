@@ -14048,9 +14048,14 @@
         // `!!media_folder || placement_kind === 'plex_upload'`.
         // Same class-9 mirror-drift sub-pattern v1.18.24 / .75
         // fixed at the inline-SRC + isPlexAgentRow sites.
+        // v0.51.348: and not a TERMINAL reason — the row's own awaitingApproval has excluded backup_only since
+        // v0.51.36 and over_ceiling since v0.51.347, so these bulk sites were the last offering a push that
+        // cannot land (a backup defers to Plex on purpose; Plex 500s over ~10MB).
         const awaitingApproval = !it.job_in_flight
                               && !!it.file_path
-                              && !placed;
+                              && !placed
+                              && it.last_place_attempt_reason !== 'backup_only'
+                              && it.last_place_attempt_reason !== 'plex_rejected:over_ceiling';
         if (awaitingApproval && themed) pushableCount++;
         // v1.15.46: M+P composite gate (mirrors line ~6619 per-row).
         // v1.15.49: extend to fill all three buckets exactly once.
@@ -14113,10 +14118,14 @@
     // media_folder='' so `!it.media_folder` evaluated as TRUE
     // → bulk PUSH count over-reported on selections containing
     // any plex_upload row. CLAUDE.md SRC-axis mirror-drift class.
+    // v0.51.348: the same terminal-reason exclusion as the per-row pushableCount above — the (N) badge must count
+    // what the click will actually push.
     const pushCount = effectiveCount(
       (it) => !it.job_in_flight && !!it.file_path
               && !it.media_folder
               && it.placement_kind !== 'plex_upload'
+              && it.last_place_attempt_reason !== 'backup_only'
+              && it.last_place_attempt_reason !== 'plex_rejected:over_ceiling'
               && themedPred(it)
     );
     // v0.50.83: bulk SWITCH TO API — ANY themed row placed via a FILE sidecar (hardlink
@@ -16289,10 +16298,14 @@
         // bulk PUSH click handler scooped plex_upload rows into the
         // candidates list and would have re-pushed them (no-op
         // server-side but wrong intent surface).
+        // v0.51.348: terminal reasons out of the candidates too — pushing a backup_only row contradicts its own
+        // intent, and an over-ceiling one is a guaranteed Plex 500 (CLAUDE.md class 11).
         const awaitingApproval = !it.job_in_flight
                               && !!it.file_path
                               && !it.media_folder
-                              && it.placement_kind !== 'plex_upload';
+                              && it.placement_kind !== 'plex_upload'
+                              && it.last_place_attempt_reason !== 'backup_only'
+                              && it.last_place_attempt_reason !== 'plex_rejected:over_ceiling';
         if (awaitingApproval && themed) {
           candidates.push({
             mt: it.theme_media_type,
@@ -16314,7 +16327,9 @@
       }
       if (candidates.length === 0) {
         const msg = useSelection
-          ? 'Nothing to push — every selected row is already placed, in flight, or has no downloaded canonical.'
+          // v0.51.348: name the terminal reasons too — they are the rows this tag stopped offering
+          ? 'Nothing to push — every selected row is already placed, in flight, has no downloaded canonical, '
+            + 'or is a backup / too large for Plex.'
           : 'Nothing to push — no awaiting-placement rows on this page.';
         alert(msg);
         return;
@@ -16323,7 +16338,8 @@
       const lines = [`Push ${candidates.length} ${scope} downloaded theme${candidates.length === 1 ? '' : 's'} into Plex?`];
       if (useSelection && skipped.length) {
         lines.push('');
-        lines.push(`(${skipped.length} skipped — already placed or no downloaded canonical.)`);
+        // v0.51.348: a backup_only or over-ceiling row is skipped on purpose now, so the wording has to admit it
+        lines.push(`(${skipped.length} skipped — already placed, no downloaded canonical, a backup, or too large for Plex.)`);
       }
       if (!confirm(lines.join('\n'))) return;
       btn.disabled = true;

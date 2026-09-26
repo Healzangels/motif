@@ -286,7 +286,8 @@ def test_the_default_walk_spans_the_edge_states_the_selection_must_keep(lib):
                                     dict(attn_pills="await,broken")], ids=["pl-await-on", "pl-await-broken", "attn-await-broken"])
 def test_a_terminal_place_reason_keeps_its_row_out_of_an_await_selection(lib, params):
     rows = {it["rating_key"]: it for it in _walk(lib, 50, tab="movies")}
-    # premise: m05 / m06 / m07 differ only in last_place_attempt_reason, a column the selection body never carries
+    # premise: m05 / m06 / m07 differ only in last_place_attempt_reason (v0.51.348: the body carries it — the bulk
+    # PUSH predicates read it, and an off-page row that lacked it read undefined and was offered the push again)
     for rk in ("m05", "m06", "m07"):
         it = rows[rk]
         assert (bool(it["file_path"]), it["media_folder"], it["plex_independent_theme"], it["canonical_missing"]) \
@@ -296,7 +297,7 @@ def test_a_terminal_place_reason_keeps_its_row_out_of_an_await_selection(lib, pa
     body = _selection(lib, tab="movies", **params)
     got = {it["rating_key"] for it in _rebuilt(body)}
     assert "m07" in got and not {"m05", "m06"} & got, (params, sorted(got))
-    assert "last_place_attempt_reason" not in body["columns"]
+    assert "last_place_attempt_reason" in body["columns"]
 
 
 def test_the_selection_body_never_meets_jsonable_encoder_or_the_event_loop(lib, monkeypatch):
@@ -396,6 +397,7 @@ if (at < 0) throw new Error("app.js no longer ends in its IIFE");
 const code = src.slice(0, at)
   + "\nglobalThis.__page = { libraryState, updateLibrarySelectionUi, bindLibrary, libKey, loadLibrary };\n" + src.slice(at);
 const log = { requests: [], alerts: [], confirms: [], errors: [] };
+let fetchMode = "ok";  // v0.51.348: "ok" | "fail" (500 + detail) | "reject" (network error)
 const els = new Map();
 function classes() {
   const s = new Set();
@@ -462,6 +464,14 @@ const ctx = {
     url = String(url);
     log.requests.push(input.brief ? null
       : { method: opts.method || "GET", url, body: typeof opts.body === "string" ? JSON.parse(opts.body) : null });
+    // v0.51.348: a step can flip the answer, so the handlers' ERROR branches run too — a read of a row field
+    // outside the selection columns hides there otherwise (the v0.51.346 tests-lens mutant that survived).
+    if (fetchMode === "reject") throw new TypeError("Failed to fetch");
+    if (fetchMode === "fail") {
+      const body = JSON.stringify({ detail: "motif could not do that" });
+      return { ok: false, status: 500, statusText: "Server Error", json: async () => JSON.parse(body),
+               text: async () => body };
+    }
     let payload = { ok: true, enqueued: 0, skipped: 0 };
     if (url.startsWith("/api/library?")) {
       payload = new URLSearchParams(url.split("?")[1]).get("selection") === "true" && input.selection
@@ -529,6 +539,8 @@ function snapBar() {
       }
       await settle();
       res.label = e.textContent;
+    } else if (step.op === "fetchmode") {
+      fetchMode = step.mode;
     } else if (step.op === "snapshot") {
       res.selected = [...st.selected];
       res.rows = [...st.selectedRows.values()].map(plain);
@@ -550,7 +562,7 @@ BULK = ["library-download-selected-btn", "library-tdb-backup-btn", "library-clou
         "library-ack-selected-btn", "library-adopt-selected-btn", "library-export-csv-btn"]
 
 
-def _drive(tmp_path, tab, steps, rowsets=None, selection=None, columns=None, brief=False):
+def _drive(tmp_path, tab, steps, rowsets=None, selection=None, columns=None, brief=False, expect_errors=False):
     harness = tmp_path / "select_all_page.js"
     harness.write_text(_HARNESS)
     payload = {"appjs": str(APP_JS), "tab": tab, "steps": steps, "rowsets": rowsets or {}, "selection": selection,
@@ -558,7 +570,13 @@ def _drive(tmp_path, tab, steps, rowsets=None, selection=None, columns=None, bri
     r = subprocess.run([_NODE, str(harness)], input=json.dumps(payload), capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stderr[-3000:]
     out = json.loads(r.stdout)
-    assert not out["errors"], out["errors"][:5]
+    if expect_errors:
+        # v0.51.348: with fetch refusing, a handler's own catch logs a breadcrumb — that IS the branch under test.
+        # Anything else (a TypeError from reading a field off undefined, say) still fails here.
+        stray = [e for e in out["errors"] if "bulk action failed for item:" not in e]
+        assert not stray, stray[:5]
+    else:
+        assert not out["errors"], out["errors"][:5]
     return out
 
 
@@ -661,6 +679,9 @@ def _synthetic_rows(n):
             "placement_provenance": pick([None, "auto", "manual", "adopt"]),
             "job_in_flight": pick([None, None, "download", "place"]), "pending_update": pick([0, 0, 1]),
             "pending_update_kind": pick([None, "upstream_changed", "urls_match", "new_theme_available"]),
+            # v0.51.348: the place reason rides the selection now — the bulk PUSH predicates read it
+            "last_place_attempt_reason": pick([None, None, "backup_only", "plex_rejected:over_ceiling",
+                                               "link_failed: no space left on device"]),
             "canonical_missing": pick([False, False, True]),
         })
     return rows
@@ -677,11 +698,17 @@ def test_page_code_reads_no_row_field_outside_the_selection_columns(lib, tmp_pat
     real = _rebuilt(_selection(lib, tab="movies", all_res="true")) + _rebuilt(_selection(lib, tab="collections"))
     rowsets = {"real": real, "synthetic": _synthetic_rows(4000)}
     steps = []
-    for state in COVERAGE_STATES:
-        for rows in rowsets:
-            steps += [{"op": "state", "set": state}, {"op": "select", "rows": rows, "track": True}, {"op": "ui"}]
-            steps += [s for h in BULK for s in ({"op": "select", "rows": rows, "track": True}, {"op": "click", "id": h})]
-    out = _drive(tmp_path, "movies", steps, rowsets=rowsets, columns=columns, brief=True)
+    # v0.51.348: every handler runs three times — answered, refused (500 + detail) and rejected (network error) — so its
+    # ERROR branches are under the Proxy too. An out-of-column read there survived the answered-only pass.
+    for mode in ("ok", "fail", "reject"):
+        for state in COVERAGE_STATES:
+            for rows in rowsets:
+                steps += [{"op": "fetchmode", "mode": mode}, {"op": "state", "set": state},
+                          {"op": "select", "rows": rows, "track": True}, {"op": "ui"}]
+                steps += [s for h in BULK for s in ({"op": "select", "rows": rows, "track": True},
+                                                    {"op": "click", "id": h})]
+    steps.append({"op": "fetchmode", "mode": "ok"})
+    out = _drive(tmp_path, "movies", steps, rowsets=rowsets, columns=columns, brief=True, expect_errors=True)
     assert out["outside"] == {}, out["outside"]
     # premise: the drive reached the branches that read the rarer selection fields
     assert {"edition_key", "pending_update_kind", "canonical_missing", "job_in_flight", "mismatch_state",
