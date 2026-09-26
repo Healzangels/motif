@@ -7046,7 +7046,28 @@
 #   error branches are under it too. A read of a row field outside
 #   the selection columns hid in one of those branches and survived
 #   the 0.51.346 review; it goes red now.
-__version__ = "0.51.348"
+# 0.51.349: the PL sort and SELECT ALL FILTERED follow the list.
+#   Two leftovers from the 0.51.346 review, neither of them blocking
+#   then.
+#   (1) Sorting by PL put a row among the amber "awaiting placement"
+#   ones whenever it had a download and no placement — including a
+#   backup that defers to Plex on purpose, a theme Plex rejected for
+#   its size, and a stale upload on a row Plex serves itself. All
+#   three paint a gray dot, and 0.51.346 and 0.51.347 settled that
+#   none of them is awaiting anything. They now sort with the gray
+#   rows they look like. One difference is left on purpose: a row
+#   with a download or placement job in flight hides its own amber
+#   dot until the job ends, and the sort would have to ask the jobs
+#   table per row to know that — the cost 0.51.345 was spent
+#   removing. A test pins the rest against the dot the row paints.
+#   (2) SELECT ALL FILTERED asked the server in title order whatever
+#   the list was sorted by, so for a title the view lists twice the
+#   selection kept the wrong row, and EXPORT CSV wrote its own order
+#   rather than the one on screen. The request now carries the view's
+#   sort, as it already carried the view's filters and // ALL scope.
+#   The default view still sends none, because title ascending is
+#   what both sides already assume.
+__version__ = "0.51.349"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

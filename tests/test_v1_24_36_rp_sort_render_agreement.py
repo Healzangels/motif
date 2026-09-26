@@ -122,5 +122,11 @@ def test_pl_sort_broken_sidecar_before_rp(client):
 def test_sort_keys_pin_the_stale_pu_state():
     from app.web.api import _LIBRARY_SORTS_MAIN, _LIB_STALE_PU_SQL
     frag = _LIB_STALE_PU_SQL
-    assert (frag + " THEN 3") in _LIBRARY_SORTS_MAIN["pl"]
+    # v0.51.349: the PL arm carries a guard between the fragment and its rank — an LPS row paints gray however stale
+    # its upload is, so it must not rank amber. Pin the ARM (fragment ... THEN 3), not the two being adjacent.
+    pl_arm = _LIBRARY_SORTS_MAIN["pl"]
+    assert frag in pl_arm
+    after = pl_arm[pl_arm.index(frag) + len(frag):]
+    assert after.split("THEN")[0].strip() in ("", "AND COALESCE(pi.plex_independent_theme, 0) = 0"), after[:120]
+    assert after.lstrip().startswith(("THEN 3", "AND COALESCE(pi.plex_independent_theme, 0) = 0 THEN 3")), after[:120]
     assert (frag + " THEN -1") in _LIBRARY_SORTS_MAIN["link"]

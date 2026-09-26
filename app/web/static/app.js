@@ -16875,6 +16875,14 @@
       if (libraryState.attnPills && libraryState.attnPills.size > 0) {
         params.set('attn_pills', Array.from(libraryState.attnPills).join(','));
       }
+      // v0.51.349: the view's ORDER too, as loadLibrary sends it — the rows come back in the order the list shows,
+      // so a selection's stored row for a duplicated title is the one on screen and EXPORT CSV writes the view's order.
+      if (libraryState.sort && libraryState.sort !== 'title') {
+        params.set('sort', libraryState.sort);
+      }
+      if (libraryState.sortDir && libraryState.sortDir !== 'asc') {
+        params.set('sort_dir', libraryState.sortDir);
+      }
       return params;
     }
 

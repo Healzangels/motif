@@ -2152,7 +2152,9 @@ _LIBRARY_SORTS_MAIN = {
         # awaitingApproval. Pin it to the await rank (3) FIRST so it doesn't fall
         # into the red 'broken' theme_present=0 bucket below (sort-vs-render
         # drift — the v1.23.24/.25 "rank by the dot you paint" invariant).
-        f"WHEN {_LIB_STALE_PU_SQL} THEN 3 "
+        # v0.51.349: unless Plex serves its own — an LPS row paints gray however stale its upload is (lpsState wins in
+        # renderLibraryRow), so ranking it amber split the gray block.
+        f"WHEN {_LIB_STALE_PU_SQL} AND COALESCE(pi.plex_independent_theme, 0) = 0 THEN 3 "
         # v1.23.25: red 'broken' (theme.mp3 verified gone) groups first —
         # stamped by plex_enum's verify_placement_health pass. =0 means
         # VERIFIED missing; a broken row HAS a real media_folder so this must
@@ -2161,8 +2163,13 @@ _LIBRARY_SORTS_MAIN = {
         "WHEN COALESCE(p_e.media_folder, p_g.media_folder) IS NOT NULL "
         "     AND COALESCE(p_e.media_folder, p_g.media_folder) != '' THEN 1 "
         "WHEN COALESCE(p_e.placement_kind, p_g.placement_kind) = 'plex_upload' THEN 2 "
+        # v0.51.349: not a TERMINAL reason — the same exclusion _LIB_PL_OFF_SQL and the row's own awaitingApproval
+        # make, so a backup or an over-ceiling theme ranks with the gray dots it paints, not among the amber ones
+        # (the v1.23.24/.25 "rank by the dot you paint" invariant).
         "WHEN COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL "
-        "     AND COALESCE(pi.plex_independent_theme, 0) = 0 THEN 3 "
+        "     AND COALESCE(pi.plex_independent_theme, 0) = 0 "
+        "     AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason, '') "
+        "         NOT IN ('backup_only', 'plex_rejected:over_ceiling') THEN 3 "
         "ELSE 4 END"
     ),
     # v1.23.35: rank by the SAME LINK chip the row paints, mirroring
