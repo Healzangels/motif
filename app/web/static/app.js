@@ -1081,15 +1081,9 @@
       // slow /api/stats (during heavy plex_enum) left the badges
       // invisible for several seconds after every click. the user's
       // "pills disappear sometimes for a long period" report.
-      try {
-        const cached = {
-          upd: (stats.updates && stats.updates.pending) || 0,
-          fail: (stats.failures && stats.failures.total) || 0,
-          drop: (stats.drops && stats.drops.total) || 0,
-          repush: (stats.repush && stats.repush.total) || 0,  // v1.24.40
-        };
-        localStorage.setItem('motif:topbar_counts', JSON.stringify(cached));
-      } catch (_) { /* private mode quota — fine, just lose the cache */ }
+      // v0.51.354: the write moved BELOW the badge blocks so each badge's resolved route is
+      // stashed with its count — a count on its own is what left the pill pointing at /movies.
+      const badgeRoutes = {};
       // Updates badge — v1.12.106: op-pill primitive, [hidden] attr.
       const updBadge = $('#topbar-updates-badge');
       if (updBadge) {
@@ -1130,7 +1124,9 @@
           updBadge.dataset.updTabs = JSON.stringify(updBreakdown);
           const firstUpdTab = updBreakdown[0]?.tab || tabHint;
           const firstUpdFourk = updBreakdown[0]?.fourk ? '1' : '0';
-          updBadge.href = `/${firstUpdTab}?fourk=${firstUpdFourk}&attn_pills=update`;
+          const updHref = `/${firstUpdTab}?fourk=${firstUpdFourk}&attn_pills=update`;
+          updBadge.href = updHref;
+          badgeRoutes.upd = { href: updHref, tabs: updBreakdown };  // v0.51.354
         } else {
           updBadge.hidden = true;
         }
@@ -1197,7 +1193,9 @@
           // first failing tab+variant.
           const firstTab = breakdown[0]?.tab || tabHint;
           const firstFourk = breakdown[0]?.fourk ? '1' : '0';
-          failBadge.href = `/${firstTab}?fourk=${firstFourk}&attn_pills=fail`;
+          const failHref = `/${firstTab}?fourk=${firstFourk}&attn_pills=fail`;
+          failBadge.href = failHref;
+          badgeRoutes.fail = { href: failHref, tabs: breakdown };  // v0.51.354
         } else {
           failBadge.hidden = true;
         }
@@ -1224,7 +1222,9 @@
           const firstDropTab = dropBreakdown[0]?.tab
             || (stats.drops && stats.drops.tab_hint) || 'movies';
           const firstDropFourk = dropBreakdown[0]?.fourk ? '1' : '0';
-          dropBadge.href = `/${firstDropTab}?fourk=${firstDropFourk}&tdb_pills=dropped`;
+          const dropHref = `/${firstDropTab}?fourk=${firstDropFourk}&tdb_pills=dropped`;
+          dropBadge.href = dropHref;
+          badgeRoutes.drop = { href: dropHref, tabs: dropBreakdown };  // v0.51.354
         } else {
           dropBadge.hidden = true;
         }
@@ -1247,11 +1247,18 @@
           const firstTab = breakdown[0]?.tab
             || (stats.repush && stats.repush.tab_hint) || 'movies';
           const firstFourk = breakdown[0]?.fourk ? '1' : '0';
-          repushBadge.href = `/${firstTab}?fourk=${firstFourk}&attn_pills=repush`;
+          const repushHref = `/${firstTab}?fourk=${firstFourk}&attn_pills=repush`;
+          repushBadge.href = repushHref;
+          badgeRoutes.repush = { href: repushHref, tabs: breakdown };  // v0.51.354
         } else {
           repushBadge.hidden = true;
         }
       }
+      // v0.51.354: one write per tick, now that every badge has resolved its route.
+      try {
+        localStorage.setItem('motif:topbar_counts',
+                             JSON.stringify(topbarCachePayload(stats, badgeRoutes)));
+      } catch (_) { /* private mode quota — fine, just lose the cache */ }
       // v0.50.34: the topbar AWAIT badge was removed — it flickered in during the
       // download→place handoff + duplicated RE-PUSH. The attn_pills=await filter +
       // PL=await row state stay; staged-but-not-placed themes are still findable.
@@ -2078,14 +2085,27 @@
   // data-* attr the badge stashed its tab breakdown into; `query` is the deep-link
   // filter the landed tab applies. A collection-only count was unreachable when a
   // badge had only a single tab_hint (the user's 2026-06-25 7-AWAIT repro).
-  function bindBadgeCycle(badgeId, datasetKey, query) {
+  // v0.51.354: `statsKey` names this badge's block in /api/stats, so a click that arrives
+  // before the first poll can ask where the rows are instead of trusting base.html's default.
+  function bindBadgeCycle(badgeId, datasetKey, query, statsKey) {
     const badge = document.getElementById(badgeId);
     if (!badge) return;
     badge.addEventListener('click', (e) => {
       let tabs;
       try { tabs = JSON.parse(badge.dataset[datasetKey] || '[]'); }
       catch (_) { return; }
-      if (!Array.isArray(tabs) || tabs.length <= 1) return;
+      if (!Array.isArray(tabs)) return;
+      // v0.51.354: painted from cache, not yet polled — prepopulateBadgesFromCache shows the
+      // count immediately (v1.13.88) and a pre-.354 cache carries no route, so the badge still
+      // wears the hardcoded /movies href from base.html. the user, with 5 pending updates all on
+      // tv: "on 2nd click [it] brings me to the movie section where there are no results ... it
+      // should just always bring me to tv since that's where the 5 ... actually live". Resolve it.
+      if (!tabs.length) {
+        e.preventDefault();
+        routeBadgeFromStats(badge, datasetKey, query, statsKey);
+        return;
+      }
+      if (tabs.length === 1) return;  // the href already points at the only impacted tab
       const m = window.location.pathname.match(/^\/(movies|tv|anime|collections)/);
       const here = m ? m[1] : null;
       const sp = new URLSearchParams(window.location.search);
@@ -2097,6 +2117,27 @@
       e.preventDefault();
       window.location.href = `/${next.tab}?fourk=${next.fourk ? '1' : '0'}&${query}`;
     });
+  }
+
+  // v0.51.354: where a badge should send you, straight from the server, for the window between
+  // the cached paint and the first poll. Three outcomes, all better than the /movies default:
+  // the owning tab if there is one; the badge retires itself if the server says nothing is
+  // impacted (the count was stale — landing anywhere would show 0 matches); and the badge's own
+  // href if /api/stats cannot be reached, because a click that does nothing is worse.
+  async function routeBadgeFromStats(badge, datasetKey, query, statsKey) {
+    let tabs = null;
+    try {
+      const stats = await api('GET', '/api/stats');
+      const block = stats && stats[statsKey];
+      tabs = (block && Array.isArray(block.tabs)) ? block.tabs : [];
+    } catch (_) {
+      window.location.href = badge.href;
+      return;
+    }
+    badge.dataset[datasetKey] = JSON.stringify(tabs);
+    const first = tabs[0];
+    if (!first) { badge.hidden = true; return; }
+    window.location.href = `/${first.tab}?fourk=${first.fourk ? '1' : '0'}&${query}`;
   }
 
   function bindDryRunBanner() {
@@ -23386,22 +23427,43 @@
   // since the last tick (e.g. a fail was acked), the next /api/stats
   // response corrects the badge — flicker is at most one wrong
   // value, not "pill disappears for seconds."
+  // v0.51.354: what a tick stashes for the next page load — the counts v1.13.88 cached, plus
+  // each badge's route, keyed the same way.
+  function topbarCachePayload(stats, routes) {
+    const n = (block, key) => ((stats && stats[block] && stats[block][key]) || 0);
+    return {
+      upd: n('updates', 'pending'),
+      fail: n('failures', 'total'),
+      drop: n('drops', 'total'),
+      repush: n('repush', 'total'),  // v1.24.40
+      routes: routes || {},
+    };
+  }
+
   function prepopulateBadgesFromCache() {
     let cached;
     try {
       cached = JSON.parse(localStorage.getItem('motif:topbar_counts') || '{}');
     } catch (_) { return; }
-    const setBadge = (badgeId, countId, n) => {
+    const routes = cached.routes || {};
+    const setBadge = (badgeId, countId, n, route, datasetKey) => {
       if (!n || n <= 0) return;
       const badge = document.getElementById(badgeId);
       const count = document.getElementById(countId);
-      if (badge) badge.hidden = false;
+      if (badge) {
+        badge.hidden = false;
+        // v0.51.354: restore the ROUTE too. Without it the badge came back visible wearing
+        // base.html's /movies href, and a click before the first poll landed on a section with
+        // nothing in it — the whole of the operator's report.
+        if (route && route.href) badge.href = route.href;
+        if (route && Array.isArray(route.tabs)) badge.dataset[datasetKey] = JSON.stringify(route.tabs);
+      }
       if (count) count.textContent = String(n);
     };
-    setBadge('topbar-updates-badge',  'topbar-updates-count',  cached.upd);
-    setBadge('topbar-failures-badge', 'topbar-failures-count', cached.fail);
-    setBadge('topbar-drops-badge',    'topbar-drops-count',    cached.drop);
-    setBadge('topbar-repush-badge',   'topbar-repush-count',   cached.repush);  // v1.24.40
+    setBadge('topbar-updates-badge',  'topbar-updates-count',  cached.upd,    routes.upd,    'updTabs');
+    setBadge('topbar-failures-badge', 'topbar-failures-count', cached.fail,   routes.fail,   'failTabs');
+    setBadge('topbar-drops-badge',    'topbar-drops-count',    cached.drop,   routes.drop,   'dropTabs');
+    setBadge('topbar-repush-badge',   'topbar-repush-count',   cached.repush, routes.repush, 'repushTabs');  // v1.24.40
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -23518,10 +23580,10 @@
     bindDryRunBanner();
     // v1.24.48: all five topbar badges cycle through every impacted tab (incl.
     // collections) via the one shared bindBadgeCycle (FAIL + UPD converged here).
-    bindBadgeCycle('topbar-failures-badge', 'failTabs', 'attn_pills=fail');
-    bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update');
-    bindBadgeCycle('topbar-drops-badge', 'dropTabs', 'tdb_pills=dropped');
-    bindBadgeCycle('topbar-repush-badge', 'repushTabs', 'attn_pills=repush');
+    bindBadgeCycle('topbar-failures-badge', 'failTabs', 'attn_pills=fail', 'failures');
+    bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update', 'updates');
+    bindBadgeCycle('topbar-drops-badge', 'dropTabs', 'tdb_pills=dropped', 'drops');
+    bindBadgeCycle('topbar-repush-badge', 'repushTabs', 'attn_pills=repush', 'repush');
     bindSettingsTabs();
     bindVisualsToggles();
     bindThemePicker();  // v0.51.110

@@ -531,6 +531,22 @@ has all three map entries. A future kind landing on either
 side fails the test until the JS maps catch up — same
 contract-drift sub-pattern from v1.17.10.
 
+**Badge routes are cached with their counts (v0.51.354)**: the four
+cycling pills (UPD / FAIL / DROP / RE-PUSH) are painted from
+`localStorage['motif:topbar_counts']` at DOMContentLoaded so they
+don't blink out on every navigation. That payload
+(`topbarCachePayload`) carries each badge's resolved `{href, tabs}`
+as well as its count — a count on its own leaves the badge wearing
+base.html's hardcoded `/movies?...` href until the first
+`/api/stats` lands, and a click in that window goes to a section
+with 0 matches (the operator's 2026-09-27 report). A new cycling
+badge therefore needs THREE things: a `tabs` breakdown in
+`/api/stats`, a `badgeRoutes.<key> = {href, tabs}` line beside where
+it sets its href, and a `setBadge(...)` line in
+`prepopulateBadgesFromCache`. `bindBadgeCycle`'s `statsKey` argument
+is what lets a click with no cached breakdown resolve its own route
+from `/api/stats` rather than following the template href.
+
 Poll cadence (ops.js `poll()`):
   - 10s when no ops are running or pending
   - 1s when ANY op is running or pending (covers all kinds)

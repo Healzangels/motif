@@ -270,7 +270,7 @@ def test_bind_updates_badge_cycle_exists_and_is_wired():
     js = (Path(__file__).resolve().parent.parent
           / "app" / "web" / "static" / "app.js").read_text()
     assert "function bindBadgeCycle(" in js
-    assert "bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update');" in js
+    assert "bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update'" in js  # v0.51.354: + statsKey
 
 
 def test_upd_cycle_handler_targets_attn_pills_update():
@@ -280,8 +280,10 @@ def test_upd_cycle_handler_targets_attn_pills_update():
     shared bindBadgeCycle at the UPD init site; the cycle body builds &${query}."""
     js = (Path(__file__).resolve().parent.parent
           / "app" / "web" / "static" / "app.js").read_text()
-    assert "bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update')" in js
-    cycle_start = js.index("function bindBadgeCycle(")
-    cycle_body = js[cycle_start:cycle_start + 1500]
+    assert "bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update'" in js  # v0.51.354: + statsKey
+    # v0.51.354: a fixed 1500-char window broke on the comments the no-breakdown branch added —
+    # anchor on the next function instead, the v1.18.46 idiom.
+    from _slice_helpers import slice_to_next
+    cycle_body = slice_to_next(js, "  function bindBadgeCycle(", "\n  function ", "\n  async function ")
     assert "fourk=${next.fourk ? '1' : '0'}" in cycle_body
     assert "&${query}`" in cycle_body

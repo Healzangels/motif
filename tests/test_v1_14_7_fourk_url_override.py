@@ -124,29 +124,30 @@ def test_localStorage_fallback_only_fires_when_param_absent():
 # ── Topbar pill href shape unchanged ──────────────────────────
 
 
-def test_upd_pill_href_still_emits_fourk_zero_when_standard():
-    """The UPD pill href construction is unchanged by v1.14.7 (the
-    fix is on the receiving side). Pin that the href shape still
-    emits `fourk=0` for standard updates so the new override
-    semantics actually receive a 0 to act on."""
-    js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    # The dynamic href uses the breakdown's `fourk` boolean.
-    assert (
-        "updBadge.href = `/${firstUpdTab}?fourk=${firstUpdFourk}&attn_pills=update`"
-        in js
-    )
-    # And firstUpdFourk is computed as '1' or '0' (string) — so
-    # `?fourk=0` is an emitted shape.
-    assert "const firstUpdFourk = updBreakdown[0]?.fourk ? '1' : '0';" in js
+# v0.51.354: these two pinned the href ASSIGNMENT's exact text, which broke when the route moved through a
+# named const on its way into the cache. What they are actually guarding is the emitted SHAPE — a standard
+# (non-4K) tab must send an explicit `fourk=0`, because the receiving page's v1.14.7 override treats a missing
+# param as "whatever localStorage last chose". Read that off the real poll instead of off the source.
+def test_upd_pill_href_still_emits_fourk_zero_when_standard(tmp_path):
+    """The UPD pill href construction is unchanged by v1.14.7 (the fix is on the receiving side): the href must
+    still emit `fourk=0` for a standard update so the override semantics receive a 0 to act on."""
+    from test_v0_51_354_badge_route_cache import POLL_STATS, _poll
+    out = _poll(tmp_path, POLL_STATS)  # updates live on standard tv
+    assert out["cache"]["routes"]["upd"]["href"] == "/tv?fourk=0&attn_pills=update", out["cache"]
 
 
-def test_fail_pill_href_still_emits_fourk_zero_when_standard():
-    """Same shape for the FAIL pill — v1.13.69 wired the breakdown
-    cycle, v1.14.7 makes the receiving page actually honor the
-    standard variant."""
-    js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    assert (
-        "failBadge.href = `/${firstTab}?fourk=${firstFourk}&attn_pills=fail`"
-        in js
-    )
-    assert "const firstFourk = breakdown[0]?.fourk ? '1' : '0';" in js
+def test_upd_pill_href_emits_fourk_one_for_a_4k_tab(tmp_path):
+    """The other half of the same shape — v1.13.78's reason for carrying fourk at all."""
+    from test_v0_51_354_badge_route_cache import POLL_STATS, _poll
+    stats = dict(POLL_STATS, updates={"pending": 2, "tab_hint": "movies",
+                                      "tabs": [{"tab": "movies", "fourk": True, "count": 2}]})
+    out = _poll(tmp_path, stats)
+    assert out["cache"]["routes"]["upd"]["href"] == "/movies?fourk=1&attn_pills=update", out["cache"]
+
+
+def test_fail_pill_href_still_emits_fourk_zero_when_standard(tmp_path):
+    """Same shape for the FAIL pill — v1.13.69 wired the breakdown cycle, v1.14.7 makes the receiving page
+    actually honor the standard variant."""
+    from test_v0_51_354_badge_route_cache import POLL_STATS, _poll
+    out = _poll(tmp_path, POLL_STATS)  # failures live on standard anime
+    assert out["cache"]["routes"]["fail"]["href"] == "/anime?fourk=0&attn_pills=fail", out["cache"]

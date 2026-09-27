@@ -29,8 +29,8 @@ def test_breakdown_queries_and_cycle_wired():
     assert api.count('"tabs": _breakdown_tabs(') == 2  # drops, repush
     # JS: shared cycle binder + the remaining cycle badges wired + collections regex
     assert "function bindBadgeCycle(" in js
-    assert "bindBadgeCycle('topbar-repush-badge', 'repushTabs', 'attn_pills=repush')" in js
-    assert "bindBadgeCycle('topbar-drops-badge', 'dropTabs', 'tdb_pills=dropped')" in js
+    assert "bindBadgeCycle('topbar-repush-badge', 'repushTabs', 'attn_pills=repush'" in js  # v0.51.354: + statsKey
+    assert "bindBadgeCycle('topbar-drops-badge', 'dropTabs', 'tdb_pills=dropped'" in js  # v0.51.354: + statsKey
     assert js.count("movies|tv|anime|collections") == 1  # v1.24.48: one shared binder
 
 

@@ -74,7 +74,7 @@ def test_upd_pill_dynamic_href_uses_attn_axis():
     assert "/${firstUpdTab}?fourk=${firstUpdFourk}&attn_pills=update" in js
     # The cycle handler must too. v1.24.48: the UPD cycle converged onto the
     # shared bindBadgeCycle; its deep-link is the `query` arg at the init site.
-    assert "bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update')" in js
+    assert "bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update'" in js  # v0.51.354: + statsKey
     # Old tdb_pills=update pattern should NOT appear in either path.
     # (Allow it in comments — restrict the check to URL-template
     #  string literals.)
@@ -95,7 +95,7 @@ def test_version_string_matches_current_release():
     next tag lands, this constant must be updated alongside
     app/__init__.py."""
     init_py = (REPO / "app" / "__init__.py").read_text()
-    assert '__version__ = "0.51.353"' in init_py, (
+    assert '__version__ = "0.51.354"' in init_py, (
         "Bump app/__init__.py __version__ to match the next tag — "
         "see CLAUDE.md § release conventions"
     )

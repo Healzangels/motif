@@ -294,13 +294,16 @@ def test_app_js_caches_topbar_counts_to_localstorage():
     until the response landed (seconds during heavy plex_enum)."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
     assert "localStorage.setItem('motif:topbar_counts'" in js
-    # The cached payload must include all three count keys so the
-    # prepopulate call has data for each badge.
-    cache_block_start = js.index("'motif:topbar_counts'")
-    cache_block = js[cache_block_start - 500:cache_block_start + 200]
-    assert "stats.updates" in cache_block
-    assert "stats.failures" in cache_block
-    assert "stats.drops" in cache_block
+    # The cached payload must include a count for every badge so prepopulate has data for each.
+    # v0.51.354: the payload moved into topbarCachePayload() and gained the badges' routes — read
+    # the builder rather than a fixed window around the setItem call. What the payload MEANS is
+    # covered behaviourally in test_v0_51_354_badge_route_cache (the real poll writes it, a
+    # later page load routes from it).
+    from _slice_helpers import slice_to_next
+    payload = slice_to_next(js, "  function topbarCachePayload(", "\n  function ", "\n  async function ")
+    for block in ("updates", "failures", "drops", "repush"):
+        assert f"'{block}'" in payload, block
+    assert "routes" in payload
 
 
 def test_app_js_prepopulates_badges_on_dom_ready():

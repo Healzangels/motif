@@ -7150,7 +7150,33 @@
 #   contract, the severity that reaches the wire and the attachment,
 #   so the next major cannot arrive unnoticed through the same
 #   unbounded resolve.
-__version__ = "0.51.353"
+# 0.51.354: a topbar pill sends you where the rows are.
+#   the user, with 5 pending TV updates: "clicking the update 5
+#   button on 2nd click brings [me] to the movie section where there
+#   are no results when it should just always ... bring to tv since
+#   that's where the 5 that need to be updated or reviewed actually
+#   live". The breakdown behind the pill was right — tv owned all
+#   five. What was wrong is when the pill learns it. v1.13.88 caches
+#   the topbar COUNTS in localStorage so a page navigation paints the
+#   pills at once instead of leaving them blank until /api/stats
+#   answers; it cached no route, so the badge came back visible still
+#   wearing base.html's hardcoded /movies href, and the cycle handler
+#   had no breakdown to intercept with. A click in that window — which
+#   is what a second click right after the first one navigated is —
+#   landed on movies with 0 matches. Reproduced locally by holding
+#   /api/stats open behind a proxy.
+#   The route now rides with the count: every badge stashes the href
+#   and breakdown it just resolved, and prepopulateBadgesFromCache
+#   puts both back with the number. A click that STILL finds no
+#   breakdown (a cache written by an older build) asks /api/stats
+#   instead of trusting the template — and if the server says no tab
+#   is impacted, the pill retires itself rather than navigating to an
+#   empty view; if the server cannot be reached, the old href is still
+#   better than a dead click. All four cycling pills (UPD, FAIL, DROP,
+#   RE-PUSH) shared the /movies default and all four are fixed.
+#   base.html keeps its plain href for right-click / no-JS; the point
+#   is that the JS no longer DEPENDS on it while the badge is visible.
+__version__ = "0.51.354"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
