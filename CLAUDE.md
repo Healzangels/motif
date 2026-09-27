@@ -659,13 +659,20 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
   "old extractor" failure mode behind the looser `>=` resolution.
   Verify the running version on a deployed container via the
   startup log line `yt_dlp = X.Y.Z` (added v1.15.16). Last
-  bumped: **2026.7.4** (v0.51.245, 2026-08-01).
+  bumped: **2026.8.19** (v0.51.353, 2026-09-27).
 - **Quarterly: bump the `apprise` floor in `requirements.txt`**
   to current latest stable. Apprise ships service-specific
   transport updates as new notification services are added and
   URL schemas evolve; a stale floor masks "service unavailable"
   errors behind a generic dispatch failure. Last bumped:
-  **1.12.0** (v0.51.245, 2026-08-01).
+  **2.0.0** (v0.51.353, 2026-09-27) — apprise v2 is a breaking
+  release for embedders, so the bump is gated on
+  `test_v0_51_353_dependency_floors`, which drives
+  `notify._send_embedded` through a loopback sink and pins the
+  result semantics motif reads (PARTIAL is falsy, like v1's
+  False). requirements.txt has no upper bound, so a fresh image
+  resolves to the newest apprise whatever the floor says — that
+  test, not the floor, is what makes a major bump safe.
 
 ## Deploy + branch state
 

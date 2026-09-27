@@ -33,12 +33,14 @@ DB_PY = REPO / "app" / "core" / "db.py"
 
 
 def test_apprise_floor_is_current():
-    """Apprise floor — v0.51.245 bumped it 1.11.0 → 1.12.0 (latest stable,
-    released 2026-07-04) on the quarterly review."""
+    """Apprise floor — v0.51.353 bumped it 1.12.0 → 2.0.0 (released 2026-09-26) on
+    the quarterly review, after A/B'ing motif's one call site against 1.13.1. What
+    the bump BUYS is documentation: with no upper bound the image already resolved
+    to v2, so the floor records that v2 is the version motif is verified against
+    (the contract itself is pinned by test_v0_51_353_dependency_floors)."""
     req = REQUIREMENTS.read_text()
-    assert "apprise>=1.12.0" in req, (
-        "v0.51.245: apprise floor must be bumped to 1.12.0 (latest stable "
-        "2026-07-04)"
+    assert "apprise>=2.0.0" in req, (
+        "v0.51.353: apprise floor must be bumped to 2.0.0 (released 2026-09-26)"
     )
     # Superseded floors must NOT survive in the LIVE require
     # (comments referencing them for history are fine).
@@ -50,17 +52,19 @@ def test_apprise_floor_is_current():
     assert "apprise>=1.7.0" not in joined
     assert "apprise>=1.10.0" not in joined
     assert "apprise>=1.11.0" not in joined
+    assert "apprise>=1.12.0" not in joined
 
 
 def test_yt_dlp_floor_records_its_quarterly_lineage():
-    """v0.51.245: floor 2026.6.9 → 2026.7.4 on the quarterly review. The point
+    """v0.51.353: floor 2026.7.4 → 2026.8.19 on the quarterly review. The point
     of this guard is the LINEAGE — every quarterly check leaves a dated note in
     requirements.txt, so "when was this last looked at?" is answerable from the
     file rather than from memory. (The CVE floor itself is enforced as a version
     comparison in test_v1_24_42_security_floors, not as a literal here.)"""
     req = REQUIREMENTS.read_text()
-    assert "yt-dlp>=2026.7.4" in req
-    for marker in ("re-verified 2026-06-06", "quarterly review 2026-08-01"):
+    assert "yt-dlp>=2026.8.19" in req
+    for marker in ("re-verified 2026-06-06", "quarterly review 2026-08-01",
+                   "quarterly review 2026-09-27"):
         assert marker in req, f"yt-dlp lineage note missing: {marker}"
 
 

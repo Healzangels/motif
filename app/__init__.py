@@ -7126,7 +7126,31 @@
 #   has no URL for this title, so there is nothing to apply — your own
 #   URL is kept." If ThemerrDB publishes a url for the title later,
 #   the next sync lights the row again.
-__version__ = "0.51.352"
+# 0.51.353: the quarterly dependency floors, one of them a major.
+#   yt-dlp 2026.7.4 -> 2026.8.19 is the routine half. Nothing between
+#   those two releases touches what motif passes: every _opts() shape
+#   plus the probe's own dict were built against the new yt-dlp, and
+#   js_runtimes still resolves node — which is the check worth making,
+#   because yt-dlp DROPS a runtime it no longer supports rather than
+#   complaining, and without node the YouTube path falls back to the
+#   android_vr client that answers "not available" for videos that
+#   play fine (the v1.12.89 failure).
+#   apprise 1.12.0 -> 2.0.0 is not routine: v2 is a breaking release
+#   for anyone EMBEDDING apprise, which motif does. requirements.txt
+#   has never carried an upper bound, so the image already resolves to
+#   whatever apprise is newest on build day — v2 was arriving with or
+#   without a floor bump, which makes the bump a verification rather
+#   than a choice. motif's one call site (notify._send_embedded) was
+#   driven through a loopback sink under 1.13.1 and 2.0.0: identical
+#   in every case. NotifyType / NotifyFormat / add() truthiness are
+#   unchanged, and notify() now returns an AppriseResult whose bool()
+#   keeps v1's meaning — PARTIAL included, so a batch where one
+#   webhook is dead still reports failed instead of logging a silent
+#   channel as sent. test_v0_51_353_dependency_floors pins that
+#   contract, the severity that reaches the wire and the attachment,
+#   so the next major cannot arrive unnoticed through the same
+#   unbounded resolve.
+__version__ = "0.51.353"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
