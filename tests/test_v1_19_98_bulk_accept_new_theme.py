@@ -40,13 +40,21 @@ APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 # ── ① server no-op gate exempts new_theme_available ──────────
 
 
-def test_noop_gate_exempts_new_theme_available():
-    idx = API_PY.index("No-op gate: skip rows where new_url")
-    block = API_PY[idx:idx + 1000]
-    assert 'kind not in ("urls_match", "new_theme_available")' in block, (
-        "v1.19.98: the bulk-accept no-op gate must exempt "
-        "new_theme_available (applied==new but the download must "
-        "still queue)"
+def test_no_second_gate_filters_the_bulk_accept_loop():
+    """v0.51.350: the no-op gate this tag exempted new_theme_available FROM has been removed outright.
+
+    It compared the pending update's new url against COALESCE(override, themes.youtube_url), and sync writes the new
+    url into themes at DETECTION time — so it skipped every row without an override (the operator's "8 pending ...
+    0 ACCEPTED"). v1.19.98 had patched one kind of that hole. What the loop may filter on is the shared actionable
+    predicate in its own query; the behaviour this file protects is pinned by the accept tests below.
+    """
+    assert "No-op gate: skip rows where new_url" not in API_PY, "the removed gate came back"
+    body = API_PY[API_PY.index("async def api_accept_all_updates"):API_PY.index("async def api_decline_all_updates")]
+    assert "_pending_update_actionable_sql" in body, (
+        "the bulk accept must select its rows with the same predicate the count and the row pill use"
+    )
+    assert "continue" not in body, (
+        "no second filter may skip a row the actionable predicate already admitted — that is the v0.51.350 bug"
     )
 
 

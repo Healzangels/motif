@@ -14093,18 +14093,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                          media_type, tmdb_id),
                     ).fetchone()
                     applied_url = applied["applied"] if applied else None
-                    # No-op gate: skip rows where new_url == applied URL
-                    # unless kind=urls_match (meaningful classification flip).
-                    # v1.19.98: also exempt new_theme_available — those rows
-                    # have NO prior theme, so applied_url falls back to
-                    # themes.youtube_url which EQUALS new_tdb_url, making the
-                    # gate skip every one (the user's bulk accept logged
-                    # "Bulk-accepted 0"). Accepting a new-theme row must
-                    # queue the download even though new == applied.
-                    if (kind not in ("urls_match", "new_theme_available")
-                            and applied_url
-                            and new_tdb_url == applied_url):
-                        continue
+                    # v0.51.350 (the user: "8 pending ... 0 ACCEPTED, nothing downloaded"): the no-op gate that
+                    # stood here compared new_tdb_url with that COALESCE, whose last arm is themes.youtube_url —
+                    # and sync writes the NEW url there when it DETECTS the change. So every row without a
+                    # user_overrides entry (all SRC=T/A/M) compared equal and was skipped, while the confirm's
+                    # count, the blue ! pill and the per-row accept all read _pending_update_actionable_sql. The
+                    # v1.19.98 exemption had patched one KIND of the same hole. The gate is gone: the tuples query
+                    # above applies that shared predicate (v1.22.62), and the per-row accept this loop mirrors has
+                    # no second gate. applied_url still feeds the previous-url capture below.
                     # Per-section override fetch (v1.12.108+ semantics).
                     # v1.20.12: also fetch intent so the rollback can preserve
                     # it (mirrors api_accept_update's v1.19.36 fix).

@@ -7067,7 +7067,32 @@
 #   sort, as it already carried the view's filters and // ALL scope.
 #   The default view still sends none, because title ascending is
 #   what both sides already assume.
-__version__ = "0.51.349"
+# 0.51.350: ACCEPT ALL UPDATES accepts them. the user, on /movies with
+#   the ATTN ! filter and 8 pending updates: the confirm said "Accept 8
+#   pending ThemerrDB updates in MOVIES?", and the button then read
+#   "0 ACCEPTED" with nothing downloaded.
+#   The bulk handler carried its own second filter: for each row it
+#   resolved an "applied URL" (the row's override, else the theme's own
+#   url) and skipped the row when that equalled the update's new url.
+#   But sync writes the new url into the theme the moment it DETECTS
+#   the change, so for every row without a manual override — that is
+#   every SRC=T, A and M row — the comparison was the new url against
+#   itself, and the row was skipped in silence. Only an override row, a
+#   urls_match convert or a new-theme detection ever got through;
+#   0.51.98 had patched one of those three holes by exempting the
+#   new-theme kind. The count behind the confirm, the blue ! pill and
+#   the per-row accept all read one shared rule instead, which is why
+#   the page said 8 while the action said 0.
+#   That filter is gone. The rows the bulk acts on are the ones that
+#   rule selects — the same rows the page counted — and the per-row
+#   accept this loop mirrors never had a second filter either. A
+#   pending that would genuinely change nothing is still left alone,
+#   because the shared rule already excludes it. KEEP ALL CURRENT was
+#   never affected: it has always used the shared rule alone.
+#   Measured on a copy of the operator's library: all 10 pending
+#   upstream changes had a theme url already equal to their new url,
+#   and 9 of them had no override — the skipped shape.
+__version__ = "0.51.350"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
