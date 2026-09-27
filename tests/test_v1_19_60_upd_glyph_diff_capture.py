@@ -81,13 +81,14 @@ the action is "swap your content for TDB URL" regardless of
 whether the prior URL is known.
 """
 from __future__ import annotations
-from _slice_helpers import slice_to_next
 
 import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
+
+from _slice_helpers import slice_to_next
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -152,8 +153,9 @@ def test_all_eleven_gate_sites_use_helpers():
     components are now referenced once, inside the single helper, and the helper
     is the thing repeated ≥11×)."""
     assert "def _pending_update_actionable_sql(" in API_PY
-    idx = API_PY.index("def _pending_update_actionable_sql(")
-    body = API_PY[idx:idx + 3400]
+    # v0.51.352: anchored to the next top-level def instead of a fixed 3400-char window — the window broke when
+    # this tag added the "is there a url to apply" component, which is exactly what the guard exists to notice
+    body = slice_to_next(API_PY, "def _pending_update_actionable_sql(", "\ndef ")
     assert "_pending_update_real_diff_sql(t, pi)" in body, (
         "v1.22.10: actionable helper must compose the URL-diff component"
     )

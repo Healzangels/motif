@@ -7106,7 +7106,27 @@
 #   Checked on a phone-sized window with real touch events: the strip
 #   was advancing 34 px a second, held at zero under the finger and
 #   through the settle, then resumed from the new position.
-__version__ = "0.51.351"
+# 0.51.352: an update with nothing to apply is no longer offered.
+#   0.51.350 made ACCEPT ALL UPDATES act on the rows the page counts,
+#   and on MOVIES it now does: 8 accepted, 8 downloaded, 8 placed. On
+#   TV the same click still changed nothing, and the log showed why,
+#   once per row: "no YouTube URL configured for this theme", then
+#   "rollback: re-pended accept-update failure + restored override".
+#   Those titles are ones ThemerrDB lists without a theme url — the
+#   row only plays something because the operator set their own url.
+#   Accepting means "take ThemerrDB's version", so it drops the
+#   override and queues a download, which then finds no url on either
+#   side and fails; the rollback puts the override back and re-pends
+#   the row. Nothing was lost, but the blue ! could never clear.
+#   A pending update now counts as actionable only when there is a url
+#   to apply, on every branch that reaches it — the rule the pill, the
+#   count, the TDB and ATTN filters, the NEEDS WORK sort and both
+#   accept paths already share, so those rows leave all of them at
+#   once. Accepting one directly says so instead of churning: "motif
+#   has no URL for this title, so there is nothing to apply — your own
+#   URL is kept." If ThemerrDB publishes a url for the title later,
+#   the next sync lights the row again.
+__version__ = "0.51.352"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -1921,12 +1921,28 @@ def _pending_update_actionable_sql(t: str = "t", pi: str = "pi") -> str:
         f"WHERE pu.media_type = {t}.media_type AND pu.tmdb_id = {t}.tmdb_id "
         f"AND pu.section_id = '' AND pu.edition_key = ''))"
     )
+    # v0.51.352 (the user: accepting 5 TV updates changed nothing, the log looping "no YouTube URL configured ...
+    # rollback: re-pended accept-update failure + restored override"): whatever branch admits the row, accepting is
+    # "take ThemerrDB's version" — it drops the operator's override and queues a download that resolves override →
+    # themes.youtube_url. With no url on either side there is nothing to apply, so the accept can only churn. The
+    # diff branch already excluded this shape (old != NULL is unknown, so it never passed); every branch does now.
+    new_url = (
+        f"COALESCE("
+        f"(SELECT pu.new_youtube_url FROM pending_updates pu "
+        f"WHERE pu.media_type = {t}.media_type AND pu.tmdb_id = {t}.tmdb_id "
+        f"AND pu.section_id = {pi}.section_id AND pu.edition_key = ''), "
+        f"(SELECT pu.new_youtube_url FROM pending_updates pu "
+        f"WHERE pu.media_type = {t}.media_type AND pu.tmdb_id = {t}.tmdb_id "
+        f"AND pu.section_id = '' AND pu.edition_key = ''), "
+        f"{t}.youtube_url)"
+    )
     return (
-        f"(({kind} = 'urls_match' "
+        f"((({kind} = 'urls_match' "
         f"AND {_not_p_row_sql(t, pi)} AND {_has_user_override_sql(t, pi)}) "
         f"OR {_pending_update_real_diff_sql(t, pi)} "
         f"OR {_row_has_non_url_local_content_sql(t, pi)} "
-        f"OR ({_pending_update_new_theme_kind_sql(t, pi)} AND {_not_p_row_sql(t, pi)}))"
+        f"OR ({_pending_update_new_theme_kind_sql(t, pi)} AND {_not_p_row_sql(t, pi)})) "
+        f"AND {new_url} IS NOT NULL AND {new_url} != '')"
     )
 
 
@@ -12738,6 +12754,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if update is None:
                 raise HTTPException(status_code=404, detail="no pending update")
             new_tdb_url = update["new_youtube_url"]
+            # v0.51.352: accepting drops the override and queues a download that resolves override → themes url.
+            # With neither carrying one there is nothing to apply: the download fails "no YouTube URL configured"
+            # and the worker's rollback re-pends the row and restores the override, so the click only churns. Say
+            # so instead. The shared actionable gate keeps these rows off the pill, the count and the bulk.
+            _theme_url = conn.execute(
+                "SELECT youtube_url FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if not (new_tdb_url or (_theme_url and _theme_url["youtube_url"])):
+                raise HTTPException(
+                    status_code=409,
+                    detail="ThemerrDB has no URL for this title, so there is nothing to apply — "
+                           "your own URL is kept. SET URL or UPLOAD MP3 to change what plays.")
             # v1.12.72: section-aware override fetch. Try the row's
             # section first, then fall back to the legacy '' global
             # row. ACCEPT UPDATE on a 4K row queries the 4K-specific
