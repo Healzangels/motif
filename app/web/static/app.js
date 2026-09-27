@@ -2368,9 +2368,13 @@
       const prev = lastTs;
       lastTs = ts;
       // v0.51.347: and while a hand-drag is live — pointer capture can keep :hover on the strip, but never rely on it.
+      // v0.51.351: and while a finger is on the strip, or its fling is still settling — a touch device has no
+      // :hover to pause on, so the strip used to advance under the finger and resume the instant it lifted.
       if (document.hidden
           || !document.hasFocus()
           || drag
+          || touchId !== null
+          || Date.now() < touchUntil
           || strip.matches(':hover')
           || document.querySelector('dialog[open]')) return;
       // v0.51.285: clamp the frame gap so resuming after a long throttled
@@ -2409,6 +2413,13 @@
     // through the v0.51.286 float check, so auto-scroll carries on from where the strip was left.
     let press = null;
     const DRAG_SLOP = 5;  // px before a press is a drag — a plain click must still open the INFO card
+    // v0.51.351 (the user: the drag on mobile too): a finger already scrolls the strip natively, and hijacking that
+    // would cost the inertia, so touch keeps its own scrolling — what it lacked was the PAUSE a mouse gets for free
+    // from :hover. Without it the strip advanced under the finger and resumed the moment it lifted, so a poster
+    // could not be held still. Touch (and pen) now hold the loop while down, and through the fling after release.
+    const TOUCH_SETTLE_MS = 2000;  // a fling keeps scrolling after the finger leaves; resume once it has settled
+    let touchId = null;   // the finger/pen holding the strip, by pointerId — a release event need not repeat its type
+    let touchUntil = 0;
     function swallowClick(e) { e.stopPropagation(); e.preventDefault(); }
     function endDrag() {
       press = null;
@@ -2423,7 +2434,11 @@
       setTimeout(() => strip.removeEventListener('click', swallowClick, true), 0);
     }
     strip.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'mouse' || e.button !== 0) return;
+      if (e.pointerType !== 'mouse' || e.button !== 0) {
+        // v0.51.351: a finger or pen on the strip holds the loop; its own scrolling is the browser's to do
+        if (e.pointerType !== 'mouse') touchId = e.pointerId;
+        return;
+      }
       press = { x: e.clientX, scroll: strip.scrollLeft, id: e.pointerId };
     });
     strip.addEventListener('pointermove', (e) => {
@@ -2439,8 +2454,16 @@
       strip.scrollLeft = drag.scroll - dx;  // 1:1 with the pointer; scrollLeft clamps itself at both ends
       e.preventDefault();
     });
+    function endTouch(e) {
+      // v0.51.351: the fling outlives the touch, so the loop waits out the settle before taking the strip back
+      if (touchId === null || e.pointerId !== touchId) return;
+      touchId = null;
+      touchUntil = Date.now() + TOUCH_SETTLE_MS;
+    }
     strip.addEventListener('pointerup', endDrag);
     strip.addEventListener('pointercancel', endDrag);
+    strip.addEventListener('pointerup', endTouch);
+    strip.addEventListener('pointercancel', endTouch);
     strip.addEventListener('lostpointercapture', endDrag);
     // a poster's native image drag would steal the press mid-gesture and leave the strip stuck
     strip.addEventListener('dragstart', (e) => e.preventDefault());

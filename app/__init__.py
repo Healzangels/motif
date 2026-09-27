@@ -7092,7 +7092,21 @@
 #   Measured on a copy of the operator's library: all 10 pending
 #   upstream changes had a theme url already equal to their new url,
 #   and 9 of them had no override — the skipped shape.
-__version__ = "0.51.350"
+# 0.51.351: the carousel holds still for a finger too. 0.51.347 gave
+#   the dashboard carousel a hand-drag and left touch alone, because a
+#   finger already scrolls the strip and taking that over would cost
+#   the flick-and-glide. What a finger never got was the pause a mouse
+#   gets by hovering: auto-scroll kept advancing the strip under the
+#   finger and took it back the instant the finger lifted, so on a
+#   phone a poster could not be held still. A touch (or a pen) now
+#   holds the strip while it is down and through the glide after it
+#   lifts, then auto-scroll carries on from wherever the finger left
+#   it. The scrolling itself is still the browser's: nothing grabs the
+#   finger, so the flick, the bounce and the direction all stay native.
+#   Checked on a phone-sized window with real touch events: the strip
+#   was advancing 34 px a second, held at zero under the finger and
+#   through the settle, then resumed from the new position.
+__version__ = "0.51.351"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -25,7 +25,8 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 _NODE = shutil.which("node")
 
-pytestmark = pytest.mark.skipif(not _NODE, reason="node not installed")
+needs_node_mark = pytest.mark.skipif(not _NODE, reason="node not installed")
+pytestmark = needs_node_mark
 
 # a strip 3,000 px wide in a 600 px viewport: 2,400 px of travel, so a drag can be clamped at either end
 DOM = r"""
@@ -66,7 +67,7 @@ function makeStrip() {
   };
   return el;
 }
-function makeEnv(strip) {
+function makeEnv(strip, clock) {
   const timers = [];
   const cb = { checked: true, addEventListener: () => {} };
   const stored = {};
@@ -78,6 +79,8 @@ function makeEnv(strip) {
     hasFrame: () => frame !== null,
     ctx: {
       console,
+      // v0.51.351: a clock the plan drives, so the touch settle window is exact instead of timed
+      Date: { now: () => clock.t },
       document: {
         hidden: false, hasFocus: () => true, querySelector: () => null,
         getElementById: (id) => (id === 'recently-added-strip' ? strip : id === 'recent-autoscroll' ? cb : null),
@@ -101,7 +104,8 @@ const { makeStrip, makeEnv } = require(domPath);
 const plan = JSON.parse(fs.readFileSync(scenarioPath, "utf8"));
 const strip = makeStrip();
 if (plan.scroll !== undefined) strip.scrollLeft = plan.scroll;
-const env = makeEnv(strip);
+const clock = { t: 1000 };
+const env = makeEnv(strip, clock);
 const ctx = vm.createContext(env.ctx);
 vm.runInContext(fs.readFileSync(srcPath, "utf8"), ctx);
 ctx.setup();
@@ -111,15 +115,17 @@ for (const step of plan.steps) {
   if (step.down) strip.fire('pointerdown', { pointerType: step.down.type || 'mouse', button: step.down.button ?? 0,
                                              clientX: step.down.x, pointerId: pid });
   if (step.move !== undefined) strip.fire('pointermove', { pointerType: 'mouse', clientX: step.move, pointerId: pid });
-  if (step.up) { strip.fire('pointerup', { pointerId: pid }); pid += 1; }
-  if (step.cancel) strip.fire('pointercancel', { pointerId: pid });
+  if (step.up) { strip.fire('pointerup', { pointerType: step.up.type || 'mouse', pointerId: pid }); pid += 1; }
+  if (step.cancel) strip.fire('pointercancel', { pointerType: 'mouse', pointerId: pid });
+  if (step.advance) clock.t += step.advance;
+  if (step.scrollto !== undefined) strip.scrollLeft = step.scrollto;  // what the browser does for a finger
   if (step.dragstart) strip.fire('dragstart', {});
   if (step.frame !== undefined) env.frame(step.frame);
   if (step.timers) env.runTimers();
   if (step.hover !== undefined) strip.hovered = step.hover;
   if (step.click) out.push({ click_swallowed: strip.fire('click', {}) });
   if (step.read) {
-    out.push({ scroll: strip.scrollLeft, dragging: !!ctx._setupCarouselAutoScroll._dragging,
+    out.push({ scroll: strip.scrollLeft, dragging: !!ctx._setupCarouselAutoScroll._dragging, now: clock.t,
                grabbing: strip.classList.contains('recent-strip-dragging'), captured: strip.captured,
                armed: env.hasFrame(), prevented: strip.prevented.slice(), clicks: strip.listenerCount('click') });
   }

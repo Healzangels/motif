@@ -305,6 +305,7 @@ A strip that scrolls itself and hides its scrollbar while it does (the dashboard
 * **A slop of ~5px** before a press becomes a drag, so a plain click still opens what it clicked; the click that *ends* a real drag is swallowed once by a capture-phase listener removed on the next tick.
 * **Pointer capture** while dragging, `scrollLeft = start - dx` (1:1, and the browser clamps at both ends), `.recent-strip-dragging` for the `grabbing` cursor and `user-select: none`, and `preventDefault` on the poster's own `dragstart`.
 * **The self-scroll loop bails on an explicit drag flag**, never on `:hover` alone (capture can keep or drop hover), and re-seeds its float position afterwards so it carries on from where the strip was left. Any poll that rebuilds the strip defers while the flag is set.
+* **Touch keeps the native scroll but must still pause the loop** (v0.51.351): a touch device has no `:hover`, so the strip otherwise advances under the finger and resumes the instant it lifts. Hold on `pointerdown` from a non-mouse pointer, keyed by `pointerId` (a release event need not repeat its `pointerType`), and keep holding for a settle window after release so the fling finishes before the loop takes the strip back.
 
 ### Status-text auto-dismiss in `finally` block (v1.17.2 / v1.17.5)
 
