@@ -7176,7 +7176,37 @@
 #   RE-PUSH) shared the /movies default and all four are fixed.
 #   base.html keeps its plain href for right-click / no-JS; the point
 #   is that the JS no longer DEPENDS on it while the badge is visible.
-__version__ = "0.51.354"
+# 0.51.355: bulk ACCEPT ALL lands the url write per-row always did.
+#   the user, on .354, still looking at 5 TV updates that would not
+#   clear: "Bulk-accepted 5 pending updates (4 eager-flipped, 5
+#   downloads queued)" followed by five "no YouTube URL configured
+#   for this theme" failures and five rollbacks, every time.
+#   While a user override exists sync deliberately WITHHOLDS the
+#   themes.youtube_url write — "the user's override wins until they
+#   ACCEPT" (v1.14.55, v0.51.228) — so for an override row the url
+#   ThemerrDB is offering lives only on the pending. ACCEPT is where
+#   that write is meant to land, and the per-row endpoint has always
+#   done it (v1.12.37). Bulk ACCEPT ALL never did: it deleted the
+#   override and queued a download that resolves override →
+#   themes.youtube_url, found neither, failed permanently, and the
+#   rollback restored the override and re-pended the row. The same
+#   mirror-drift class as v1.19.38 — two paths for one action, one of
+#   them missing a step — and the reason the operator's rows churned
+#   while a per-row ACCEPT on the same row would have worked.
+#   Second defect in the same loop: a urls_match row is accepted by
+#   flipping the local file's provenance, and the confirm dialog says
+#   so ("For URL-match rows ... this is instant — no download"), but
+#   the code queued a download anyway. At best it re-fetched the same
+#   audio; at worst it failed and its rollback undid the flip that had
+#   just succeeded. It now queues one only when there is something to
+#   fetch: an unplaced row, or a P row taking its backup.
+#   NOT changed, though this tag's first cut tried to: the actionable
+#   gate still reads the pending's new_youtube_url before themes.
+#   Reading themes first looks tidier and is wrong — that is exactly
+#   the column sync withholds, so it would hide every real update on
+#   an override row. v1.19.60's Beginning-After-the-End guard caught
+#   it; a test of the surface that exists because of the withholding.
+__version__ = "0.51.355"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -1924,8 +1924,11 @@ def _pending_update_actionable_sql(t: str = "t", pi: str = "pi") -> str:
     # v0.51.352 (the user: accepting 5 TV updates changed nothing, the log looping "no YouTube URL configured ...
     # rollback: re-pended accept-update failure + restored override"): whatever branch admits the row, accepting is
     # "take ThemerrDB's version" — it drops the operator's override and queues a download that resolves override →
-    # themes.youtube_url. With no url on either side there is nothing to apply, so the accept can only churn. The
-    # diff branch already excluded this shape (old != NULL is unknown, so it never passed); every branch does now.
+    # themes.youtube_url. With no url there is nothing to apply, so the accept can only churn.
+    # v0.51.355: the pending's new_youtube_url comes FIRST on purpose. While a user override exists, sync
+    # deliberately withholds the themes.youtube_url write (v1.14.55: "the user's override wins until they
+    # ACCEPT", v0.51.228), so for exactly the rows this gate is about, the url ThemerrDB is offering lives ONLY
+    # on the pending. Reading themes first would hide every real update on an override row.
     new_url = (
         f"COALESCE("
         f"(SELECT pu.new_youtube_url FROM pending_updates pu "
@@ -12832,6 +12835,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and override["youtube_url"]
                 and override["youtube_url"].strip() == new_tdb_url.strip()
             )
+            eager_only = False  # v0.51.355: set when the flip below is the whole accept
             # v1.12.105: scope the capture to the row's section so
             # the section-specific previous_urls slot tracks the URL
             # being replaced. Pre-fix the call wrote to section_id=''
@@ -12959,7 +12963,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # affected.
                 if url_match:
                     if section_id:
-                        conn.execute(
+                        _flip = conn.execute(
                             """UPDATE local_files
                                   SET provenance = 'auto',
                                       source_kind = 'themerrdb'
@@ -12969,6 +12973,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                   AND edition_key = ?""",
                             (media_type, tmdb_id, section_id, _acc_edition),
                         )
+                        # v0.51.355: see the note at the enqueue below
+                        eager_only = bool(_flip.rowcount) and bool(conn.execute(
+                            "SELECT 1 FROM placements WHERE media_type = ? AND tmdb_id = ? "
+                            "  AND section_id = ? AND edition_key = ? LIMIT 1",
+                            (media_type, tmdb_id, section_id, _acc_edition),
+                        ).fetchone())
                     else:
                         conn.execute(
                             """UPDATE local_files
@@ -13094,7 +13104,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # download FAILURE — so a 0-enqueue leaves the row stuck "accepted"
             # with no theme + no recovery, behind an HTTP-200 "ok" (audit #5).
             _n_enq = 0
-            if is_p_row_for_section:
+            # v0.51.355: an eager flip IS the accept for a url_match row — the file on disk came from the url TDB
+            # is offering, which is why the confirm promises "instant — no download". Queueing one anyway was at
+            # best a re-fetch of the same audio and at worst, once TDB dropped that url, a permanent failure whose
+            # rollback restored the override and re-pended the row — undoing the flip that had just succeeded.
+            # Only skip when the flip touched a real file AND the row is already placed.
+            if eager_only:
+                pass
+            elif is_p_row_for_section:
                 _n_enq = _enqueue_download(
                     conn, media_type=media_type, tmdb_id=tmdb_id,
                     reason="upstream_update_accepted_p_backup",
@@ -13142,7 +13159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the operator isn't left with a silent "accepted but no theme" row
         # behind an HTTP-200 (audit #5). The accept stays committed; the warning
         # + the returned count tell the caller nothing was downloaded.
-        if _n_enq == 0:
+        if _n_enq == 0 and not eager_only:  # v0.51.355: a deliberate skip is not the audit-#5 case
             log.warning(
                 "ACCEPT UPDATE for %s/%s queued NO download — no included Plex "
                 "section owns this item (section_id=%s, edition=%s); the row is "
@@ -13154,7 +13171,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   message=(f"Update accepted by "
                            f"{request.state.principal.username}"
                            f"{accept_branch_note}"))
-        return {"ok": True, "enqueued_sections": _n_enq}
+        # v0.51.355: 0 sections can now also mean "nothing needed downloading"
+        return {"ok": True, "enqueued_sections": _n_enq, "eager_only": eager_only}
 
     @app.post("/api/updates/{media_type}/{tmdb_id}/decline")
     async def api_decline_update(
@@ -14139,6 +14157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # were edition-blind, so accepting one edition wiped EVERY
                     # edition's override for the title (audit #2, data-loss).
                     ovr_section = section_id
+                    eager_only = False  # v0.51.355: set when the flip below is the whole accept
                     override = conn.execute(
                         "SELECT youtube_url, intent FROM user_overrides "
                         "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
@@ -14181,8 +14200,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "  AND section_id = ? AND edition_key = ?",
                             (media_type, tmdb_id, ovr_section, edition),
                         )
+                    # v0.51.355 (the user's five TV rows, looping since .351): accepting means "take
+                    # ThemerrDB's version", and for an override row THIS is the moment sync's withheld write
+                    # lands — v1.14.55 keeps themes.youtube_url at the old value (or empty) for as long as an
+                    # override exists. The per-row ACCEPT has always written it here (v1.12.37); bulk ACCEPT ALL
+                    # never did. So bulk deleted the override and queued a download that resolves override →
+                    # themes.youtube_url, found neither, failed permanently, and the rollback restored the
+                    # override and re-pended the row: "Bulk-accepted 5 ... 5 downloads queued" followed by five
+                    # "no YouTube URL configured for this theme" and five rollbacks, for ever. Same mirror-drift
+                    # class as v1.19.38 — two accept paths, one of them missing a write.
+                    if new_tdb_url:
+                        conn.execute(
+                            """UPDATE themes
+                                  SET youtube_url = ?,
+                                      youtube_video_id = ?,
+                                      failure_kind = NULL,
+                                      failure_message = NULL,
+                                      failure_acked_at = NULL
+                                WHERE media_type = ? AND tmdb_id = ?""",
+                            (new_tdb_url, extract_video_id(new_tdb_url), media_type, tmdb_id),
+                        )
+                    if override:
                         if url_match:
-                            conn.execute(
+                            _flip = conn.execute(
                                 """UPDATE local_files
                                       SET provenance = 'auto',
                                           source_kind = 'themerrdb'
@@ -14193,6 +14233,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 (media_type, tmdb_id, section_id, edition),
                             )
                             eager_flipped += 1
+                            # v0.51.355: see the note at the enqueue below
+                            eager_only = bool(_flip.rowcount) and bool(conn.execute(
+                                "SELECT 1 FROM placements WHERE media_type = ? AND tmdb_id = ? "
+                                "  AND section_id = ? AND edition_key = ? LIMIT 1",
+                                (media_type, tmdb_id, section_id, edition),
+                            ).fetchone())
                     _set_pending_update_decision(
                         conn, media_type=media_type, tmdb_id=tmdb_id,
                         section_id=section_id, decision="accepted",
@@ -14226,7 +14272,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         tmdb_id=tmdb_id, section_id=section_id,
                         edition_key=edition,
                     )
-                    if bulk_is_p_row:
+                    # v0.51.355: an eager flip IS the accept for a url_match row — the bytes on disk were
+                    # downloaded from the url TDB is offering, so the confirm says "this is instant — no
+                    # download". The code queued one anyway: at best a re-fetch of the same audio, at worst
+                    # (TDB's url since dropped) a permanent failure whose rollback restores the override and
+                    # re-pends the row, undoing the flip that had just succeeded. That is the loop the
+                    # operator's log shows. Skip it only when the flip really touched a file AND the row is
+                    # already placed, so an unplaced row still gets its download + placement.
+                    if eager_only:
+                        pass
+                    elif bulk_is_p_row:
                         _enqueue_download(
                             conn, media_type=media_type, tmdb_id=tmdb_id,
                             reason="upstream_update_accepted_p_backup",
@@ -14267,10 +14322,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "new_url": new_tdb_url,
                             "url_match": url_match,
                             "p_row_backup": bulk_is_p_row,
+                            "eager_only": eager_only,  # v0.51.355
                             "bulk": True,
                         },
                     )
-                    enqueued += 1
+                    if not eager_only:
+                        enqueued += 1
                     accepted += 1
             # v1.19.39: include the P-row backup count so HISTORY
             # readers can correlate `bulk-accepted N (M as P-row

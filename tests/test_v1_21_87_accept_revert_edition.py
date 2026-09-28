@@ -50,7 +50,10 @@ def app_client(tmp_path, monkeypatch):
     return TestClient(create_app(settings)), db
 
 
-def _seed(db):
+def _seed(db, *, ext_url=None):
+    """ext_url: Extended's override. The default equals NEW, so accepting Extended is a url_match flip;
+    pass a third url to make it a real change, which is what still queues a download (v0.51.355)."""
+    ext_url = ext_url or NEW
     with sqlite3.connect(db) as conn:
         conn.execute(
             "INSERT INTO plex_sections (section_id, title, type, is_anime,"
@@ -65,7 +68,7 @@ def _seed(db):
         # url for each edition: Extended's == NEW (url_match on accept).
         for rk, ek, fp, url in (
             (THEAT_RK, "", THEAT_FOLDER, THEAT_URL),
-            (EXT_RK, "extended", EXT_FOLDER, NEW),
+            (EXT_RK, "extended", EXT_FOLDER, ext_url),
         ):
             conn.execute(
                 "INSERT INTO plex_items (rating_key, section_id, media_type,"
@@ -127,12 +130,32 @@ def test_accept_scopes_override_provenance_and_download_to_edition(app_client):
     assert _src_kind(db, "extended") == "themerrdb", "Extended flips to T"
     assert _src_kind(db, "") == "url", "Theatrical stays U"
 
-    # The enqueued download is keyed to Extended.
+    # v0.51.355: Extended's override EQUALS the new url, so the provenance flip above IS the accept — the
+    # file on disk already came from that url and is already placed. Queueing a download here re-fetched the
+    # same audio, and once it failed its rollback undid the flip. The edition-scoping this test guards is
+    # asserted on a download in test_accept_scopes_a_real_download_to_edition below.
+    with sqlite3.connect(db) as conn:
+        payloads = [json.loads(p) for (p,) in conn.execute(
+            "SELECT payload FROM jobs WHERE job_type='download' AND tmdb_id=?",
+            (TMDB,))]
+    assert payloads == [], payloads
+
+
+def test_accept_scopes_a_real_download_to_edition(app_client):
+    """The v1.21.87 bug itself: accepting Extended used to enqueue the STANDARD edition's download. Seeded so
+    Extended's override differs from the new url, which is what still queues one."""
+    client, db = app_client
+    _seed(db, ext_url="https://www.youtube.com/watch?v=extextext1")
+    r = client.post(
+        f"/api/updates/movie/{TMDB}/accept?section_id=1&rating_key={EXT_RK}",
+        headers=AUTH)
+    assert r.status_code == 200, r.text
     with sqlite3.connect(db) as conn:
         payloads = [json.loads(p) for (p,) in conn.execute(
             "SELECT payload FROM jobs WHERE job_type='download' AND tmdb_id=?",
             (TMDB,))]
     assert payloads and payloads[0].get("edition_key") == "extended", payloads
+    assert _ovr(db, "") is not None, "Theatrical's override must still survive"
 
 
 def test_revert_download_carries_edition():
