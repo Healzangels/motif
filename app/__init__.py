@@ -7206,7 +7206,35 @@
 #   the column sync withholds, so it would hide every real update on
 #   an override row. v1.19.60's Beginning-After-the-End guard caught
 #   it; a test of the surface that exists because of the withholding.
-__version__ = "0.51.355"
+# 0.51.356: the slow-library warning answers its own question.
+#   v1.23.70 logs "slow /api/library query: NNNms ... (subquery cost
+#   or sync/enum CPU contention?)" and never logged anything that
+#   could tell those apart. The operator's persistent log holds 67 of
+#   them (2026-08-14 → 2026-09-28), and the sample settles the
+#   question it was asking: every line is an unfiltered status=all tab
+#   view, including `tab=movies rows=5 total=5 → 868.3ms` and
+#   `tab=collections rows=5 total=5 → 1040.9ms`. Five rows cannot cost
+#   868 ms of query work — and a local replay of the worst-looking
+#   view (tv, ATTN=update, 0 rows) at FOUR TIMES the operator's
+#   library, with 50,000 rows in jobs for good measure, costs 8 ms.
+#   The library read also takes a plain deferred BEGIN, so it is a WAL
+#   reader and cannot be waiting on a writer. So it is the box — I/O
+#   on a cold page cache, or CPU starvation — not the query, and the
+#   warning had no way to say so.
+#   Every request now keeps a phase ledger: conn (opening the
+#   connection re-parses the schema each request — there is no pool),
+#   count, ids, hydrate, meta, and stats with the NUMBER of stat()
+#   calls, which is the term that actually scales on a NAS at ~0.5 ms
+#   per stat. It rides in the warning and in the response beside
+#   query_ms, so it is visible per-request in devtools. The warning
+#   also samples what motif itself was doing — running ops and queued
+#   jobs — which is the contention half of v1.23.70's question.
+#   Reading it: an even spread across phases is the box; one fat phase
+#   is motif's own work, and which phase says which part. Measured
+#   here on a 6,000-row tv tab: a plain page is hydrate-bound (33 ms
+#   of 47), DL=on is stat-bound (61 ms over 5,141 stats), and the
+#   operator's empty-view shape is all ids (4.5 ms of 5.6).
+__version__ = "0.51.356"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

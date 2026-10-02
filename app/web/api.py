@@ -39,6 +39,7 @@ import re
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from stat import S_ISREG
 from urllib.parse import quote
 
@@ -2405,6 +2406,57 @@ _LIB_PLACEMENT_FANOUT_SQL = """
 """
 
 
+# v0.51.356: the v1.23.70 warning could only ask its own question — "subquery cost or sync/enum CPU
+# contention?" — and never answer it. 67 of those lines in the operator's persistent log (2026-08-14 →
+# 2026-09-28) include tab views of FIVE rows taking 868 ms, which no amount of query work explains, while a
+# local replay of the slowest-looking view at 4x their library size costs 8 ms. So the line was pointing at the
+# wrong suspect and couldn't say so. These phases make the next one answer for itself: an even spread across
+# conn/count/ids/meta is the box (I/O or CPU starvation), one fat phase is motif's own work.
+_SLOW_LIBRARY_MS = 750
+_lib_phase_state = threading.local()
+
+
+def _phases_begin() -> dict:
+    """Start this request's phase ledger. One ledger per thread, which is one per request — /api/library runs in
+    run_in_threadpool, and anything called outside that (api_item's stat, say) finds no ledger and records
+    nothing."""
+    _lib_phase_state.ledger = {}
+    return _lib_phase_state.ledger
+
+
+def _phase_add(name: str, ms: float, rows: int = 0) -> None:
+    ledger = getattr(_lib_phase_state, "ledger", None)
+    if ledger is None:
+        return
+    ledger[name] = round(ledger.get(name, 0.0) + ms, 1)
+    if rows:
+        ledger[name + "_rows"] = ledger.get(name + "_rows", 0) + rows
+
+
+@contextmanager
+def _phase(name: str, rows: int = 0):
+    _t_phase = time.monotonic()
+    try:
+        yield
+    finally:
+        _phase_add(name, (time.monotonic() - _t_phase) * 1000.0, rows)
+
+
+def _busy_sample(db: Path) -> str:
+    """What motif itself was doing when a request crossed the threshold — the other half of v1.23.70's question.
+    Runs only after a slow request, on its own connection, and never raises: a diagnostic that can fail the thing
+    it diagnoses is worse than no diagnostic."""
+    try:
+        with get_conn(db) as conn:
+            ops = [r[0] for r in conn.execute(
+                "SELECT kind FROM op_progress WHERE status IN ('running', 'cancelling')")]
+            jobs = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running')").fetchone()[0]
+        return f"{','.join(sorted(ops)) or 'no-ops'}+{jobs}jobs"
+    except Exception as e:  # noqa: BLE001 — diagnostics never raise
+        return f"unavailable:{type(e).__name__}"
+
+
 def _library_main_query(
     db: Path, *, tab: str, fourk: bool, q: str, status: str,
     page: int, per_page: int,
@@ -2467,6 +2519,7 @@ def _library_main_query(
     """
     import time as _t  # v1.23.70: diagnostic timer (tab-switch-lag investigation)
     _t0 = _t.monotonic()
+    _ph = _phases_begin()  # v0.51.356
     if tab == "movies":
         tab_where = "pi.media_type = 'movie' AND ps.is_anime = 0"
     elif tab == "tv":
@@ -3968,33 +4021,41 @@ def _library_main_query(
             it.pop("loudness_i", None)
 
     # v0.51.346: no missing_count statement — its banner went in v1.10.10; DOWNLOAD MISSING owns that predicate.
+    _t_conn = _t.monotonic()  # v0.51.356: opening the connection re-parses the schema every request
     with get_conn(db) as conn:
+        _phase_add("conn", (_t.monotonic() - _t_conn) * 1000.0)
         # v0.51.345: one read snapshot, so phase 2 hydrates exactly the rows phase 1 chose.
         conn.execute("BEGIN")
         if needs_post_stat_pagination or selection:
             total = -1  # filled in after stat-check
-            id_rows = conn.execute(_phase1_sql("post_stat"), params).fetchall()
+            with _phase("ids"):
+                id_rows = conn.execute(_phase1_sql("post_stat"), params).fetchall()
             rows = []
         else:
             if not window_total:
-                total = conn.execute(sql_count, count_params).fetchone()[0]
+                with _phase("count"):
+                    total = conn.execute(sql_count, count_params).fetchone()[0]
             if (phase1_mode == "pi_only"
                     and conn.execute(_LIB_PLACEMENT_FANOUT_SQL).fetchone()):
                 phase1_mode = "full"
             page_params = params + [per_page, offset]
-            id_rows = conn.execute(_phase1_sql(phase1_mode), page_params).fetchall()
+            with _phase("ids"):
+                id_rows = conn.execute(_phase1_sql(phase1_mode), page_params).fetchall()
             idents = [(r["_rk"], r["_pe"], r["_pg"]) for r in id_rows]
-            rows = _hydrate(conn, idents, pin=(phase1_mode == "full"))
+            with _phase("hydrate", rows=len(idents)):
+                rows = _hydrate(conn, idents, pin=(phase1_mode == "full"))
             if window_total:
                 if id_rows:
                     total = id_rows[0]["_total"]
                 elif offset == 0:
                     total = 0
                 else:
-                    total = conn.execute(sql_count, count_params).fetchone()[0]
+                    with _phase("count"):
+                        total = conn.execute(sql_count, count_params).fetchone()[0]
         # v0.51.346: SELECT ALL paints no banner, so it reads no meta scalars
-        meta = None if selection else conn.execute(sql_meta).fetchone()
-        conn.execute("COMMIT")
+        with _phase("meta"):
+            meta = None if selection else conn.execute(sql_meta).fetchone()
+            conn.execute("COMMIT")
     if needs_post_stat_pagination or selection:
         _ps_names = ("_rk", "_pe", "_pg", *post_stat_cols)
         items = [_LibPostStatRow(zip(_ps_names, r)) for r in id_rows]
@@ -4205,8 +4266,11 @@ def _library_main_query(
         idents = [(it["_rk"], it["_pe"], it["_pg"]) for it in items]
         full_rows = []
         if idents:
+            _t_conn2 = _t.monotonic()
             with get_conn(db) as conn:
-                full_rows = _hydrate(conn, idents, pin=True)
+                _phase_add("conn", (_t.monotonic() - _t_conn2) * 1000.0)
+                with _phase("hydrate", rows=len(idents)):
+                    full_rows = _hydrate(conn, idents, pin=True)
         hydrated = [dict(r) for r in full_rows]
         ords = [h.pop("_lib_ord") for h in hydrated]
         _mark_loudness(hydrated)
@@ -4231,15 +4295,20 @@ def _library_main_query(
     # this comes back out. WAL is on, so this is NOT reader-vs-writer lock wait;
     # a slow value points at subquery cost or sync/enum CPU contention.
     _q_ms = round((_t.monotonic() - _t0) * 1000.0, 1)
-    if _q_ms >= 750:
+    if _q_ms >= _SLOW_LIBRARY_MS:
+        # v0.51.356: the phases and what motif was doing, so the line answers its own question. Phases are wall
+        # time inside this request; what they do NOT cover (the gap between their sum and the total) is python
+        # work in between — itself a signal, since this handler does very little of it.
         log.warning(
-            "slow /api/library query: %sms tab=%s fourk=%s section=%s status=%s "
-            "rows=%d total=%d (subquery cost or sync/enum CPU contention?)",
-            _q_ms, tab, fourk, section_id or "-", status, len(items), total)
+            "slow /api/library query: %sms [%s] tab=%s fourk=%s section=%s status=%s "
+            "rows=%d total=%d busy=%s",
+            _q_ms, " ".join(f"{k}={v}" for k, v in sorted(_ph.items())) or "no-phases",
+            tab, fourk, section_id or "-", status, len(items), total, _busy_sample(db))
     return {"total": total,
             "page": page, "per_page": per_page,
             "tab": tab, "fourk": fourk, "items": items,
             "query_ms": _q_ms,
+            "query_phases": dict(_ph),  # v0.51.356: visible per-request in devtools, like query_ms
             "plex_enumerated": plex_enumerated,
             "plex_scan_stale": plex_scan_stale,
             "last_plex_enum_at": last_plex_enum_at,
@@ -4390,7 +4459,10 @@ def _annotate_canonical_state(items: list[dict], *, themes_dir: Path | None,
             jobs.append((True, themes_dir / it.get("file_path")))
         if p and it.get("media_folder"):
             jobs.append((False, Path(it.get("media_folder")) / "theme.mp3"))
-    reads = _lib_stat_map(_lib_stat_missing, jobs)
+    # v0.51.356: timed HERE rather than at the six call sites — this is where the stats happen, so a seventh
+    # caller is covered for free and the count is the real number of stat() calls the request made.
+    with _phase("stats", rows=len(jobs)):
+        reads = _lib_stat_map(_lib_stat_missing, jobs)
     n = 0
     # v0.51.346: applied in row order, canonical then placement — the JSON key order and the breadcrumb order stay put
     for it, c, p in todo:

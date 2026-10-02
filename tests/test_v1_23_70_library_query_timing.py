@@ -55,7 +55,13 @@ def test_collections_tab_also_timed(admin_client):
 
 
 def test_slow_query_warning_is_wired():
+    """v0.51.356: the 750 ms threshold moved into a named constant so a test can move it (and so the number
+    lives in one place) — read the value rather than the comparison's source text. What the warning CONTAINS,
+    and that a fast request produces none, is covered behaviourally in
+    tests/test_v0_51_356_library_phase_breakdown.py."""
     src = (Path(__file__).resolve().parent.parent
            / "app" / "web" / "api.py").read_text()
     assert "slow /api/library query:" in src
-    assert "_q_ms >= 750" in src
+    from app.web.api import _SLOW_LIBRARY_MS
+    assert _SLOW_LIBRARY_MS == 750
+    assert "_q_ms >= _SLOW_LIBRARY_MS" in src
