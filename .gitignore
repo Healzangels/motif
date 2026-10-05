@@ -42,3 +42,8 @@ tests/personal_strings.local
 
 # local dev-preview launch config (machine-specific paths)
 .claude/launch.json
+
+# v0.51.357: durable local workspace for perf harnesses (seeded libraries, captured
+# SQL, bench output). /private/tmp is wiped between sessions, so a harness that lives
+# there has to be rewritten from scratch every time — this survives and stays local.
+.cache/
