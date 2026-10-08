@@ -14508,6 +14508,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             decided_by=_username,
                             edition_key=tup["edition_key"],
                         )
+                        # v0.51.358: the per-row DECLINE has written this row since v1.12.80 and bulk never
+                        # did, so "who kept the current theme, and when?" could only be answered for rows
+                        # declined one at a time — and `events` prunes at 30 days. Same asymmetry v1.19.39
+                        # closed for ACCEPT, same shape as the v0.51.355 bulk/per-row drift.
+                        _record_audit(
+                            conn, actor=_username, action="decline_update",
+                            media_type=tup["media_type"], tmdb_id=tup["tmdb_id"],
+                            section_id=tup["section_id"],
+                            details={"bulk": True, "edition_key": tup["edition_key"] or ""},
+                        )
                     declined += 1
             log_event(
                 db, level="INFO", component="api",
@@ -15349,6 +15359,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (now_iso(), theme_media_type, tmdb_id, section_id,
                      _upl_edition),
                 )
+            # v0.51.358: UPLOAD MP3 decides what plays, from bytes that exist nowhere else — the
+            # same class of change as SET URL, which has audited since v1.12.80. In the same
+            # transaction as the rows it writes, so the record and the source land together.
+            _record_audit(
+                conn, actor=request.state.user, action="upload_theme",
+                media_type=theme_media_type, tmdb_id=tmdb_id, section_id=section_id,
+                details={"rating_key": rating_key, "bytes": len(data), "file_path": rel_path,
+                         "edition_key": _upl_edition or ""},
+            )
 
         log_event(db, level="INFO", component="api",
                   media_type=theme_media_type, tmdb_id=tmdb_id,
@@ -20889,6 +20908,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 section_id=None,
             )
+            # v0.51.358: audited INSIDE the same transaction as the delete, so the record cannot
+            # survive a rolled-back delete (or be lost by a committed one). This is the furthest
+            # thing from reversible — theme row, every FK'd child, the files — and `events` forgets
+            # it after 30 days, which is exactly the question audit_events exists to answer.
+            _record_audit(
+                conn, actor=request.state.user, action="deleted",
+                media_type=media_type, tmdb_id=tmdb_id,
+                details={"via": "delete_item", "title": (theme["title"] if theme else None),
+                         "placements": len(placement_rows), "files_unlinked": unlinked},
+            )
             conn.execute(
                 "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
@@ -23572,6 +23601,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "UPDATE themes SET tdb_dropped_at = NULL "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
+            )
+            # v0.51.358: this writes a user_overrides row, which is an "override set" in
+            # _record_audit's own words — the url TDB dropped becomes the operator's own, and
+            # until now only the rolling events table said so (30-day prune).
+            _record_audit(
+                conn, actor=request.state.principal.username,
+                action="convert_to_manual",
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id=target_section or None,
+                details={"url": row["youtube_url"], "was": "themerrdb-dropped"},
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,

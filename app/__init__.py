@@ -7271,7 +7271,37 @@
 #   new kind cannot be added without inheriting an answer" — so the
 #   new guard walks the enum against every surface, driving the two
 #   endpoints for real rather than reading their source.
-__version__ = "0.51.357"
+# 0.51.358: the changes audit_events exists for all write to it.
+#   A review pass for silent failures found the exception-handler
+#   class clean (772 handlers; the 22 that swallow on a write path are
+#   all cleanup after an already-logged failure) and turned up this
+#   instead. _record_audit's own docstring scopes the table — "the
+#   long-lived provenance log for URL changes, override set/clear,
+#   accept/decline decisions, and destructive theme actions" — and
+#   says it is deliberately not rotated so "who changed Willy Wonka's
+#   theme on 2026-04-12, and what was it before?" stays answerable
+#   months later. Four changes inside that scope wrote nothing to it,
+#   leaving only an `events` row, which prunes at 30 days:
+#     · bulk DECLINE — the per-row DECLINE has audited since v1.12.80,
+#       so the same decision was recorded or not depending on which
+#       button was used. ACCEPT's pair was made symmetric in v1.19.39
+#       for exactly this reason; DECLINE never got the same pass. Same
+#       bulk-vs-per-row drift as v0.51.355.
+#     · CONVERT TO MANUAL — writes a user_overrides row, which is an
+#       override set in the docstring's own words.
+#     · UPLOAD MP3 — creates the themes + local_files rows that decide
+#       what plays, from bytes that exist nowhere else. SET URL, the
+#       same class of change, has audited since v1.12.80.
+#     · DELETE — theme row, every FK'd child, the files on disk. The
+#       least reversible thing motif does, and after 30 days nothing
+#       said who did it. Written inside the delete's own transaction,
+#       so the record cannot outlive a rolled-back delete or be lost
+#       by a committed one; audit_events has no FK to themes, so the
+#       cascade does not take it.
+#   The guard drives all four endpoints for real — a source-level
+#   check would not have caught the bulk/per-row split that started
+#   this.
+__version__ = "0.51.358"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
