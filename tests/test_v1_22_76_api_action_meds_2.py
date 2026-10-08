@@ -40,17 +40,55 @@ AUTH = {"X-Authentik-Username": "testadmin"}
 # ── (1) check-then-act coverage ──────────────────────────────
 
 
-def test_cancel_jobs_for_row_called_from_unmanage_and_global_forget():
-    # def + unplace + forget-section + forget-global + unmanage + delete.
-    assert API_PY.count("_cancel_jobs_for_row(") == 6, (
-        "v1.22.76: UNMANAGE + FORGET's global branch must cancel "
-        "in-flight jobs before their destructive sweeps"
+# Every destructive theme-tracking sweep, and the statement whose
+# damage the cancel exists to prevent. The cancel must sit BEFORE it:
+# a worker completing mid-sweep re-INSERTs what the sweep deleted.
+# v0.51.359: this was a count of `_cancel_jobs_for_row(` in api.py
+# (6), which is a mirror of the call sites, not a statement about
+# them — a NEW site that legitimately cancels (bulk LET PLEX SERVE,
+# v0.51.359) turned the guard red for doing the right thing. Named
+# sites with an ordering check say what we actually mean, and stay
+# red for a removal or a reorder at any one of them.
+SWEEP_SITES = (
+    ("api_unplace_item", "DELETE FROM placements"),
+    ("api_unmanage_item", "DELETE FROM placements"),
+    ("api_delete_item", "DELETE FROM themes"),
+)
+GLOBAL_PURGE = "# Legacy global PURGE path"
+
+
+def _route_body(name: str) -> str:
+    i = API_PY.index(f"async def {name}(")
+    return API_PY[i:API_PY.index("\n    @app.", i)]
+
+
+def _assert_cancels_first(label: str, body: str, destructive: str) -> None:
+    c = body.find("_cancel_jobs_for_row(")
+    assert c >= 0, (
+        f"v1.22.76: {label} performs a destructive sweep without "
+        f"cancelling the row's in-flight jobs"
     )
-    i = API_PY.index("async def api_unmanage_item(")
-    body = API_PY[i:API_PY.index("\n    @app.", i)]
-    assert "_cancel_jobs_for_row(" in body
-    j = API_PY.index("# Legacy global PURGE path")
-    assert "_cancel_jobs_for_row(" in API_PY[j:j + 600]
+    d = body.find(destructive)
+    assert d >= 0, f"{label}: anchor {destructive!r} moved — retarget me"
+    assert c < d, (
+        f"v1.22.76: {label} cancels AFTER its {destructive!r} — a job "
+        f"completing in between re-INSERTs what the sweep deleted"
+    )
+
+
+def test_every_destructive_sweep_cancels_in_flight_jobs_first():
+    for name, destructive in SWEEP_SITES:
+        _assert_cancels_first(name, _route_body(name), destructive)
+    # FORGET's two branches live in one route body and one
+    # transaction; v1.22.76 fixed the global one, which had no cancel.
+    forget = _route_body("api_forget_item")
+    k = forget.index(GLOBAL_PURGE)
+    _assert_cancels_first(
+        "api_forget_item (section branch)", forget[:k],
+        "DELETE FROM placements")
+    _assert_cancels_first(
+        "api_forget_item (global branch)", forget[k:],
+        "_drop_motif_tracking(")
 
 
 # ── (2) PUSH/SWITCH cancels edition-scoped ───────────────────

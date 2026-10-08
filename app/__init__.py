@@ -7301,7 +7301,41 @@
 #   The guard drives all four endpoints for real — a source-level
 #   check would not have caught the bulk/per-row split that started
 #   this.
-__version__ = "0.51.358"
+# 0.51.359: a lint for the drift, and the drift it found.
+#   Three bugs in three weeks had one shape: an action with a per-row
+#   path and a bulk path, the bulk one quietly missing a step.
+#   v0.51.355 (bulk ACCEPT ALL never landed the themes.youtube_url
+#   write per-row has done since v1.12.37), v0.51.358 (bulk DECLINE
+#   wrote no audit row) — both found by reading. So compare the two
+#   sides mechanically: every effect the per-row path has, a table it
+#   writes or a state helper it calls, the bulk path must have too. A
+#   bulk path may do MORE (its progress row, its summary event); it
+#   may not do less. Table names come from the real schema, so prose
+#   cannot pass for SQL — an earlier draft matched the word "UPDATE"
+#   in an English sentence. A new bulk route must name its per-row
+#   twin, or say it has none and why, before the suite passes.
+#   On its first run it found the third instance: bulk LET PLEX SERVE
+#   deletes the same placements rows as the per-row UNPLACE but never
+#   cancelled the row's in-flight jobs first. The per-row path has
+#   since v1.18.73, and its comment says what that costs — "a
+#   place/download/refresh job in flight against (mt, tmdb) could land
+#   bytes into the row mid-unplace ... ghost placements row reborn,
+#   motif's tracking drifts silently from on-disk state". A bulk LPS
+#   over a selection is exactly when a download is most likely to be
+#   in flight. It wrote no audit row either, though purging motif's
+#   tracking is a destructive theme action and the per-row path
+#   records it as "unplace" (v0.51.358 closed the same gap for bulk
+#   DECLINE). Both fixed; the thread now carries the actor so the row
+#   says who asked.
+#   One guard had to be retargeted to accept the fix: v1.22.76's
+#   coverage check counted `_cancel_jobs_for_row(` call sites in
+#   api.py (6), which mirrors the sites instead of saying anything
+#   about them, so a new site that legitimately cancels turned it red
+#   for doing the right thing. It now names the five destructive
+#   sweeps and asserts each one cancels BEFORE its own delete — red
+#   for a removal or a reorder at any of them, indifferent to sites
+#   elsewhere.
+__version__ = "0.51.359"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

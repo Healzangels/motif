@@ -117,6 +117,22 @@ for the lint that walks every `awaitingApproval` predicate).
 minor edits. The mirror-drift tests use function-name anchors,
 not line numbers — they don't go stale.
 
+## Bulk paths mirror their per-row twin (v0.51.359)
+
+An action with both a per-row and a bulk endpoint must do the same
+things per row. Three tags in three weeks fixed one half of such a
+pair: v0.51.355 (bulk ACCEPT ALL skipped the `themes.youtube_url`
+write), v0.51.358 (bulk DECLINE wrote no audit row), v0.51.359 (bulk
+LET PLEX SERVE neither cancelled the row's in-flight jobs nor audited).
+
+`tests/test_v0_51_359_bulk_per_row_drift.py` compares them: every
+table the per-row path writes and every state helper it calls, the
+bulk path must too. It may do MORE — a progress row, a summary event —
+never less. **Adding a bulk endpoint means adding it to that file's
+`PAIRS`** (or to `NO_TWIN` with a reason); the suite fails until you
+do. A genuine difference goes in `ALLOWED_DIFFERENCES` with its
+reason, which is a decision, not a silenced lint.
+
 ## Recurring bug classes (read PROJECT_HISTORY for full detail)
 
 1. **Phantom P after PURGE** — Plex's metadata cache returns 200 to

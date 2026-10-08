@@ -5668,6 +5668,7 @@ def _bulk_lps_run(
     db_path: Path, settings,
     *,
     targets: list[dict],
+    actor: str = "system",   # v0.51.359: whose LET PLEX SERVE this was, for the audit row
 ) -> None:
     """v1.15.28: server-side bulk LET PLEX SERVE.
 
@@ -6114,6 +6115,16 @@ def _bulk_lps_run(
                         "show" if mt == "tv" else mt)
                     with get_conn(db_path) as conn:
                         with transaction(conn):
+                            # v0.51.359: cancel this row's in-flight jobs FIRST, exactly as the per-row
+                            # api_unplace_item has since v1.18.73 — bulk LPS deletes the same placements
+                            # rows and had the same race. Its words: "a place/download/refresh job in
+                            # flight against (mt, tmdb) could land bytes into the row mid-unplace ... ghost
+                            # placements row reborn, motif's tracking drifts silently from on-disk state."
+                            # Found by the per-row/bulk drift lint (test_v0_51_359), which is in this tag
+                            # because this is the third time the two paths have differed.
+                            _cancel_jobs_for_row(
+                                conn, media_type=mt, tmdb_id=tid, section_id=section_id or None,
+                            )
                             if section_id:
                                 conn.execute(
                                     "DELETE FROM placements WHERE "
@@ -6185,6 +6196,16 @@ def _bulk_lps_run(
                                 "    plex_theme_verified_ok = NULL "
                                 f"WHERE {pi_where}",
                                 pi_where_args,
+                            )
+                            # v0.51.359: LET PLEX SERVE purges motif's tracking for the row — a
+                            # destructive theme action in _record_audit's own scope, which the per-row
+                            # path records as action="unplace" and this one did not (v0.51.358 closed the
+                            # same gap for bulk DECLINE).
+                            _record_audit(
+                                conn, actor=actor, action="unplace",
+                                media_type=mt, tmdb_id=tid, section_id=section_id or None,
+                                details={"via": "bulk_lps", "bulk": True,
+                                         "edition_key": _ed if _ed is not None else ""},
                             )
                     n_unplaced += 1
                 else:
@@ -25306,7 +25327,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         t = threading.Thread(
             target=_bulk_lps_run,
             args=(db, settings),
-            kwargs={"targets": targets},
+            kwargs={"targets": targets, "actor": request.state.user},  # v0.51.359
             name="bulk-lps",
             daemon=True,
         )
