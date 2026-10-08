@@ -7234,7 +7234,44 @@
 #   here on a 6,000-row tv tab: a plain page is hydrate-bound (33 ms
 #   of 47), DL=on is stat-bound (61 ms over 5,141 stats), and the
 #   operator's empty-view shape is all ids (4.5 ms of 5.6).
-__version__ = "0.51.356"
+# 0.51.357: a fresh-eyes GUI pass — two fixes.
+#   (1) THE HEADER STACK. The dry-run banner, the paths banner and
+#   the topbar were each `position: sticky; top: 0` on their own, and
+#   the CSS said so in as many words — "sticky stacks naturally".
+#   Siblings do not stack that way: each pins to the viewport top and
+#   the later one renders UNDER the earlier. Measured at scrollY 1250
+#   on the running app: desktop banner 0-45 / topbar 0-65, so 45 of
+#   the topbar's 65px sat behind the banner; mobile banner 0-93 /
+#   topbar 0-139, which swallowed the brand, the status pills and the
+#   whole nav row. The `.dry-run-banner + .paths-banner { top: 41px }`
+#   offset was a hardcoded guess at a banner that is 45px on desktop
+#   and 93px wrapped on a phone. All three now live in one
+#   `.sticky-head` box that pins; they stack in flow inside it, at
+#   whatever height they really are. Re-measured after: banner 0-45 /
+#   topbar 45-110 desktop, 0-93 / 93-232 mobile, overlap 0 at both.
+#   The topbar keeps `position: relative` — mobile's #op-mini absolutely
+#   positions against it. Fixing the stack also exposed what the old
+#   overlap had been hiding: both banners carried only a colour tint,
+#   so page content now read straight through them. They get the
+#   topbar's own treatment (opaque base + blur), and the dry-run pulse
+#   animates background-IMAGE, since the shorthand it animated before
+#   reset that base every frame.
+#   (2) EVERY FAILURE KIND HAS WORDS. FailureKind gained RATE_LIMITED
+#   in v0.51.269 — classified on HTTP 429, persisted like any other
+#   kind — and its own .human covered it, but all four label maps in
+#   the web layer still listed the pre-.269 seven and fell back to the
+#   raw token. A throttled row read "rate_limited" in the dashboard's
+#   FAILURE BREAKDOWN bar, the row's glyph tooltip, the TDB pill
+#   tooltip and the INFO card's recovery headline. The recovery map
+#   was also the last one still saying "YouTube cookies…" after
+#   v1.14.1 made every other surface source-agnostic; it now reads
+#   FailureKind.human instead of keeping a fourth copy in step. The
+#   enum's own docstring states the principle that was missed —
+#   v0.51.269 hoisted the probe-inconclusive set onto the enum "so a
+#   new kind cannot be added without inheriting an answer" — so the
+#   new guard walks the enum against every surface, driving the two
+#   endpoints for real rather than reading their source.
+__version__ = "0.51.357"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

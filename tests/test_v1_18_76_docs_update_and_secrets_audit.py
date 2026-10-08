@@ -104,6 +104,22 @@ def _tracked_source_files() -> list[Path]:
         ".py", ".js", ".html", ".css", ".md", ".yaml", ".yml",
         ".toml", ".txt",
     }
+    # v0.51.357: ASK GIT FIRST. This function's name has always claimed more than the walk below
+    # delivered — the walk is a hand-maintained skip list, so any local-only file with a matching
+    # extension got audited as if it shipped. A scratch motif instance under the gitignored
+    # .cache/ (its motif.yaml carries absolute paths) failed the personal-path guard while being
+    # entirely unpublishable. `git ls-files` is the real answer to "what is tracked"; the walk
+    # stays for a source tree with no git (an unpacked release).
+    try:
+        import subprocess
+        res = subprocess.run(["git", "ls-files", "-z"], cwd=REPO,
+                             capture_output=True, text=True, timeout=30)
+        if res.returncode == 0 and res.stdout:
+            tracked = [REPO / name for name in res.stdout.split("\0") if name]
+            return [p for p in tracked
+                    if p.suffix in EXTENSIONS and p.name not in SKIP_FILES and p.is_file()]
+    except (OSError, subprocess.SubprocessError):
+        pass
     out: list[Path] = []
     for p in REPO.rglob("*"):
         if not p.is_file():

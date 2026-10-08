@@ -264,6 +264,30 @@ v0.51.323 (card review): the section is the INFO card's state strip — it rende
 
 For mutually-exclusive topbar pills (e.g. `#op-mini` and `#op-status-idle`), SSR both halves with inverse conditions on the same gate — otherwise the JS reconciliation creates a one-frame flash on the unbaked side (v1.15.55, v1.15.78).
 
+### One sticky box for the header stack (v0.51.357)
+
+Page-level bars that must stay on screen — the dry-run banner, the paths
+banner, the topbar — live inside a single `.sticky-head` wrapper that carries
+`position: sticky; top: 0`. **Do not give them each their own sticky.** Two
+sticky siblings at `top: 0` do not stack: each pins to the viewport top and the
+later one renders underneath the earlier, which is how the topbar spent several
+versions hidden behind the dry-run banner (45 of its 65px on desktop; on mobile
+the banner wraps to 93px and covered the brand, the pills and the nav
+entirely). Offsetting a sibling with a hardcoded `top:` is the same bug with
+extra steps — the banner's height depends on how its text wraps.
+
+Two consequences worth keeping:
+
+* The wrapper is what pins, so whatever is inside needs its own opaque
+  background. A colour tint alone looks fine while something else sits behind
+  it and see-through once page content scrolls under.
+* An element inside the wrapper that was sticky may have been acting as a
+  containing block for an absolutely-positioned child (mobile's `#op-mini`
+  against `.topbar`). Leave it `position: relative` when you take the sticky
+  away.
+
+Guard: `tests/test_v0_51_357_sticky_header_stack.py`.
+
 ### Sticky thead with `border-collapse: collapse` (v1.16.11)
 
 `<thead>` cells under `.table` inherit `border-collapse: collapse`. When the `<th>` row uses `position: sticky`, the collapse arithmetic gets ambiguous during the sticky transition and the bottom border can disappear for a frame — the thead visually "disconnects from the top header" on scroll-back. Substitute `box-shadow: inset 0 -1px 0 var(--line)` for the `border-bottom` rule and pin `background: var(--bg-elev-2)` so the row stays opaque over scrolling content. (The LOGS JOBS panel sidesteps this entirely — since v1.19.6 it's a `<div>` grid, not a `<table>`, with the header as a non-scrolling sibling above `.jobs-scroll-y`.)

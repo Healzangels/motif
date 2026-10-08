@@ -306,6 +306,10 @@
      refresh continues to update on the next poll and is a
      no-op when SSR matched. #}
   {% set _ssr_top = topbar_ssr_state() %}
+  {# v0.51.357: banners + topbar share ONE sticky box. Each used to stick on its own at top:0,
+     which does not stack — the topbar slid under the banner on any scroll (45 of its 65px on
+     desktop; on mobile the banner is 93px and swallowed the brand, the status pills and the nav). #}
+  <div class="sticky-head">
   <div id="dry-run-banner" class="dry-run-banner"{% if not _ssr_top.dry_run %} style="display:none"{% endif %}>
     <span class="dry-run-mark">⚠</span>
     <span class="dry-run-text">DRY-RUN ACTIVE — no themes downloaded, no files placed, no Plex calls. Sync still runs.</span>
@@ -518,6 +522,7 @@
       <a href="/logout" class="topbar-logout" title="Sign out" aria-label="Sign out">⏻</a>
     </div>
   </header>
+  </div>
 
   {# v1.23.44: help-mode bar — shown only when body.help-mode is set. A quiet
      pointer to the full reference so a new user knows where to look. #}

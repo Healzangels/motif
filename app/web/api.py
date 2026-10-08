@@ -11525,6 +11525,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Human labels mirror the recovery-options endpoint's `humans`
         # map so the failure-kind chart and the recovery section
         # speak the same language for the same kinds.
+        # v0.51.357: short labels on purpose — these are bar captions, not sentences, which is why
+        # this map does not simply read FailureKind.human. test_v0_51_357_failure_kind_labels walks
+        # the enum against it, because that is exactly what went wrong: RATE_LIMITED arrived in
+        # v0.51.269 and this map kept the pre-.269 seven, so a throttled row's bar read
+        # "rate_limited".
         failure_humans = {
             "cookies_expired": "Cookies expired",
             "video_private": "Video private",
@@ -11532,6 +11537,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "video_age_restricted": "Age restricted",
             "geo_blocked": "Geo blocked",
             "network_error": "Network error",
+            "rate_limited": "Rate limited",
             "unknown": "Unknown",
         }
         # v1.24.81: roll the (kind, tab) rows up per kind — the bar shows the
@@ -22949,15 +22955,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  "interactive": True},
             ],
         }
-        humans = {
-            "cookies_expired": "YouTube cookies missing or expired",
-            "video_private": "Video is private",
-            "video_removed": "Video was removed or deleted",
-            "video_age_restricted": "Video is age-restricted",
-            "geo_blocked": "Video is geo-blocked from your region",
-            "network_error": "Network error reaching YouTube",
-            "unknown": "Unknown error",
-        }
+        # v0.51.357: was a fourth hand-maintained copy, and the only one still speaking the
+        # pre-v1.14.1 voice ("YouTube cookies…", "Network error reaching YouTube") after every
+        # other surface went source-agnostic — plus it had never heard of RATE_LIMITED. The enum
+        # carries that voice already, so read it instead of keeping a copy in step.
+        from ..core.downloader import FailureKind as _FailureKind
+        humans = {k.value: k.human for k in _FailureKind}
         # v1.13.44: inject smart TRY NEXT actions for non-transient
         # failures where motif has a viable workaround on the Plex
         # side. We only add them for failures where the original

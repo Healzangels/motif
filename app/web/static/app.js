@@ -11996,6 +11996,10 @@
         'video_age_restricted': 'Age-restricted',
         'geo_blocked': 'Geo-blocked',
         'network_error': 'Network error',
+        // v0.51.357: RATE_LIMITED landed in v0.51.269 and three label maps never heard of it, so a
+        // throttled row's tooltip read the raw 'rate_limited'. Guarded now by
+        // tests/test_v0_51_357_failure_kind_labels.py, which walks the enum against every map.
+        'rate_limited': 'Rate limited',
         'unknown': 'Unknown failure'
       }[it.failure_kind] || it.failure_kind;
       const ackTip = `${human} — click to view in INFO and ACK`;
@@ -12196,6 +12200,7 @@
         'video_age_restricted': 'track or video is age-restricted',
         'geo_blocked': 'track or video is geo-blocked in this region',
         'network_error': 'network error reaching the source',
+        'rate_limited': 'the source is rate-limiting this IP',  // v0.51.357
         'unknown': 'unknown failure',
       };
       const why = kindHuman[it.failure_kind] || it.failure_kind || '';

@@ -494,8 +494,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 
 /* ---- Topbar ---- */
 
+/* v0.51.357: the banners and the topbar stick as ONE box — see .sticky-head below. */
 .topbar {
-  position: sticky; top: 0; z-index: 10;
+  /* position stays set: mobile's #op-mini absolutely positions against the topbar, so it has to
+     remain a containing block (it was sticky, which was one too). */
+  position: relative;
   display: grid;
   /* v0.51.161: brand · nav(1fr) · status-cluster. INBOX moved back INTO the status
      cluster (between IDLE and // HELP, the user's ask) — a running-job op-mini renders
@@ -7262,10 +7265,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 /* ---- Paths-not-configured banner ---- */
 
 .paths-banner {
-  position: sticky; top: 0; z-index: 19;
   display: flex; align-items: center; gap: 14px;
   padding: 10px 24px;
-  background: rgba(var(--red-rgb), 0.12);
+  /* v0.51.357: an opaque base + the topbar's blur. The tint alone is see-through, which did not
+     show while this sat ON TOP of the topbar — now that the sticky head stacks properly, what
+     scrolls under a banner is page content. */
+  background-color: rgba(var(--bg-rgb), 0.92);
+  background-image: linear-gradient(90deg, rgba(var(--red-rgb), 0.12) 0%, rgba(var(--red-rgb), 0.12) 100%);
+  backdrop-filter: blur(6px);
   border-bottom: 1px solid var(--red);
   color: var(--red);
   font-size: var(--t-small);
@@ -7285,8 +7292,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   text-decoration: underline;
   font-weight: 600;
 }
-/* If both banners are showing, dry-run should sit on top, paths below */
-.dry-run-banner + .paths-banner { top: 41px; }
+/* v0.51.357: the hardcoded 41px offset is gone with the per-element sticky — inside .sticky-head
+   the banners simply stack, at whatever height they actually are (the dry-run banner is 45px on
+   desktop and 93px wrapped on a phone, so 41px was never the right number for either). */
 
 /* ---- Nav attention indicator (red dot) ---- */
 
@@ -7303,12 +7311,15 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 /* ---- Dry-run banner ---- */
 
 .dry-run-banner {
-  position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 14px;
   padding: 10px 24px;
-  background: linear-gradient(90deg,
+  /* v0.51.357: see .paths-banner — opaque base under the tint, so scrolled rows do not read
+     through the banner now that it no longer sits over the topbar. */
+  background-color: rgba(var(--bg-rgb), 0.92);
+  background-image: linear-gradient(90deg,
     rgba(var(--amber-rgb), 0.18) 0%,
     rgba(var(--amber-rgb), 0.10) 100%);
+  backdrop-filter: blur(6px);
   border-bottom: 1px solid var(--amber);
   color: var(--amber-bright);
   font-size: var(--t-small);
@@ -7332,15 +7343,17 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   box-shadow: 0 0 8px rgba(var(--amber-rgb), 0.3);
 }
 
+/* v0.51.357: animates background-IMAGE, not the shorthand — the shorthand reset the opaque
+   background-color the rule sets, which is what keeps page content from reading through. */
 @keyframes dry-run-pulse {
-  0%, 100% { background: linear-gradient(90deg, rgba(var(--amber-rgb), 0.18) 0%, rgba(var(--amber-rgb), 0.10) 100%); }
-  50%      { background: linear-gradient(90deg, rgba(var(--amber-rgb), 0.24) 0%, rgba(var(--amber-rgb), 0.14) 100%); }
+  0%, 100% { background-image: linear-gradient(90deg, rgba(var(--amber-rgb), 0.18) 0%, rgba(var(--amber-rgb), 0.10) 100%); }
+  50%      { background-image: linear-gradient(90deg, rgba(var(--amber-rgb), 0.24) 0%, rgba(var(--amber-rgb), 0.14) 100%); }
 }
 
-/* When dry-run is on, push the topbar down so it doesn't overlap.
-   Sticky positioning means both the banner AND topbar stick at the top. */
-.dry-run-banner + .topbar { top: 0; }
-body.dry-run-on .topbar { /* nothing special needed; sticky stacks naturally */ }
+/* v0.51.357: both rules above were written on the assumption in their own comment — that two
+   sticky siblings at top:0 stack. They do not: each pins to the viewport top and the later one
+   renders under the earlier. One sticky parent is what actually stacks them. */
+.sticky-head { position: sticky; top: 0; z-index: 20; }
 
 /* v0.51.70: dead Scans-page CSS (.kind-*, .scan-filter*, .kpi*, bare .status-*, .scan-summary) removed — its emitting UI was deleted v0.50.89; zero template/JS emitters (v1.18.61 wasted a token-remap commit on it). v0.51.91: the old '/' separators formed spurious star-slash sequences that closed this comment early, so the CSS parser's error-recovery swallowed the .dash-user-hidden rule below and user-hidden dashboard sections never actually hid. */
 
