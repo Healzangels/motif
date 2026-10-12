@@ -711,13 +711,13 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
   "old extractor" failure mode behind the looser `>=` resolution.
   Verify the running version on a deployed container via the
   startup log line `yt_dlp = X.Y.Z` (added v1.15.16). Last
-  bumped: **2026.8.19** (v0.51.353, 2026-09-27).
+  bumped: **2026.8.19** (v0.51.353, 2026-09-27); re-checked 2026-10-12 (v0.51.367), still the newest stable (later builds are .dev0).
 - **Quarterly: bump the `apprise` floor in `requirements.txt`**
   to current latest stable. Apprise ships service-specific
   transport updates as new notification services are added and
   URL schemas evolve; a stale floor masks "service unavailable"
   errors behind a generic dispatch failure. Last bumped:
-  **2.0.0** (v0.51.353, 2026-09-27) — apprise v2 is a breaking
+  **2.0.1** (v0.51.367, 2026-10-12) — apprise v2 is a breaking
   release for embedders, so the bump is gated on
   `test_v0_51_353_dependency_floors`, which drives
   `notify._send_embedded` through a loopback sink and pins the

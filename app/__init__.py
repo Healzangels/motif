@@ -7578,7 +7578,27 @@
 #   behavioural test: stub the module they import from, run the
 #   thread body, and the state must read "failed", not "running".
 #   5 mutants red.
-__version__ = "0.51.366"
+# 0.51.367: the quarterly floors, checked early.
+#   yt-dlp: NOT bumped. 2026.8.19 is still the newest STABLE on PyPI
+#   — `pip index versions yt-dlp` reports INSTALLED 2026.8.19 =
+#   LATEST, and everything published since is a dated .dev0 nightly
+#   (2026.9.16, 2026.9.27, 2026.10.10) that `>=` will not resolve to.
+#   The floor is current, not stale, and the node check still passes.
+#   apprise: 2.0.0 -> 2.0.1 (released 2026-10-03), the current latest
+#   stable. Its headline is a markdown fix — "v2 Format Conversion
+#   Regression" (#1761), plus Telegram markdown escaping and Matrix
+#   rich-notification handling — and motif sends body_format=
+#   "markdown" on every per-item notification, so it lands on motif's
+#   path. That made it worth measuring rather than assuming: the one
+#   call site through a loopback json:// sink, and
+#   conversion.convert_between on motif's own body shape, both
+#   markdown->html and markdown->text. BYTE-IDENTICAL on 2.0.0 and
+#   2.0.1 in every direction. So the bump is hygiene — the floor
+#   records what has been verified — NOT a fix for anything observed
+#   here, and the changelog should not pretend otherwise. The 14
+#   floor-guard cases pass on 2.0.1 unchanged.
+#   Next quarterly stays ~2027-01; this one was asked for early.
+__version__ = "0.51.367"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

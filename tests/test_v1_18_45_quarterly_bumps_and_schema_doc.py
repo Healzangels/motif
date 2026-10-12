@@ -33,14 +33,14 @@ DB_PY = REPO / "app" / "core" / "db.py"
 
 
 def test_apprise_floor_is_current():
-    """Apprise floor — v0.51.353 bumped it 1.12.0 → 2.0.0 (released 2026-09-26) on
+    """Apprise floor — v0.51.367 bumped it 2.0.0 → 2.0.1 (released 2026-10-03) on
     the quarterly review, after A/B'ing motif's one call site against 1.13.1. What
     the bump BUYS is documentation: with no upper bound the image already resolved
     to v2, so the floor records that v2 is the version motif is verified against
     (the contract itself is pinned by test_v0_51_353_dependency_floors)."""
     req = REQUIREMENTS.read_text()
-    assert "apprise>=2.0.0" in req, (
-        "v0.51.353: apprise floor must be bumped to 2.0.0 (released 2026-09-26)"
+    assert "apprise>=2.0.1" in req, (
+        "v0.51.367: apprise floor must be bumped to 2.0.1 (released 2026-10-03)"
     )
     # Superseded floors must NOT survive in the LIVE require
     # (comments referencing them for history are fine).

@@ -65,6 +65,11 @@ dulwich>=1.2.6,<1.3
 # drops runtimes it no longer supports, so an empty dict is the failure signal).
 # The release's deprecations (number_of_digits, random_uuidv4) are internal
 # helpers motif never calls. Stays above the v1.24.42 CVE floor.
+# v0.51.367 (quarterly review 2026-10-12): NOT bumped — 2026.8.19 is still the newest
+# STABLE on PyPI (`pip index versions yt-dlp` agrees: INSTALLED 2026.8.19 = LATEST).
+# Everything published since is a dated .dev0 nightly (2026.9.16, 2026.9.27,
+# 2026.10.10), which `>=` will not resolve to and which this project does not want.
+# The node check still passes, so the floor is current, not stale.
 yt-dlp>=2026.8.19
 
 # v1.17.0: Apprise — unified notification library spanning Discord,
@@ -94,4 +99,14 @@ yt-dlp>=2026.8.19
 # notify() now returns an AppriseResult whose bool() keeps v1's meaning — PARTIAL is
 # falsy, so a batch where one URL fails still reports failed. Upstream's advice for
 # embedders not ready to move is `apprise >=1.0.0, <2.0.0`; motif does not need it.
-apprise>=2.0.0
+# v0.51.367 (quarterly review 2026-10-12): floor bumped 2.0.0 -> 2.0.1 (released
+# 2026-10-03), the current latest stable. Its headline is a markdown fix — "v2
+# Format Conversion Regression" (#1761) plus Telegram markdown escaping and Matrix
+# rich-notification handling — and motif sends body_format="markdown" on every
+# per-item notification, so it lands on motif's path. A/B'd anyway rather than
+# assumed: notify._send_embedded through a loopback json:// sink, and
+# conversion.convert_between on motif's own body shape, markdown->html and
+# markdown->text. BYTE-IDENTICAL on 2.0.0 and 2.0.1 both ways — so this bump is
+# hygiene, not a fix for anything observed here. The 14 floor-guard cases pass on
+# 2.0.1 unchanged.
+apprise>=2.0.1
