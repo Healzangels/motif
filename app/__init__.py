@@ -7521,7 +7521,38 @@
 #   a second one there still fails it, which is the bug it exists
 #   for; a responsive override cannot fight the base rule at the
 #   same width.
-__version__ = "0.51.364"
+# 0.51.365: the last three from the 2026-10-07 GUI pass — and two
+#   of the three findings were wrong, which the measuring showed.
+#   (1) The donut's centre caption. The note called it clipped; SVG
+#   text does not clip, and "movies" occupied 9.12 of the ring's
+#   28.8-unit hole. What is true is that 2px in a 42-unit viewBox
+#   renders at ~5px — too small to read rather than cut off. At 4px
+#   it reads ~8.6px in the 90px phone chart and ~19px at the 200px
+#   declared size, and "movies" grows to 18.24 units, still inside
+#   the hole, with the 5px display-face number still dominant.
+#   (2) One date notation. Three sites rendered toLocaleDateString()
+#   ("9/28/2026" on en-US) while SYNC HISTORY printed the server's
+#   ISO, so one dashboard showed a date two ways — and the locale
+#   form differs operator to operator. fmt.date builds YYYY-MM-DD
+#   from padded local parts; the three sites call it.
+#   (3) The horizontal-scroll track. The note said mobile tables
+#   scroll with no affordance. Not so: v0.51.26 gave .table-scroll
+#   the thin-green track at <=600, the same language v0.51.3 gave
+#   .nav. The real gap was 600-1080, where #library-table is pinned
+#   to 1080px and scrolled with nothing saying so. The first attempt
+#   here added a SECOND track block at <=1080 with its own height
+#   (3px against the existing 4px) — a near-duplicate of exactly the
+#   kind this codebase keeps paying for. Instead .table-scroll's
+#   track MOVED to the <=1080 block, beside the overflow-x that
+#   creates the scrolling; .dash-pair-col and .sync-history-bars
+#   keep theirs at <=600, where they start scrolling.
+#   The guard caught two bugs in ITSELF before it caught anything
+#   else: its viewBox regex matched dashboard.html's first SVG (a
+#   24x24 stat glyph, not the 42-unit donut), which made it read
+#   15px and sail past a chart shrunk to 60; and a dict
+#   comprehension keyed by breakpoint silently kept one of the four
+#   760px blocks. Both fixed, both noted in the test. 7 mutants red.
+__version__ = "0.51.365"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

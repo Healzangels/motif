@@ -30,7 +30,18 @@
       if (diff < 60) return `${Math.round(diff)}s ago`;
       if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
       if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
-      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString().slice(0, 5);
+      return fmt.date(d) + ' ' + d.toTimeString().slice(0, 5);
+    },
+    // v0.51.365: ONE date notation. Three sites rendered toLocaleDateString()
+    // ("9/28/2026" on en-US) while SYNC HISTORY printed the server's ISO
+    // ("2026-09-28 17:08:09"), so the same dashboard showed a date two ways —
+    // and the locale form also differs operator to operator. ISO matches what
+    // the console already shows, sorts, and reads the same everywhere.
+    date: (v) => {
+      const d = v instanceof Date ? v : new Date(v);
+      if (isNaN(d.getTime())) return '';
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
     },
     timeShort: (iso) => {
       if (!iso) return '—';
@@ -2207,7 +2218,7 @@
   function _shortDate(iso) {
     if (!iso) return '';
     const d = new Date(iso);
-    return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+    return fmt.date(d);   // v0.51.365: one notation, see fmt.date
   }
 
   // v1.24.63: media-type ICON for the carousel meta line — Feather-style line
@@ -2755,7 +2766,7 @@
       if (sec < 3600)      return `${Math.floor(sec / 60)}m ago`;
       if (sec < 86400)     return `${Math.floor(sec / 3600)}h ago`;
       if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
-      return new Date(iso).toLocaleDateString();
+      return fmt.date(iso);   // v0.51.365: one notation, see fmt.date
     } catch (_) { return null; }
   }
   function fmtRelativeFuture(iso) {

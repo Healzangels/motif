@@ -675,3 +675,21 @@ to centre a label against a control line. Bumping the box would leave the token
 describing a button that is no longer that tall. **Move the padding token
 (`--btn-tiny-pad-y`) instead, and everything derived from it follows.** Guard:
 `tests/test_v0_51_364_locations_column_and_tap_targets.py`.
+
+### The scroll track belongs at the breakpoint that creates the scrolling (v0.51.365)
+
+`.table-scroll` gets its `overflow-x: auto` at ≤1080 (v0.50.58) but had its
+thin-green track only at ≤600 (v0.51.26), so between 600 and 1080 the library
+table — pinned to 1080px — scrolled with nothing saying so, because macOS
+overlay scrollbars hide at rest. **Declare the track in the same block as the
+`overflow` that makes it necessary.** The first attempt added a second track
+block at the other breakpoint with its own height (3px against 4px); a
+near-duplicate like that is how two values drift. Guard:
+`tests/test_v0_51_365_three_gui_items.py` asserts the two live in one block.
+
+### One date notation (v0.51.365)
+
+`fmt.date` renders `YYYY-MM-DD` from padded local parts, and every absolute date
+goes through it. `toLocaleDateString()` is not an option: it differs operator to
+operator, and it put "9/28/2026" on the same dashboard as SYNC HISTORY's
+"2026-09-28 17:08:09".

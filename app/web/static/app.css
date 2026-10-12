@@ -2305,6 +2305,18 @@ body.help-mode .settings-help-about { display: block; }
      desktop row dropdowns). On a phone a bottom-row menu may clip against the
      swipe box, an acceptable trade where horizontal scroll is unavoidable. */
   .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* v0.51.365: the thin-green track moves here from the <=600 block, where v0.51.26
+     put it. The swipe context above starts at 1080 and #library-table is pinned to
+     1080px, so between 600 and 1080 the table scrolled with NOTHING saying so —
+     macOS overlay scrollbars hide at rest. Same treatment, same values, one rule:
+     the track belongs wherever the scrolling does. .dash-pair-col and
+     .sync-history-bars keep theirs at <=600, which is where they start scrolling. */
+  .table-scroll { scrollbar-width: thin; scrollbar-color: var(--green-deep) transparent; }
+  .table-scroll::-webkit-scrollbar { height: 4px; }
+  .table-scroll::-webkit-scrollbar-track { background: transparent; }
+  .table-scroll::-webkit-scrollbar-thumb {
+    background: var(--green-deep); border-radius: var(--radius); border: 0;
+  }
   /* v0.51.5: the IMPORT preview table (settings) shares the generic .table-scroll
      swipe context above but had no min-width floor — so at phone width its fixed
      columns (state 36 + status 100 + imdb 140 + current 130 + url 170 + action 160
@@ -6322,18 +6334,15 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      bar "is a different color and doesn't match the rest of the header"). Give
      them the SAME thin-green treatment the nav (v0.51.3) uses so every mobile
      scroll strip is one visual language. */
-  .dash-pair-col, .table-scroll, .sync-history-bars {
+  .dash-pair-col, .sync-history-bars {
     scrollbar-width: thin;
     scrollbar-color: var(--green-deep) transparent;
   }
   .dash-pair-col::-webkit-scrollbar,
-  .table-scroll::-webkit-scrollbar,
   .sync-history-bars::-webkit-scrollbar { height: 4px; }
   .dash-pair-col::-webkit-scrollbar-track,
-  .table-scroll::-webkit-scrollbar-track,
   .sync-history-bars::-webkit-scrollbar-track { background: transparent; }
   .dash-pair-col::-webkit-scrollbar-thumb,
-  .table-scroll::-webkit-scrollbar-thumb,
   .sync-history-bars::-webkit-scrollbar-thumb {
     background: var(--green-deep); border-radius: var(--radius); border: 0;
   }
@@ -7059,7 +7068,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   transform-origin: 21px 21px;
 }
 .source-pie-center-label {
-  font-size: 2px;
+  /* v0.51.365: 2px rendered at ~5px — the viewBox is 42 units wide and the chart
+     110px, so a unit is 2.62px. Not clipped (SVG text does not clip; the earlier
+     audit note calling it clipped was an HTML scrollWidth test applied to SVG),
+     just under any reading size. 4px reads at ~10.5px on desktop and ~8.6 in the
+     90px phone chart, and the widest caption, "movies", measures 9.12 units at 2px
+     — 18.24 at 4px, inside the ring's 28.8-unit hole with room to spare. The number
+     above it stays dominant at 5px in the display face. */
+  font-size: 4px;
   letter-spacing: 0.16em;
   fill: var(--fg-mute);
   transform: rotate(90deg);
