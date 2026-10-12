@@ -1548,9 +1548,6 @@ body.help-mode .help-mode-bar { display: flex; }
    def keeps start. (v0.50.97 removed the .help-gloss-grid-wide auto-rail exception so
    every section shares this one rail — that's the alignment fix; this is the look.) */
 .help-gloss-row > :not(.help-gloss-def) { justify-self: center; }
-/* v1.23.68: the row TDB pill carries margin-left:6px (it trails the title on a
-   row); zero it in the glossary/legend so it sits flush on the chip rail. */
-.help-gloss-grid .tdb-pill { margin-left: 0; }
 /* v1.23.58: display:contents so the chip + def become direct items of the 2-col
    .help-gloss-grid (above) and share its column alignment. */
 .help-gloss-row { display: contents; }
@@ -2501,6 +2498,14 @@ body.help-mode .settings-help-about { display: block; }
    work this way (centered header over centered data); IMDB
    now joins them. */
 #library-table th.col-title { text-align: left; }
+/* v0.51.361: `.col-name` marks a column whose data is left-aligned TEXT, and puts its
+   header on the same axis. v1.12.28 centred every `.table thead th` and exempted TITLE
+   for a stated reason — a centred label over a wide column floats far from its data —
+   but wired that exemption to the library table alone; and `.table thead th` (0-1-2)
+   outranks a bare column class (0-1-0), so a column class could set its CELLS' alignment
+   and silently not its header's. Measured before, header label to its data: LOCATIONS
+   268px, LIBRARY 86px, SECTION 76px, ROLE 69px, SECTION 32px. Two classes, so it wins. */
+.table .col-name { text-align: left; }
 /* v0.51.360: v0.51.333 put the play slot inside the title cell, so every title
    moved right by slot + gap and the header stayed at the cell edge — the label
    sat 26px left of its own column, with the play glyph under it. The indent is
@@ -4854,7 +4859,10 @@ body.auth-page .auth-card { margin: 0; }
    .attn-pill-mismatch below for rationale. */
 .edition-pill {
   display: inline-block;
-  margin-left: 6px;
+  /* v0.51.361: no margin. It carried margin-left:6px from when the pill trailed the
+     title INLINE; v1.15.53 promoted ED to its own centred <td class="col-edition">,
+     where an asymmetric margin puts the pill 3px right of its header's axis
+     (measured 688 against a column centre of 685). Same leftover as .tdb-pill. */
   padding: 1px calc(5px - var(--track)) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: 10px;
   --track: 0.08em;
@@ -5026,7 +5034,13 @@ body.auth-page .auth-card { margin: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: 6px;
+  /* v0.51.361: no margin. These carried margin-left:6px from when a pill trailed the
+     title INLINE. Every surface that renders one now centres it — the TDB pill in its
+     own <td class="col-tdb"> since v1.15.53, the filter rows on a flex gap since
+     v1.13.0, the glossary on a shared chip rail — and an asymmetric margin puts a
+     centred box 3px right of the axis. Measured: every row's TDB pill at 491 against
+     a column and header at 488; the LEVELED/RAW/OUTLIERS chips at 553 on a rail the
+     other chips sit at 550. v1.23.68 zeroed it for the glossary's TDB chip alone. */
   padding: 1px calc(5px - var(--track)) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: var(--t-micro);
   --track: 0.12em;
@@ -5127,7 +5141,13 @@ body.auth-page .auth-card { margin: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: 6px;
+  /* v0.51.361: no margin. These carried margin-left:6px from when a pill trailed the
+     title INLINE. Every surface that renders one now centres it — the TDB pill in its
+     own <td class="col-tdb"> since v1.15.53, the filter rows on a flex gap since
+     v1.13.0, the glossary on a shared chip rail — and an asymmetric margin puts a
+     centred box 3px right of the axis. Measured: every row's TDB pill at 491 against
+     a column and header at 488; the LEVELED/RAW/OUTLIERS chips at 553 on a rail the
+     other chips sit at 550. v1.23.68 zeroed it for the glossary's TDB chip alone. */
   padding: 1px calc(5px - var(--track)) 1px 5px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: var(--t-micro);
   --track: 0.12em;
@@ -5180,7 +5200,13 @@ body.auth-page .auth-card { margin: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: 6px;
+  /* v0.51.361: no margin. These carried margin-left:6px from when a pill trailed the
+     title INLINE. Every surface that renders one now centres it — the TDB pill in its
+     own <td class="col-tdb"> since v1.15.53, the filter rows on a flex gap since
+     v1.13.0, the glossary on a shared chip rail — and an asymmetric margin puts a
+     centred box 3px right of the axis. Measured: every row's TDB pill at 491 against
+     a column and header at 488; the LEVELED/RAW/OUTLIERS chips at 553 on a rail the
+     other chips sit at 550. v1.23.68 zeroed it for the glossary's TDB chip alone. */
   padding: 1px calc(6px - var(--track)) 1px 6px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: var(--t-tiny);
   --track: 0.10em;

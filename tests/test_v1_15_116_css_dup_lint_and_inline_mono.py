@@ -146,6 +146,17 @@ def test_mono_small_primitives_replace_inline_font_styles():
 
 def test_lib_locations_uses_mono_small_class():
     """Sanity: the libraries-table location cell uses the
-    primitives now (was inline-styled pre-v1.15.116)."""
+    primitives now (was inline-styled pre-v1.15.116).
+
+    v0.51.361: read the cell's class LIST rather than one spelling of it. The old
+    assertion pinned `class="lib-locations mono small"` exactly, so adding an unrelated
+    class (`col-name`, so the header sits over the data) failed a test about inline
+    styling."""
     src = APP_JS.read_text()
-    assert 'class="lib-locations mono small"' in src
+    m = re.search(r'<td class="(lib-locations[^"]*)"', src)
+    assert m, "the libraries-table location cell is gone"
+    classes = set(m.group(1).split())
+    assert {"mono", "small"} <= classes, (
+        f"v1.15.116: the location cell styles through the primitives, not inline; "
+        f"its classes are {sorted(classes)}"
+    )

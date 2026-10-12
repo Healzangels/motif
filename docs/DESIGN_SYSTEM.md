@@ -608,3 +608,28 @@ the title is that one gap: a row's control reads as the row's.
 **The rule: when you add a reserved slot to the front of a table cell, the
 column's header has to clear it by the same arithmetic, from the same token.**
 Guard: `tests/test_v0_51_360_title_header_axis.py`.
+
+### A header sits on its column's axis — `.col-name` (v0.51.361)
+
+`.table thead th` centres every header (v1.12.28) and is specificity (0-1-2), so a
+bare column class (0-1-0) can set its CELLS' alignment and **silently not its
+header's**. v1.12.28 exempted the library's TITLE with the reason spelled out — a
+centred label over a wide column floats far from its data — but wired that
+exemption to one table, so every other left-aligned text column in the app drifted:
+settings LOCATIONS by 268px, SECTION 76, ROLE 69; dashboard LIBRARY 86, SECTION 32.
+
+**Mark a column whose data is left-aligned text with `.col-name` on BOTH the `<th>`
+and the `<td>`.** `.table .col-name` is two classes, so it wins. Narrow centred
+columns need nothing. A column class that sets `text-align` and is written with one
+class will not reach the header — check it resolves, don't assume.
+
+### A pill that renders centred has no one-sided margin (v0.51.361)
+
+`margin-left: 6px` was right when a pill trailed the title inline. It is wrong the
+moment that pill moves into its own centred `<td>`, onto a flex-gap filter row, or
+onto the glossary's chip rail — a centred box with an asymmetric margin lands 3px
+off the axis, on every row. Four pills carried it after their surfaces moved
+(v1.15.53, v1.13.0), and the one-surface fix (v1.23.68 zeroing it for the glossary's
+TDB chip) is what let it survive. **When a component moves into a centred context,
+zero its horizontal margins at the source rather than overriding them per surface.**
+Guard: `tests/test_v0_51_361_header_axis_and_pill_margins.py`.

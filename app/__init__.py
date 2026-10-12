@@ -7362,7 +7362,61 @@
 #   both values and asserts the reservation EQUALS the slot's width —
 #   the property that keeps a title in the same place with or without
 #   a play button — and that the phone block re-points the token.
-__version__ = "0.51.360"
+# 0.51.361: two leftovers from layouts that moved.
+#   A GUI audit for the .360 class (something moved, its partner
+#   did not) over every page at 1800px and 375px. Two regressions,
+#   both measured on a live repro, plus a clean bill elsewhere:
+#   zero viewport overflow and zero pinned-box overlap anywhere, so
+#   .357's one-sticky-box holds.
+#   (1) `margin-left: 6px` on .tdb-pill / .edition-pill /
+#   .loudness-pill / .attn-pill dates from when a pill trailed the
+#   title INLINE. v1.15.53 moved TDB and ED into their own CENTRED
+#   <td>s, v1.13.0 put the filter rows on a flex gap, and the
+#   glossary puts chips on a shared rail — in all three an
+#   asymmetric margin lands the box 3px right of the axis. Every
+#   one of 50 TDB pills sat at 491 against a column and header at
+#   488; an edition pill at 688 against 685; LEVELED/RAW/OUTLIERS
+#   at 553 on a rail the other chips use at 550. v1.23.68 had
+#   already zeroed it for the glossary's TDB chip alone — one
+#   surface, which is how a leftover survives. Removed at the
+#   source; the three badges that really do trail inline text
+#   (.brand-update, .tdb-unavailable-badge, .nav-attn) keep theirs.
+#   (2) Centred headers over left-aligned text, in every table but
+#   the library's. v1.12.28 centred `.table thead th` and exempted
+#   TITLE with its reason written down — a centred label over a
+#   wide column floats far from its data — but wired the exemption
+#   to one table; and `.table thead th` (0-1-2) outranks a bare
+#   column class (0-1-0), so a column class sets its CELLS'
+#   alignment and silently not its header's. Measured label-to-data:
+#   settings LOCATIONS 268px (a 642px column), SECTION 76, ROLE 69;
+#   dashboard LIBRARY 86, SECTION 32. `.col-name` now marks a
+#   left-aligned text column on BOTH sides and, at two classes,
+#   wins. All five read 0 after. The narrow ones (ID 12px, TYPE 9,
+#   ACTIONS 16) stay centred, and the library's ACTIONS header
+#   keeps the v1.13.21 decision to centre over right-aligned
+#   buttons.
+#   The guard resolves the cascade rather than pinning text: a
+#   small specificity engine over app.css answers what text-align
+#   computes to for each <th>, with two controls that must stay
+#   centred. 6 mutants red, including the rule written at a
+#   specificity that loses.
+#   Two guards had to be retargeted, both mirrors rather than
+#   claims. test_v1_14_72 sliced `.edition-pill` as css[i:i + 600]
+#   and the four comment lines above pushed `color: var(--fg-dim)`
+#   off the end; its `_block` helper now slices the RULE, which
+#   converts all eight of its windows at once (one of them a 2000
+#   whose result was never read). test_v1_15_116 pinned the exact
+#   string `class="lib-locations mono small"`, so adding `col-name`
+#   failed a test about inline styling; it reads the class LIST now.
+#   FOUND, NOT FIXED HERE: the v0.51.261 fixed-window census cannot
+#   see a window hidden behind a defaulted parameter — `_block`'s
+#   600 was invisible to it, which is why it rotted unnoticed, and
+#   four more live helpers have the same shape (test_v0_51_17's
+#   `window=500`, test_v1_16_10's `span=4000`, test_v1_22_88's
+#   `span=1200`, test_v1_19_38's `length`). v0.51.309 closed the
+#   previous blind spot for exactly this reason; this one is the
+#   next tag's.
+__version__ = "0.51.361"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

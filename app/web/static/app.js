@@ -3290,7 +3290,7 @@
       if (b.total <= 0 && !d.keep) return '';
       const covCls = b.cov >= 80 ? 'accent-green' : (b.cov >= 40 ? '' : 'accent-red');
       return `<tr class="${d.cls || ''}">
-        <td class="gs-lib">${htmlEscape(d.label)}</td>
+        <td class="gs-lib col-name">${htmlEscape(d.label)}</td>
         <td class="col-num"><b>${b.total.toLocaleString()}</b></td>
         <td class="col-num source-pie-T-text">${b.local.toLocaleString()}</td>
         <td class="col-num source-pie-P-text">${b.plex.toLocaleString()}</td>
@@ -3446,7 +3446,7 @@
       // styling so the click target isn't just a tiny link.
       return `
         <tr class="section-coverage-row" data-href="${htmlEscape(href)}" title="${htmlEscape(sectionTip)}">
-          <td title="${htmlEscape(sectionTip)}">${htmlEscape(s.title || '')}</td>
+          <td class="col-name" title="${htmlEscape(sectionTip)}">${htmlEscape(s.title || '')}</td>
           <td class="col-year col-section-type" title="${htmlEscape(sectionTip)}">
             <span class="section-type-main">${typeLabel}</span>
             <span class="section-type-sub muted small">${fourkLabel}</span>
@@ -5959,15 +5959,15 @@
       const row = `
         <tr style="${stale ? 'opacity:0.45' : ''}" data-section-row="${htmlEscape(s.section_id)}">
           <td class="lib-col-id">${htmlEscape(s.section_id)}</td>
-          <td class="lib-col-section"><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
+          <td class="lib-col-section col-name"><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
           <td class="lib-col-type"><span class="muted">${htmlEscape(s.type)}</span></td>
           <td class="lib-col-mgd">
             <input type="checkbox" data-section-toggle="${htmlEscape(s.section_id)}" ${included ? 'checked' : ''} />
           </td>
-          <td class="lib-col-role">
+          <td class="lib-col-role col-name">
             <div class="lib-flag-group">${animePill}${fourkPill}<span class="lib-flag-label" data-section-role-label="${htmlEscape(s.section_id)}">${roleLabel}</span></div>
           </td>
-          <td class="lib-locations mono small" style="color:var(--fg-dim)">${locations}</td>
+          <td class="lib-locations col-name mono small" style="color:var(--fg-dim)">${locations}</td>
           <td class="lib-col-actions">
             <button class="btn btn-tiny" data-section-refresh="${htmlEscape(s.section_id)}" title="Re-enumerate just this section from Plex.">// REFRESH</button>
           </td>

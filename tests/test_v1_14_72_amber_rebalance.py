@@ -48,11 +48,17 @@ REPO = Path(__file__).resolve().parent.parent
 CSS = REPO / "app" / "web" / "static" / "app.css"
 
 
-def _block(anchor_substr: str, size: int = 600) -> str:
-    """Slice from a CSS anchor through the next `size` chars."""
+def _block(anchor_substr: str) -> str:
+    """The anchor through the end of the rule it sits in.
+
+    v0.51.361: was `css[i:i + size]` for eight call sites. A fixed window fails when
+    unrelated lines grow, not when the colour it guards changes — v0.51.361 added four
+    comment lines to .edition-pill and `color: var(--fg-dim)` fell off the end of a 600.
+    """
     css = CSS.read_text()
     i = css.index(anchor_substr)
-    return css[i:i + size]
+    end = css.index("\n}", i)
+    return css[i:end]
 
 
 # ── HL: orange/amber → green ──────────────────────────────────
@@ -84,7 +90,7 @@ def test_link_badge_hardlink_still_green():
     green — pin so a future "consistency" refactor doesn't flip
     it to match the historical orange .link-glyph-hardlink color
     (the v1.14.72 direction is the OTHER way)."""
-    block = _block(".link-badge-hardlink {", size=400)
+    block = _block(".link-badge-hardlink {")
     assert "color: var(--ok);" in block
     assert "border-color: var(--ok-deep);" in block
 
@@ -92,7 +98,6 @@ def test_link_badge_hardlink_still_green():
 def test_v1_14_72_marker_on_hardlink_change():
     """A v1.14.72 marker explains the HL color flip rationale.
     Pin so a future audit can grep for the change reason."""
-    block = _block(".link-glyph-hardlink {", size=2000)
     # Looking before the rule for the explanation marker.
     css = CSS.read_text()
     rule_idx = css.index(".link-glyph-hardlink {")
@@ -106,7 +111,7 @@ def test_v1_14_72_marker_on_hardlink_change():
 def test_edition_pill_row_glyph_uses_muted_color():
     """The row's .edition-pill glyph must use --fg-dim (muted),
     NOT --amber-bright. Edition is neutral metadata."""
-    block = _block(".edition-pill {", size=600)
+    block = _block(".edition-pill {")
     assert "color: var(--fg-dim);" in block
     assert "color: var(--amber-bright)" not in block
     # Border / bg also moved off the amber palette.
@@ -117,7 +122,7 @@ def test_ed_filter_chip_on_state_uses_muted_color():
     """The filter row's .ed-pill-btn-on (the "this matches
     edition-having rows" representation) mirrors the row glyph
     color — both moved to muted gray together."""
-    block = _block(".ed-pill-btn-on {", size=400)
+    block = _block(".ed-pill-btn-on {")
     assert "color: var(--fg-dim);" in block
     assert "color: var(--amber-bright)" not in block
 
@@ -127,7 +132,7 @@ def test_info_card_edition_chip_uses_muted_color():
     surface that the v1.13.51 contract said must stay aligned
     with the row pill + filter chip. v1.14.72 keeps that
     contract — all three move together to muted gray."""
-    block = _block(".info-scope-chip-edition {", size=500)
+    block = _block(".info-scope-chip-edition {")
     assert "color: var(--fg-dim);" in block
     assert "color: var(--amber-bright)" not in block
 
@@ -152,7 +157,7 @@ def test_status_attention_pills_remain_amber():
     placement / reprobe needed). Pin so a future "more amber
     cleanup" pass doesn't accidentally lump these in with the
     HL/ED changes."""
-    block = _block(".state-pill-btn-await", size=300)
+    block = _block(".state-pill-btn-await")
     assert "var(--amber)" in block
 
 
@@ -165,7 +170,7 @@ def test_tdb_cookies_pill_uses_lemon_post_v1_15_121():
                       distinct from amber's orange-warmth)
     The pill is still its own non-default color (test intent
     unchanged); just track the current canonical tone."""
-    block = _block(".tdb-pill-cookies {", size=300)
+    block = _block(".tdb-pill-cookies {")
     assert "color: var(--lemon);" in block, (
         "v1.15.121: cookies pill uses --lemon (was --brown pre-"
         "v1.15.121, --yellow pre-v1.15.43, --amber pre-v1.15.17). "
@@ -184,5 +189,5 @@ def test_plex_source_pills_remain_amber():
     still groups them. (v1.20.47: the LINK PS half dropped — the PS row
     badge / .link-glyph-ps was removed as dead CSS; the LPS signal now
     lives on the SRC=P pill and link_pills=ps is an api.py no-op.)"""
-    p_block = _block(".link-badge-cloud {", size=300)
+    p_block = _block(".link-badge-cloud {")
     assert "color: var(--amber);" in p_block
