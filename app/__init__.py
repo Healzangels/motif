@@ -7335,7 +7335,34 @@
 #   sweeps and asserts each one cancels BEFORE its own delete — red
 #   for a removal or a reorder at any of them, indifferent to sites
 #   elsewhere.
-__version__ = "0.51.359"
+# 0.51.360: the TITLE header sits over the titles again.
+#   Operator report, from a prod screenshot: "play button is
+#   misaligned". Measured on a 1800px repro of that page — the
+#   column's own label at x=267, the play glyph's ink at 271.8-280.2,
+#   every title at 293. v0.51.333 added the play slot as the first
+#   flex child of .title-cell, so every title moved right by slot +
+#   gap (26px) and th.col-title's label stayed at the cell edge: the
+#   header was 26px left of the column it names, with the glyph
+#   sitting under it. The glyph was centred in its slot too, which
+#   left it 4.8px off the cell's left edge and 12.8px off the title
+#   — reading as the column's control, not the row's.
+#   Both come from one arithmetic, so they are fixed with one: a
+#   --row-play-w token that the slot's width AND the header's indent
+#   read (indent = slot + the gap .title-cell actually uses), and the
+#   glyph right-aligned in its reserved slot so the only space
+#   between it and the title is that gap. The phone block re-points
+#   the token instead of re-setting the width, so its 30px slot
+#   carries the header with it. After: label 293, titles 293 with a
+#   play button and without, glyph ink 276.6-285.
+#   The slot itself is unchanged — still reserved on every row, which
+#   is what keeps titles aligned whether or not a row can play.
+#   One guard had to be retargeted: v0.51.333's slot test pinned the
+#   literal `flex: 0 0 18px; width: 18px;` and the literal phone rule,
+#   which is the implementation's text, not its claim. It now reads
+#   both values and asserts the reservation EQUALS the slot's width —
+#   the property that keeps a title in the same place with or without
+#   a play button — and that the phone block re-points the token.
+__version__ = "0.51.360"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

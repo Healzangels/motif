@@ -105,15 +105,35 @@ def test_player_binding_is_exclusive_both_ways_and_ignores_the_stale_pause():
     assert "audio.currentTime = 0;" in t, "Stop rewinds"
 
 
+def _css_decl(body: str, prop: str) -> str:
+    """The value of `prop` in a rule body, comments and wrapping ignored."""
+    m = re.search(rf"(?:^|;|\*/)\s*{re.escape(prop)}:\s*([^;]+);", body, re.S | re.M)
+    assert m, f"no {prop} in {body!r}"
+    return " ".join(m.group(1).split())
+
+
 def test_slot_css_is_a_reserved_untracked_title_glyph():
     assert APP_CSS.index("\n.title-glyph {") < APP_CSS.index("\n.row-play {"), "extends the primitive, so it must follow it"
     blk = slice_between(APP_CSS, "\n.row-play {", "\n}")
-    assert "flex: 0 0 18px;" in blk and "width: 18px;" in blk and "letter-spacing: 0;" in blk and "padding: 0;" in blk
+    # v0.51.360: the width is the --row-play-w token now (the TITLE header's indent reads the
+    # same one, so the two cannot drift). What THIS test is about is unchanged: the slot
+    # reserves one fixed width on every row, which is what keeps titles aligned.
+    width = _css_decl(blk, "width")
+    assert _css_decl(blk, "flex") == f"0 0 {width}", (
+        f"the reservation must be the slot's own width ({width}), or a row without a play "
+        f"button starts its title somewhere else: {blk!r}"
+    )
+    assert re.search(r"^\s*--row-play-w:\s*\d+px;", APP_CSS, re.M), "the slot has no fixed width"
+    assert "letter-spacing: 0;" in blk and "padding: 0;" in blk
     on = next(l for l in APP_CSS.splitlines() if l.startswith(".row-play-on {"))
     assert "var(--green)" in on and "var(--green-rgb)" in on
     assert ".row-play-none {" in APP_CSS
-    mobile = slice_between(APP_CSS, "  .help-toggle, .topbar-logout { min-height: 30px; min-width: 30px; }", "\n")
-    assert ".row-play { flex-basis: 30px; width: 30px; min-height: 30px; }" in mobile or ".row-play { flex-basis: 30px; width: 30px; min-height: 30px; }" in APP_CSS
+    # the v0.51.6 phone tap-target floor; since v0.51.360 the width comes from the token so the
+    # header indent follows it, and only the height is set on the rule itself
+    m = re.search(r"@media \(max-width: 600px\) \{(.*?)\n\}", APP_CSS, re.S)
+    assert m, "the <=600px block moved"
+    assert re.search(r":root \{[^}]*--row-play-w:\s*30px", m.group(1)), m.group(1)[:200]
+    assert ".row-play { min-height: 30px; }" in m.group(1)
 
 
 def test_state_field_declared():

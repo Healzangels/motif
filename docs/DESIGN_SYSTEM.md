@@ -590,3 +590,21 @@ A UI change is only complete when:
 - [ ] If a primitive was missing: built as a real CSS rule, not inlined as an override
 - [ ] Visually compared against a reference screen
 - [ ] Journal entry references which sibling screen the work followed
+
+### A slot inside a cell moves that column's data, not its header (v0.51.360)
+
+`.row-play` (v0.51.333) is reserved on every library row as the first flex
+child of `.title-cell`, so titles align whether or not a row can play. What
+the tag missed is that it also moved every title right by slot + gap while
+`th.col-title`'s label stayed at the cell's left edge — the header ended up
+26px left of the column it names, with the play glyph under it (the operator:
+"play button is misaligned"). The slot's width is now the `--row-play-w` token,
+the header's indent is `calc(var(--row-play-w) + var(--gap-2))` — the same gap
+`.title-cell` uses — and the ≤600px block re-points the token rather than
+re-setting the width, so the phone's 30px slot carries the header with it.
+The glyph is `text-align: right` in its slot, so the only space between it and
+the title is that one gap: a row's control reads as the row's.
+
+**The rule: when you add a reserved slot to the front of a table cell, the
+column's header has to clear it by the same arithmetic, from the same token.**
+Guard: `tests/test_v0_51_360_title_header_axis.py`.

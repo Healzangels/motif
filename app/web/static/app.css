@@ -190,6 +190,12 @@
   --gap-6: 24px;
   --gap-7: 32px;
 
+  /* v0.51.360: the library row's reserved play slot. ONE source, because two
+     places must agree: the slot itself and the TITLE header's indent — the
+     slot sits inside the title cell, so the header has to clear it to stay
+     over the titles. The media query below re-points it for the phone slot. */
+  --row-play-w: 18px;
+
   /* v0.50.69: the ONE source of truth for hero geometry, so the first content
      block (library search bar / dashboard // RECENTLY ADDED / settings form) and
      the hero wave sit on the SAME Y across EVERY tab — with AND without the wave
@@ -2495,6 +2501,11 @@ body.help-mode .settings-help-about { display: block; }
    work this way (centered header over centered data); IMDB
    now joins them. */
 #library-table th.col-title { text-align: left; }
+/* v0.51.360: v0.51.333 put the play slot inside the title cell, so every title
+   moved right by slot + gap and the header stayed at the cell edge — the label
+   sat 26px left of its own column, with the play glyph under it. The indent is
+   that same slot + gap, so the two cannot drift. */
+#library-table th.col-title .th-stack { margin-left: calc(var(--row-play-w) + var(--gap-2)); }
 #library-table td.col-imdb { text-align: center; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
@@ -3439,11 +3450,15 @@ body.help-mode .settings-help-about { display: block; }
    convention). Playing = ■ in green with the family's glow. The empty span
    variant only holds the column. */
 .row-play {
-  flex: 0 0 18px;
-  width: 18px;
+  flex: 0 0 var(--row-play-w);
+  width: var(--row-play-w);
   padding: 0;
   letter-spacing: 0;
-  text-align: center;
+  /* v0.51.360: right, not center. The slot is reserved so titles align, but the
+     glyph plays THIS row's theme — centered it sat 4.8px off the cell's left edge
+     and 12.8px off the title, reading as the column's and not the row's. Right
+     puts it one gap from the title, the distance every other title glyph keeps. */
+  text-align: right;
   color: var(--fg-dim);
 }
 .row-play-on { color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), 0.55); font-weight: 700; }
@@ -6172,7 +6187,8 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      phone ONLY; the desktop layouts (deliberately dense — the topbar trio, the
      six-row filter drawer) are untouched. */
   .help-toggle, .topbar-logout { min-height: 30px; min-width: 30px; }
-  .row-play { flex-basis: 30px; width: 30px; min-height: 30px; } /* v0.51.333: the row play slot */
+  :root { --row-play-w: 30px; } /* v0.51.360: the phone slot, read by the slot AND the TITLE header indent */
+  .row-play { min-height: 30px; } /* v0.51.333: the row play slot */
   .now-playing { max-width: 100%; } .now-playing-title { max-width: 140px; } .now-playing-label { display: none; } /* v0.51.334: the strip fits a phone header; the ■ and the clock already say what it is, the title keeps the room */
   /* the filter-drawer pills are 20px to fit six rows on desktop; on a phone the
      drawer is a single scrollable column (line ~2883), so the extra height is free.
