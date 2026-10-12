@@ -171,9 +171,22 @@ def test_effective_count_walks_selected_rows_when_selection_active():
 # ── 5. Bulk handlers walk the cache ───────────────────────────
 
 
-def _handler_body(js: str, btn_id: str, span: int = 4000) -> str:
-    anchor = js.index(f"getElementById('{btn_id}')?.addEventListener")
-    return js[anchor:anchor + span]
+BIND = "?.addEventListener"
+# these binds sit at four spaces, so a `});` at four spaces is this handler's close;
+# anything nested inside it closes deeper.
+CLOSE = "\n    });"
+
+
+def _handler_body(js: str, btn_id: str) -> str:
+    """This button's bind through the close of its own handler.
+
+    v0.51.362: was `js[anchor:anchor + span]`, span defaulting to 4000 with five call
+    sites widening it to 5000/3000 — a treadmill, and one the v0.51.261 census could not
+    even see, because a width behind a parameter name is not a literal.
+    """
+    anchor = js.index(f"getElementById('{btn_id}'){BIND}")
+    end = js.index(CLOSE, anchor)
+    return js[anchor:end + len(CLOSE)]
 
 
 def test_download_handler_walks_selected_rows():
@@ -196,7 +209,7 @@ def test_push_handler_walks_selected_rows_in_selection_mode():
     """PUSH TO PLEX has a dual-mode source (selection vs visible
     page fallback). With selection, it must walk selectedRows."""
     js = APP_JS.read_text()
-    body = _handler_body(js, "library-push-selected-btn", span=5000)
+    body = _handler_body(js, "library-push-selected-btn")
     assert "const source = useSelection" in body
     assert "libraryState.selectedRows.values()" in body
     assert "(libraryState.items || [])" in body
@@ -218,7 +231,7 @@ def test_restore_handler_walks_selected_rows_in_selection_mode():
 
 def test_lps_handler_walks_selected_rows_in_selection_mode():
     js = APP_JS.read_text()
-    body = _handler_body(js, "library-let-plex-serve-btn", span=5000)
+    body = _handler_body(js, "library-let-plex-serve-btn")
     assert "const source = useSelection" in body
     assert "libraryState.selectedRows.values()" in body
 
@@ -234,7 +247,7 @@ def test_adopt_and_lps_handler_walks_selected_rows():
     """ADOPT + LET PLEX SERVE is selection-only (no visible-page
     fallback), so the iteration is direct over the cache."""
     js = APP_JS.read_text()
-    body = _handler_body(js, "library-adopt-and-lps-btn", span=3000)
+    body = _handler_body(js, "library-adopt-and-lps-btn")
     assert "Array.from(libraryState.selectedRows.values())" in body, (
         "v1.16.10: ADOPT + LPS handler must source candidates from "
         "the selectedRows cache so the action covers every selected "
@@ -257,7 +270,7 @@ def test_no_offpage_warning_on_push_handler():
     others) is moot now that the action covers off-page rows.
     Pin the absence of the user-visible warning text."""
     js = APP_JS.read_text()
-    body = _handler_body(js, "library-push-selected-btn", span=5000)
+    body = _handler_body(js, "library-push-selected-btn")
     assert "bulk PUSH only operates on the current page" not in body
     assert "offPageCount" not in body
 
@@ -271,7 +284,7 @@ def test_no_offpage_warning_on_ack_handler():
 
 def test_no_offpage_warning_on_adopt_lps_handler():
     js = APP_JS.read_text()
-    body = _handler_body(js, "library-adopt-and-lps-btn", span=3000)
+    body = _handler_body(js, "library-adopt-and-lps-btn")
     assert "aren't on the visible page" not in body
     assert "offPageSelected" not in body
 

@@ -7416,7 +7416,40 @@
 #   `span=1200`, test_v1_19_38's `length`). v0.51.309 closed the
 #   previous blind spot for exactly this reason; this one is the
 #   next tag's.
-__version__ = "0.51.361"
+# 0.51.362: the ratchet learns the window it could not see.
+#   v0.51.361 found it: the v0.51.261 census skips `src[i:i + n]`
+#   as "variable width", but a width spelled as a NAME is still
+#   fixed when the name is a module constant or an int-defaulted
+#   parameter. Four live helpers hid behind that — test_v1_16_10's
+#   `span=4000` with five call sites widening it to 5000/3000,
+#   test_v1_19_38's `length=3000` widened to 7000, test_v1_22_88's
+#   `span=1200`, test_v0_51_17's `window=500` — and the fifth,
+#   test_v1_14_72's `size=600`, rotted unnoticed until .361's own
+#   comment lines pushed the colour it guards off the end. That is
+#   the hole v0.51.309 said a ratchet cannot afford, in its other
+#   form.
+#   The detector now resolves a Name width through the enclosing
+#   function's default and through module constants, and counts a
+#   CALLER that widens the helper as its own window, which is what
+#   it is. A free name with no default stays unknowable and is
+#   still ignored. The fixture proves all four cases and the two
+#   it must not claim.
+#   All four helpers are converted rather than absorbed, so the
+#   budget moves DOWN (1454 → 1453) instead of up: the bulk-handler
+#   slice ends at its own `});` at four spaces (nested binds close
+#   deeper, so the first one is this handler's); the act-branch
+#   slice ends where the next `} else if (act === ` begins; the
+#   predicate slice ends at its semicolon, because a predicate is a
+#   statement; and the topbar-kick check reads the FIRST
+#   refreshTopbarStatus after its anchor instead of asking whether
+#   a delayed one appears anywhere in 500 chars — which was also
+#   weaker than the claim, since it passed with an immediate kick
+#   sitting in front of the delayed one.
+#   9 mutants red: 5 on the detector (defaults, constants, call
+#   overrides, the width floor, a collapsed census) and 4 on the
+#   conversions, each breaking the thing the guard exists for, in
+#   app.js, to prove a converted guard still guards.
+__version__ = "0.51.362"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

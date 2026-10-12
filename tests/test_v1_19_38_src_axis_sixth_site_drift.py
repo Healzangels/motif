@@ -60,10 +60,17 @@ def _slice_function(name: str) -> str:
     return APP_JS[start:next_fn if next_fn > 0 else start + 80000]
 
 
-def _slice_handler(anchor: str, length: int = 3000) -> str:
-    """Return a chunk around an anchor string (for in-function code)."""
-    idx = APP_JS.index(anchor)
-    return APP_JS[idx:idx + length]
+def _statement_after(anchor: str, decl: str) -> str:
+    """The whole `decl ...;` statement that follows `anchor`.
+
+    v0.51.362: replaces `_slice_handler(anchor, length=3000)` (called once, widened to
+    7000) plus the 400-char re-slice inside it. A predicate is a statement, and a
+    statement ends at its semicolon — so read that, instead of guessing how many chars
+    it currently runs to. The old shape was also invisible to the v0.51.261 census: a
+    width behind a parameter name is not a literal.
+    """
+    idx = APP_JS.index(decl, APP_JS.index(anchor))
+    return APP_JS[idx:APP_JS.index(";", idx) + 1]
 
 
 # ── Three patched sites: each uses the widening ─────────────
@@ -73,12 +80,8 @@ def test_pushable_count_per_row_uses_placed_widening():
     """The per-row pushableCount predicate inside updateBulkBar's
     for-loop must reuse the local `placed` variable (which carries
     the v1.18.0 widening), NOT the bare `!it.media_folder` shape."""
-    # The block from `pushableCount = 0` to the per-row
-    # awaitingApproval is ~92 lines (~5500 chars) post-v1.19.38
-    # comment block. Widen the slice to 7000 chars to capture it.
-    body = _slice_handler("pushableCount = 0", length=7000)
-    aa_idx = body.index("const awaitingApproval = !it.job_in_flight")
-    chunk = body[aa_idx:aa_idx + 400]
+    chunk = _statement_after(
+        "pushableCount = 0", "const awaitingApproval = !it.job_in_flight")
     # The new shape uses !placed (reuses the canonical derivation
     # declared earlier in the same for-loop body).
     assert "!placed" in chunk, (

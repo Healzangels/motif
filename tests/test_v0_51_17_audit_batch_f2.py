@@ -115,9 +115,19 @@ def test_poll_coalesces_reentrant_calls():
 # ── #28: class-7 delays at the six straggler sites ────────────
 
 
-def _delay_within(anchor: str, window: int = 500) -> bool:
+def _delay_within(anchor: str) -> bool:
+    """The FIRST topbar kick after `anchor` is the delayed form.
+
+    v0.51.362: was `APP_JS[i:i + window]`, window defaulting to 500 — a fixed window,
+    and one the v0.51.261 census could not see because a width behind a parameter name
+    is not a literal. "Appears somewhere in the next 500 chars" was also weaker than the
+    claim: it passed with an immediate kick sitting in front of the delayed one.
+    """
     i = APP_JS.index(anchor)
-    return "setTimeout(refreshTopbarStatus, 1100)" in APP_JS[i:i + window]
+    j = APP_JS.index("refreshTopbarStatus", i)
+    before = APP_JS[:j].rsplit("\n", 1)[-1].strip()
+    after = APP_JS[j:].split("\n", 1)[0]
+    return before.endswith("setTimeout(") and after.startswith("refreshTopbarStatus, 1100)")
 
 
 def test_dry_run_banner_disable_uses_delay():

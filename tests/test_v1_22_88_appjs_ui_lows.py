@@ -31,9 +31,19 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 
 
-def _handler(anchor: str, span: int = 1200) -> str:
+_NEXT_BRANCH = "} else if (act === "
+
+
+def _handler(anchor: str) -> str:
+    """One `act === '...'` branch, bounded by the start of the next one.
+
+    v0.51.362: was `APP_JS[i:i + span]` with span defaulting to 1200 — a fixed window,
+    and one the v0.51.261 census could not see, because a width behind a parameter name
+    is not a literal. The branch that follows is where this one ends.
+    """
     i = APP_JS.index(anchor)
-    return APP_JS[i:i + span]
+    nxt = APP_JS.find(_NEXT_BRANCH, i + len(_NEXT_BRANCH))
+    return APP_JS[i:nxt if nxt > 0 else len(APP_JS)]
 
 
 # ── (1) class-8 stats kick on ACK DROP / CONVERT ─────────────

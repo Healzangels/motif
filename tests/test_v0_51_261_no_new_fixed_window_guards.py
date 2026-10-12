@@ -76,7 +76,7 @@ _MIN_WIDTH = 100
 # gate's catch line).
 # v0.51.308: 1490 → 1489 (test_v1_17_20's 4000-char openInfoDialog window,
 # rotted by the 404 empty-state — anchored to the success path's first read).
-_BUDGET = 1454  # v0.51.359: v1.22.76's 600-char 'Legacy global PURGE path' window converted — the guard it belonged to counted call sites, and both the count and the window went when it was retargeted onto the named sweeps; v0.51.354: v1.13.78's 1500-char bindBadgeCycle window converted to a function slice (the no-breakdown branch's comments pushed the assertion past it); v0.51.346 (semantics): nine windows converted — five over the dropped routing/slim-count/await copies (v1.14.91, v1.22.82 x2, v1.13.85, v0.51.36) and four over the ATTN update SQL that moved into _LIB_ATTN_UPDATE_SQL (v1.13.86 x2, v1.19.72 x2);v0.51.344 (upload-lock): v1.24.1's five 13000-char _do_adopt windows (58 chars of headroom) converted to function slices; v0.51.344 (final sweep): v1.18.36's 28000-char api_unplace_item window converted to an AST read of _sha1_file; v0.51.344 (bulkbar): v1.20.31's 2200-char _layoutBulkBar window converted to a function slice; v0.51.343 (ui-small): v1.19.90's and v1.20.17's 260-char LINK-glyph colour windows converted to whole-rule slices; v0.51.343: v1.21.14's 400-char mismatch-badge window converted to sibling-rule slices; v0.51.342: v0.51.146's 500-char restore-catch window (2% headroom after the catch grew) converted to a showStaged-bounded slice; v0.51.338: v1.19.76's 1200-char SRC ALL window converted to an anchored slice; v0.51.332: v1.18.3's 200-char section-chip window converted to a whole-rule slice; v0.51.329: v1.20.65's 1600-char computeSrcLetter window converted; v0.51.318: v1.18.21 manual-url window converted (+1 banked by the ratchet); v0.51.317: v1.18.19; v0.51.316: two (v1.19.39); v0.51.315: three (v1.14.2, v1.14.3, v1.14.20)
+_BUDGET = 1453  # v0.51.362: test_v1_19_38's 400-char re-slice went with _slice_handler, which the same tag converted along with three other parameterised windows the census could not see; v0.51.359: v1.22.76's 600-char 'Legacy global PURGE path' window converted — the guard it belonged to counted call sites, and both the count and the window went when it was retargeted onto the named sweeps; v0.51.354: v1.13.78's 1500-char bindBadgeCycle window converted to a function slice (the no-breakdown branch's comments pushed the assertion past it); v0.51.346 (semantics): nine windows converted — five over the dropped routing/slim-count/await copies (v1.14.91, v1.22.82 x2, v1.13.85, v0.51.36) and four over the ATTN update SQL that moved into _LIB_ATTN_UPDATE_SQL (v1.13.86 x2, v1.19.72 x2);v0.51.344 (upload-lock): v1.24.1's five 13000-char _do_adopt windows (58 chars of headroom) converted to function slices; v0.51.344 (final sweep): v1.18.36's 28000-char api_unplace_item window converted to an AST read of _sha1_file; v0.51.344 (bulkbar): v1.20.31's 2200-char _layoutBulkBar window converted to a function slice; v0.51.343 (ui-small): v1.19.90's and v1.20.17's 260-char LINK-glyph colour windows converted to whole-rule slices; v0.51.343: v1.21.14's 400-char mismatch-badge window converted to sibling-rule slices; v0.51.342: v0.51.146's 500-char restore-catch window (2% headroom after the catch grew) converted to a showStaged-bounded slice; v0.51.338: v1.19.76's 1200-char SRC ALL window converted to an anchored slice; v0.51.332: v1.18.3's 200-char section-chip window converted to a whole-rule slice; v0.51.329: v1.20.65's 1600-char computeSrcLetter window converted; v0.51.318: v1.18.21 manual-url window converted (+1 banked by the ratchet); v0.51.317: v1.18.19; v0.51.316: two (v1.19.39); v0.51.315: three (v1.14.2, v1.14.3, v1.14.20)
 
 # v0.51.309 (audit r2): the BACKWARD shape `x[a - N:a + M]` was invisible to
 # the detector (its lower bound is a BinOp, not a bare Name) — and a new one
@@ -105,6 +105,49 @@ def _backward_base(node):
     return None
 
 
+def _int_defaults(fn) -> dict:
+    """{param: default} for this function's int-defaulted params."""
+    out, a = {}, fn.args
+    positional = a.posonlyargs + a.args
+    for arg, dv in zip(positional[len(positional) - len(a.defaults):], a.defaults):
+        if isinstance(dv, ast.Constant) and isinstance(dv.value, int):
+            out[arg.arg] = dv.value
+    for arg, dv in zip(a.kwonlyargs, a.kw_defaults):
+        if isinstance(dv, ast.Constant) and isinstance(dv.value, int):
+            out[arg.arg] = dv.value
+    return out
+
+
+def _named_widths(tree) -> "tuple[dict, dict]":
+    """v0.51.362: a width spelled as a NAME is still a fixed width when the name is a
+    module constant or an int-defaulted parameter. Until this tag the walk below skipped
+    every `src[i:i + n]` as "variable", so four live helpers — one defaulting to 4000
+    with five call sites widening it — were invisible to the census, and the one in
+    test_v1_14_72 rotted unnoticed until v0.51.361's own comment lines broke it. That is
+    the hole v0.51.309 said a ratchet cannot afford, in its other form.
+
+    Returns (module constants, {node id: enclosing function's int defaults}).
+    """
+    consts = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+                and isinstance(node.value.value, int):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    consts[t.id] = node.value.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                and isinstance(node.value, ast.Constant) and isinstance(node.value.value, int):
+            consts[node.target.id] = node.value.value
+    scope = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            d = _int_defaults(fn)
+            if d:
+                for sub in ast.walk(fn):
+                    scope[id(sub)] = d
+    return consts, scope
+
+
 @functools.lru_cache(maxsize=None)
 def _windows(path: Path) -> "tuple[tuple, tuple]":
     """ONE parse + ONE walk per file per process; caches only the two small
@@ -116,6 +159,8 @@ def _windows(path: Path) -> "tuple[tuple, tuple]":
         return (), ()
     fwd: list[tuple[int, int]] = []
     back: list[tuple[int, int]] = []
+    consts, scope = _named_widths(tree)
+    width_params: dict = {}      # function name -> the params it slices by
     for node in ast.walk(tree):
         if not isinstance(node, ast.Subscript) or not isinstance(node.slice, ast.Slice):
             continue
@@ -123,11 +168,23 @@ def _windows(path: Path) -> "tuple[tuple, tuple]":
         # forward: x[a:a + N] with a bare Name lower bound
         if (isinstance(lo, ast.Name)
                 and isinstance(up, ast.BinOp) and isinstance(up.op, ast.Add)
-                and isinstance(up.left, ast.Name) and up.left.id == lo.id
-                and isinstance(up.right, ast.Constant)
-                and isinstance(up.right.value, int)):
-            if up.right.value >= _MIN_WIDTH:
-                fwd.append((node.lineno, up.right.value))
+                and isinstance(up.left, ast.Name) and up.left.id == lo.id):
+            width = None
+            if isinstance(up.right, ast.Constant) and isinstance(up.right.value, int):
+                width = up.right.value
+            elif isinstance(up.right, ast.Name):
+                # v0.51.362: a name resolves when it is fixed — a module constant, or
+                # the enclosing function's own default. A free name stays unknowable.
+                name = up.right.id
+                width = scope.get(id(node), {}).get(name, consts.get(name))
+                if width is not None:
+                    for fn in ast.walk(tree):
+                        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                                and name in _int_defaults(fn) \
+                                and any(n is node for n in ast.walk(fn)):
+                            width_params.setdefault(fn.name, set()).add(name)
+            if width is not None and width >= _MIN_WIDTH:
+                fwd.append((node.lineno, width))
             continue
         # backward: x[a - N:...] incl. max()-wrapped and Call bases
         base = _backward_base(lo)
@@ -141,6 +198,17 @@ def _windows(path: Path) -> "tuple[tuple, tuple]":
             width += up.right.value
         if width >= _MIN_WIDTH:
             back.append((node.lineno, width))
+    # v0.51.362: a caller that widens the helper's window owns a window of its own —
+    # test_v1_16_10 had five (span=5000 x3, span=3000 x2) behind one 4000 default.
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        for param in width_params.get(node.func.id, ()):
+            for kw in node.keywords:
+                if kw.arg == param and isinstance(kw.value, ast.Constant) \
+                        and isinstance(kw.value.value, int) \
+                        and kw.value.value >= _MIN_WIDTH:
+                    fwd.append((node.lineno, kw.value.value))
     return tuple(fwd), tuple(back)
 
 
@@ -219,18 +287,28 @@ def test_detector_is_not_vacuous():
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "sample.py"
         p.write_text(
+            "WIDE = 900\n"                      # a module constant IS a fixed width
             "def f(src, i, n, extras={}):\n"
             "    a = src[i:i + 4000]\n"        # the guard shape -> caught
             "    b = src[i:i + 2]\n"           # short slice -> ignored
-            "    c = src[i:i + n]\n"           # variable width -> ignored
+            "    c = src[i:i + n]\n"           # free name, unknowable -> ignored
             "    d = src[i:j + 4000]\n"        # different name -> ignored
             "    e = src[i:src.index('x', i)]\n"  # structural -> ignored
-            "    return a, b, c, d, e\n"
+            "    g = src[i:i + WIDE]\n"        # module constant -> caught
+            "    return a, b, c, d, e, g\n"
+            "def h(src, i, size=600):\n"
+            "    return src[i:i + size]\n"     # param default -> caught
+            "def k(src, i, small=12):\n"
+            "    return src[i:i + small]\n"    # under the floor -> ignored
+            "def uses():\n"
+            "    return h('x', 0, size=2500), h('x', 0)\n"  # the override -> caught
         )
         found = _fixed_windows(p)
         back = _backward_windows(p)
-    assert found == [(2, 4000)], (
-        f"detector must catch exactly the fixed-width guard, got {found}"
+    assert found == [(3, 4000), (8, 900), (11, 600), (15, 2500)], (
+        f"v0.51.362: the detector must catch the literal, the module constant, the "
+        f"parameter default and the call that widens it — and claim nothing else. "
+        f"Got {found}"
     )
     assert back == [], f"no backward shapes in the sample, got {back}"
 
