@@ -2292,6 +2292,14 @@ body.help-mode .settings-help-about { display: block; }
      so pin a width and let .table-scroll swipe — TITLE holds ~150px. Replaces the
      old phone-only min-width:1440 (now ~25% less horizontal scroll on a phone). */
   #library-table { min-width: 1080px; }
+  /* v0.51.364: the same floor, for the same reason, one table over. .libraries-table
+     is table-layout:fixed with SIX explicit widths summing to 780 (70+240+80+70+200+
+     120) and .lib-locations as the no-width remainder — so below 780 of table space
+     the column computed to ZERO at both th and td, and its `overflow: hidden` put the
+     folder paths out of reach even though .table-scroll swipes. Measured at 375: every
+     other column kept its width, LOCATIONS got 0 of the 105 its header alone needs.
+     1040 leaves it 260 and the wrapper scrolls, which is what the wrapper is for. */
+  .libraries-table { min-width: 1040px; }
   /* v0.50.58: only at <=1080 does the table actually exceed the viewport — give
      it the swipe context HERE, not as a base rule (the base rule clipped the
      desktop row dropdowns). On a phone a bottom-row menu may clip against the
@@ -6213,6 +6221,19 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      phone ONLY; the desktop layouts (deliberately dense — the topbar trio, the
      six-row filter drawer) are untouched. */
   .help-toggle, .topbar-logout { min-height: 30px; min-width: 30px; }
+  /* v0.51.364: the rest of them, measured at 375 — .btn-tiny 23px, .dlg-close 22,
+     and the MGD checkbox that includes or excludes a whole Plex section at 13x13.
+     .btn-tiny grows through its PADDING token, not a min-height, so --btn-tiny-h
+     (what .info-ctl-label and .loud-ctl-label centre a control line against) follows
+     it instead of drifting: 11px * 1.2 + 2*7.4 + 2 = 30. */
+  :root { --btn-tiny-pad-y: 7.4px; }
+  .dlg-close { min-height: 30px; min-width: 30px; }
+  /* every checkbox, not just the libraries table's: the settings toggles sit in
+     .form-label.form-checkbox and were the same 13x13 browser default. */
+  input[type="checkbox"] { width: 24px; height: 24px; }
+  /* the A / 4K role toggles (v1.11.6 replaced a <select> with these) were 19px.
+     Only the BUTTONS — the identical-looking pills in the legend are not controls. */
+  button.lib-flag-pill { min-height: 30px; }
   :root { --row-play-w: 30px; } /* v0.51.360: the phone slot, read by the slot AND the TITLE header indent */
   .row-play { min-height: 30px; } /* v0.51.333: the row play slot */
   .now-playing { max-width: 100%; } .now-playing-title { max-width: 140px; } .now-playing-label { display: none; } /* v0.51.334: the strip fits a phone header; the ■ and the clock already say what it is, the title keeps the room */

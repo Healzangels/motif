@@ -1329,4 +1329,9 @@ body[data-ops-running="1"] #topbar-status-text {
      margin keeps the 44px hit box from inflating the row. */
   .notif-dot { padding: 18px; margin: -12px 0; }
   .notif-clear-all { padding: 8px 10px; }
+  /* v0.51.364: the topbar pills and the drawer's × were 22px, under the 24px floor
+     v0.51.6 cites and below the 30px it gave .help-toggle / .topbar-logout beside
+     them — so the status row held two heights. The radius tracks the height. */
+  .op-pill { height: 30px; border-radius: 15px; }
+  .ops-drawer-close { min-height: 30px; min-width: 30px; }
 }

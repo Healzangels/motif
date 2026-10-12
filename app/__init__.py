@@ -7480,7 +7480,48 @@
 #   fix. Retargeted onto the property it was about: the row must not
 #   force its card wider, which is min-width:0's doing, not the
 #   truncation's.
-__version__ = "0.51.363"
+# 0.51.364: a column that cannot collapse, and the controls the
+#   phone bump missed. Both from the round-2 GUI audit.
+#   S1. settings → LIBRARY SECTIONS: `.libraries-table` is
+#   table-layout:fixed with SIX explicit column widths summing to
+#   780px and `.lib-locations` as the no-width remainder, so below
+#   780 of table space the remainder is negative and the column
+#   computed to ZERO at both th and td — with `overflow: hidden`
+#   putting the folder paths out of reach even though .table-scroll
+#   swipes. Measured at 375: every other column kept its width and
+#   LOCATIONS got 0 of the 105 its header alone needs. #library-table
+#   has had this floor since v0.50.58; this is the same one, one
+#   table over. 1040 leaves LOCATIONS 260 and the wrapper scrolls,
+#   which is what the wrapper is for. Desktop is untouched (642px at
+#   1800, no scroll).
+#   S2. v0.51.6 set a 24px tap floor for phones and bumped a NAMED
+#   list to 30px; measured at 375 the list was short. .btn-tiny 23,
+#   .dlg-close 22, .ops-drawer-close 22, .op-pill 22,
+#   button.lib-flag-pill 19 (the A / 4K role toggles that replaced a
+#   <select> in v1.11.6), and EVERY checkbox at the browser's 13x13
+#   — including MGD, which includes or excludes a whole Plex section,
+#   and the settings toggles in .form-label.form-checkbox.
+#   .btn-tiny grows through its PADDING token rather than a
+#   min-height, so --btn-tiny-h — what .info-ctl-label and
+#   .loud-ctl-label centre a control line against — follows it
+#   instead of describing a button that is no longer that tall:
+#   11 * 1.2 + 2*7.4 + 2 = 30, and the token resolves to 30 beside a
+#   button measured at 30.
+#   Left deliberately: the brand lockup (23px, a nav affordance
+#   inside a 30px row) and inline prose links (15px), which cannot
+#   take a 30px box without breaking the sentence.
+#   The guard DERIVES the floor from the columns that have widths,
+#   so it stays true when one of them changes — 9 mutants red,
+#   including a widened .lib-col-role eating the remainder.
+#   One guard needed rescoping, and it was NOT a mirror: v1.15.115
+#   counts base `.dlg-close {` rules because two of them at top
+#   level, same specificity, once silently overrode each other. It
+#   counted over the whole file, so this tag's @media override read
+#   as a second base rule. It now counts TOP-LEVEL rules only —
+#   a second one there still fails it, which is the bug it exists
+#   for; a responsive override cannot fight the base rule at the
+#   same width.
+__version__ = "0.51.364"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

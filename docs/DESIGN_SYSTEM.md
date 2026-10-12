@@ -650,3 +650,28 @@ a donut beside it already showing the share — and it goes to the row's tooltip
 rather than away. v0.50.86's ellipsis was reached for to stop a long name
 forcing the card wider; `min-width: 0` is what actually does that, so it stays
 and the ellipsis goes. Guard: `tests/test_v0_51_363_legend_names.py`.
+
+### A fixed table needs a floor, or its remainder column disappears (v0.51.364)
+
+Under `table-layout: fixed`, a column with no width absorbs whatever the sized
+columns leave. When the table is narrower than their sum, that is **nothing** —
+the column computes to 0 and, with `overflow: hidden`, its content cannot be
+reached even inside a `.table-scroll`. `#library-table` has carried a
+`min-width` floor since v0.50.58 for this reason; `.libraries-table` did not,
+and its LOCATIONS column measured 0 at 375px.
+
+**A fixed-layout table with a no-width column needs `min-width` ≥ the sum of its
+sized columns plus a usable remainder,** inside the breakpoint where the swipe
+context lives. Derive it, don't guess it — the guard reads the column widths out
+of the CSS so a later change to one of them fails the test rather than silently
+shrinking the remainder.
+
+### Growing a control on phones: move the token, not the box (v0.51.364)
+
+v0.51.6's phone tap-target bump used `min-height: 30px`. That is right for a
+control whose height nothing else reads, and wrong for `.btn-tiny`, whose height
+is published as `--btn-tiny-h` and read by `.info-ctl-label` / `.loud-ctl-label`
+to centre a label against a control line. Bumping the box would leave the token
+describing a button that is no longer that tall. **Move the padding token
+(`--btn-tiny-pad-y`) instead, and everything derived from it follows.** Guard:
+`tests/test_v0_51_364_locations_column_and_tap_targets.py`.

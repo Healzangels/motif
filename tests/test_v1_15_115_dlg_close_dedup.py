@@ -58,12 +58,42 @@ REPO = Path(__file__).resolve().parent.parent
 APP_CSS = REPO / "app" / "web" / "static" / "app.css"
 
 
+def _top_level(src: str) -> str:
+    """`src` with every at-rule block's CONTENTS removed.
+
+    v0.51.364: the count below was over the whole file, so a `@media` override —
+    which is how a responsive rule is written, and cannot fight the base rule at the
+    same width — read as a second base rule. The bug v1.15.115 fixed was two rules at
+    TOP LEVEL, same specificity, silently overriding each other; that is what this
+    still counts.
+    """
+    out, depth, keep = [], 0, True
+    for i, ch in enumerate(src):
+        if ch == "{":
+            depth += 1
+            if depth == 1 and keep:
+                # an at-rule's own block opens a nesting level we drop
+                head = src.rfind("}", 0, i)
+                sel = src[head + 1:i].strip()
+                if sel.startswith("@"):
+                    keep = False
+        if keep:
+            out.append(ch)
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                keep = True
+                out.append("}")
+    return "".join(out)
+
+
 def test_only_one_base_dlg_close_rule():
     """No more two-rule cascade fight. The canonical base rule
     is `.dlg-close {`; the absolute-corner variant uses the
     descendant selector `.dlg-body > .dlg-close {`."""
     src = APP_CSS.read_text()
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.DOTALL)
+    src = _top_level(src)
     # Count standalone `.dlg-close {` rules (not preceded by ` > `).
     matches = list(re.finditer(r"(?<!> )\.dlg-close\s*\{", src))
     assert len(matches) == 1, (
