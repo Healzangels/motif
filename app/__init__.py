@@ -7449,7 +7449,38 @@
 #   overrides, the width floor, a collapsed census) and 4 on the
 #   conversions, each breaking the thing the guard exists for, in
 #   app.js, to prove a converted guard still guards.
-__version__ = "0.51.362"
+# 0.51.363: the dashboard legend says the names again.
+#   From the 2026-10-07 GUI pass. `.source-legend-name` has
+#   ellipsised since v0.50.86, whose comment read "harmless on
+#   desktop — there's always room there, so the ellipsis never
+#   engages". Measured on the running dashboard with four donuts at
+#   1800px it engaged on five of seven rows (ThemerrDB had 52px of
+#   the 63 it needs, Manual sidecar 65 of 99, User-supplied 59 of
+#   92), and at 375px the name box measured ZERO: a legend of
+#   swatches and numbers.
+#   The width was never the viewport's to give. It comes from how
+#   many libraries the operator has — four donuts leave each legend
+#   181px at 1800px and at 1100px alike — so the fix reads the
+#   legend's own width, not the screen's. Three changes: the name
+#   WRAPS instead of truncating (the row still cannot force its card
+#   wider, which is all the ellipsis was for); a container query
+#   drops the parenthesised share below 225px, because the donut
+#   beside it IS the share and `(59.6%)` costs 45px of a 181px row;
+#   and the row's tooltip carries the count and the share, so what
+#   the row drops is still a hover away.
+#   Below 440px the donut cards go one per row. v0.50.74's 2-up is
+#   the user's and stays wherever a card can carry a legend — at
+#   600px the cards are ~276 wide and every name fits WITH its share
+#   — but at 375 a card is 149.5, which is where the zero came from.
+#   After: 1800px 0 clipped / 0 wrapped, 375px 0 clipped / 0 wrapped
+#   with the share still shown, and 1280px (four donuts on a laptop)
+#   0 clipped with the long names on two lines — the degradation is
+#   a taller row, never a quieter one.
+#   v0.50.86's own test pinned the ellipsis, so it went red for the
+#   fix. Retargeted onto the property it was about: the row must not
+#   force its card wider, which is min-width:0's doing, not the
+#   truncation's.
+__version__ = "0.51.363"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

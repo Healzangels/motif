@@ -3082,7 +3082,7 @@
       const safeLetter = m.letter === '-' ? '–' : m.letter;
       return `<button type="button" class="source-legend-item ${hidden ? 'off' : ''}"
                       data-letter="${m.letter}"
-                      title="Click to ${hidden ? 'show' : 'hide'} ${htmlEscape(m.name)}">
+                      title="${htmlEscape(m.name)} — ${n.toLocaleString()}${hidden ? '' : ' (' + pct + '%)'} · click to ${hidden ? 'show' : 'hide'}">
         <span class="source-legend-swatch source-legend-swatch-${m.cls}"></span>
         <span class="source-legend-letter source-pie-${m.cls}-text">${safeLetter}</span>
         <span class="source-legend-name">${htmlEscape(m.name)}</span>

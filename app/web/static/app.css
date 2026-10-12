@@ -7078,6 +7078,10 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   gap: 1px;
   font-size: var(--t-tiny);
   min-width: 0;  /* v0.50.86: let the legend shrink with its grid track (mobile) */
+  /* v0.51.363: the legend's OWN width decides what a row can hold, and that width
+     comes from the card count, not the viewport — four donuts at 1800px leave it
+     181px, the same as two at 900. Query the container, not the screen. */
+  container-type: inline-size;
 }
 .source-legend-item {
   display: flex;
@@ -7119,19 +7123,21 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   width: 14px;
   text-align: center;
 }
-/* v0.50.86: min-width:0 + ellipsis — on a narrow legend column (mobile 2-per-row
-   pie cards) this flex item's default min-width:auto would floor it at the full
-   text width of names like "Manual sidecar", forcing the ROW (and its card) wider
-   than the viewport instead of truncating gracefully (the user: pies "spilling
-   outside of their given space" on mobile). Harmless on desktop — there's always
-   room there, so the ellipsis never engages. */
+/* v0.50.86: min-width:0 — on a narrow legend column this flex item's default
+   min-width:auto would floor it at the full text width of names like "Manual
+   sidecar", forcing the ROW (and its card) wider than the viewport (the user: pies
+   "spilling outside of their given space" on mobile).
+   v0.51.363: that fix ellipsised, and its comment claimed "harmless on desktop —
+   there's always room there, so the ellipsis never engages". Measured at 1800px with
+   four donuts, five of seven names engaged it: ThemerrDB had 52px of the 63 it needs,
+   Manual sidecar 65 of 99, and at 375px the name box measured ZERO — a legend of
+   swatches and numbers. The name is the legend's content, so it WRAPS now; the row
+   still cannot force the card wider, which is all the ellipsis was for. */
 .source-legend-name {
   color: var(--fg-dim);
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: break-word;
 }
 .source-legend-count {
   color: var(--fg);
@@ -7148,6 +7154,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   align-items: baseline;
   gap: var(--gap-1);
   flex: 0 0 auto;
+}
+/* v0.51.363: `(59.6%)` costs ~45px of a 181px row, and the donut beside it IS the
+   share — so when the row is tight the parenthesised percentage is what yields, not
+   the name. 225px is where every name still fits with it (the longest, Manual
+   sidecar, needs 99 plus 127 of swatch/letter/count/gaps/padding). The number is in
+   the row's own tooltip either way, so nothing is lost. */
+@container (max-width: 225px) {
+  .source-legend-pct { display: none; }
 }
 
 /* v1.13.3 (Issue 4): scope chip row on the INFO card. Surfaces
@@ -8061,6 +8075,17 @@ body.dash-customize-mode .dash-customize-link:hover {
   .source-pie-row[data-visible="4"] { grid-template-columns: repeat(2, 1fr); }
   .source-pie-row[data-visible="1"] { grid-template-columns: 1fr; }
   .source-pie-row[data-visible="3"] .source-pie-col.is-last-visible { grid-column: 1 / -1; }
+}
+/* v0.51.363: v0.50.74's 2-up is the user's choice and holds wherever a card can carry
+   a legend — at 600px the two cards are ~276 wide and every name fits WITH its share.
+   Below ~440 it cannot: at 375 each card is 149.5, which leaves the legend 115.5 and
+   the name box ZERO, so the legend reads as swatches and numbers. One card per row
+   there gives the legend ~311px and the names come back whole. */
+@media (max-width: 440px) {
+  .source-pie-row,
+  .source-pie-row[data-visible="2"],
+  .source-pie-row[data-visible="3"],
+  .source-pie-row[data-visible="4"] { grid-template-columns: 1fr; }
 }
 .source-pie-col {
   display: grid;

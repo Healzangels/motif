@@ -633,3 +633,20 @@ off the axis, on every row. Four pills carried it after their surfaces moved
 TDB chip) is what let it survive. **When a component moves into a centred context,
 zero its horizontal margins at the source rather than overriding them per surface.**
 Guard: `tests/test_v0_51_361_header_axis_and_pill_margins.py`.
+
+### When the width comes from the data, query the container (v0.51.363)
+
+The SOURCE BREAKDOWN legend's width is set by how many libraries the operator
+has — four donuts leave each legend 181px at 1800px and at 1100px alike — so a
+media query is the wrong instrument for deciding what a legend row can hold.
+`.source-breakdown-legend` is `container-type: inline-size`, and the
+parenthesised share hides under `@container (max-width: 225px)`. **A rule like
+that is inert without the `container-type` declaration, so pin both together.**
+
+**What yields, and in what order.** The name is the legend's content: it wraps
+rather than truncating, and a row that cannot fit it gets taller, never quieter.
+What yields first is the most redundant thing in the row — the percentage, with
+a donut beside it already showing the share — and it goes to the row's tooltip
+rather than away. v0.50.86's ellipsis was reached for to stop a long name
+forcing the card wider; `min-width: 0` is what actually does that, so it stays
+and the ellipsis goes. Guard: `tests/test_v0_51_363_legend_names.py`.

@@ -90,12 +90,22 @@ def test_toolgroup_carries_the_auto_margin_not_the_presets_menu_alone():
 
 # ── 4. SOURCE BREAKDOWN pie cards no longer overflow on mobile ─────────────
 
-def test_legend_name_truncates_instead_of_forcing_overflow():
+def test_legend_name_cannot_force_the_card_wider():
+    """v0.50.86's property, kept; its mechanism, replaced.
+
+    The bug was the pies "spilling outside of their given space" on mobile, because a
+    flex item's default min-width:auto floors it at its text's full width. `min-width: 0`
+    is what fixes that. v0.50.86 ALSO ellipsised, and v0.51.363 measured what that cost:
+    five of seven names truncated at 1800px and a name box of ZERO at 375px, which is a
+    legend that has stopped naming anything. The name wraps now — the row gets taller,
+    the card still cannot get wider — so this test pins the shrink, not the truncation.
+    """
     block = _rule(".source-legend-name {")
-    assert "min-width: 0" in block
-    assert "overflow: hidden" in block
-    assert "text-overflow: ellipsis" in block
-    assert "white-space: nowrap" in block
+    assert "min-width: 0" in block, block
+    assert "text-overflow: ellipsis" not in block, (
+        "v0.51.363: the ellipsis is the regression, not the fix — see "
+        "tests/test_v0_51_363_legend_names.py"
+    )
 
 
 def test_legend_container_and_item_allow_shrink():
