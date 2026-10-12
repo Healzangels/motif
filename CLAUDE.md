@@ -133,6 +133,25 @@ never less. **Adding a bulk endpoint means adding it to that file's
 do. A genuine difference goes in `ALLOWED_DIFFERENCES` with its
 reason, which is a decision, not a silenced lint.
 
+## Page-scoped jobs must fail into a named state (v0.51.366)
+
+Four jobs run on a thread but are deliberately NOT op kinds
+(`ANIMETHEMES_SPEC` §6 decision 5): the AnimeThemes sweep, the orphan
+scan, the loudness audit and RESTORE FROM PLEX. They keep their own
+`_*_STATE` dict, the endpoint sets `status="running"`, and the thread's
+`except` is the ONLY thing that moves it on — `progress.sweep_stuck`
+reaps op_progress rows, not these.
+
+So **nothing that can raise may run before that `try`**. An import, a
+lock acquisition, a path join outside it kills the thread with the page
+stuck on "running" until a restart. A `def` is fine (its body does not
+run), and so is a plain assignment the `except` needs bound.
+
+Adding a page-scoped job means obeying this; the guard finds it on its
+own, by walking `threading.Thread(target=…)` for targets that carry a
+`_*_STATE` instead of an op_progress row. Guard:
+`tests/test_v0_51_366_page_job_state_hole.py`.
+
 ## Recurring bug classes (read PROJECT_HISTORY for full detail)
 
 1. **Phantom P after PURGE** — Plex's metadata cache returns 200 to

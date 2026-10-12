@@ -6723,15 +6723,19 @@ _ORPHAN_SCAN_STATE: dict = {"status": "idle"}
 
 
 def _orphan_scan_run(settings: "Settings", db_path: Path) -> None:
-    from ..core.plex import PlexClient, PlexConfig
-    from ..core.orphan_scan import scan_plex_upload_placements, summarize
-
     def _cb(done: int, total: int) -> None:
         with _ORPHAN_SCAN_LOCK:
             _ORPHAN_SCAN_STATE["done"] = done
             _ORPHAN_SCAN_STATE["total"] = total
 
     try:
+        # v0.51.366: inside the try. An import that raises here used to kill the thread
+        # with the page's state still "running" — these are deliberately not op kinds
+        # (ANIMETHEMES_SPEC §6 decision 5), so progress.sweep_stuck never reaps them and
+        # nothing short of a restart clears the page. v0.51.344 closed the sibling hole
+        # where t.start() itself raised; this is the same hole one statement later.
+        from ..core.plex import PlexClient, PlexConfig
+        from ..core.orphan_scan import scan_plex_upload_placements, summarize
         cfg = PlexConfig(
             url=settings.plex_url, token=settings.plex_token,
             movie_section=settings.plex_movie_section,
@@ -6922,14 +6926,18 @@ def canon_restore_forget(settings) -> dict | None:
 
 
 def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
-    from ..core.loudness_audit import run_loudness_audit
-
     def _cb(done: int, total: int) -> None:
         with _LOUDNESS_AUDIT_LOCK:
             _LOUDNESS_AUDIT_STATE["done"] = done
             _LOUDNESS_AUDIT_STATE["total"] = total
 
     try:
+        # v0.51.366: inside the try. An import that raises here used to kill the thread
+        # with the page's state still "running" — these are deliberately not op kinds
+        # (ANIMETHEMES_SPEC §6 decision 5), so progress.sweep_stuck never reaps them and
+        # nothing short of a restart clears the page. v0.51.344 closed the sibling hole
+        # where t.start() itself raised; this is the same hole one statement later.
+        from ..core.loudness_audit import run_loudness_audit
         summary = run_loudness_audit(
             db_path, themes_dir=settings.themes_dir, progress_cb=_cb,
         )
@@ -27519,11 +27527,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """v0.51.325: the sweep thread. Eligible rows → one prefetch → cache-only
         resolve per row → report file (atomic replace). Failure is a named state
         on the status dict, never a half-written file."""
-        import os
-        import tempfile
-        from ..core import animethemes as _at
-        cache_dir = settings.config_dir / "animethemes"
-
         def _cb(done: int, total: int) -> None:
             with _AT_SWEEP_LOCK:
                 _AT_SWEEP_STATE["done"] = done
@@ -27534,6 +27537,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return bool(_AT_SWEEP_STATE.get("cancel"))
 
         try:
+            # v0.51.366: inside the try — see _orphan_scan_run. An import that raised here
+            # left the page's state "running" with nothing to reap it.
+            import os
+            import tempfile
+            from ..core import animethemes as _at
+            cache_dir = settings.config_dir / "animethemes"
             with get_conn(db_path) as conn:
                 rows = _animethemes_eligible_rows(conn)
             with _AT_SWEEP_LOCK:
@@ -28399,12 +28408,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _canon_restore_run(db_path: Path, themes_dir: Path, plex_cfg, plus_mode, actor: str) -> None:
         """v0.51.342: the RESTORE FROM PLEX thread — progress, then summary into state + marker, audit row, event."""
-        from ..core.canonical_health import restore_from_plex
-        t0 = time.monotonic()
-        with _CANON_RESTORE_LOCK:
-            _CANON_RESTORE_STATE["t0"] = t0
-            started_at = _CANON_RESTORE_STATE.get("started_at")
-        marked = False
+        t0 = time.monotonic()      # the except reads it, so it is bound before the try
+        marked = False             # ditto
 
         def _exit_recorded(exc: BaseException | None = None) -> bool:
             # v0.51.344: exit records a run still on Plex at its deadline — the first to claim the record writes it
@@ -28418,6 +28423,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return theirs
 
         try:
+            # v0.51.366: inside the try — see _orphan_scan_run. An import that raised here
+            # left the page's state "running" with nothing to reap it.
+            from ..core.canonical_health import restore_from_plex
+            with _CANON_RESTORE_LOCK:
+                _CANON_RESTORE_STATE["t0"] = t0
+                started_at = _CANON_RESTORE_STATE.get("started_at")
             with _CANON_RESTORE_MARKER_LOCK:
                 # v0.51.344: the start write can fail too — then whatever marker is there is an earlier run's
                 marked = _canon_restore_write({"status": "running", "started_at": started_at, "actor": actor},

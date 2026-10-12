@@ -7552,7 +7552,33 @@
 #   15px and sail past a chart shrunk to 60; and a dict
 #   comprehension keyed by breakpoint silently kept one of the four
 #   760px blocks. Both fixed, both noted in the test. 7 mutants red.
-__version__ = "0.51.365"
+# 0.51.366: a page-scoped job that dies before its try.
+#   The last open finding from the 2026-10-07 code review, filed
+#   there as latent and low-probability. The AnimeThemes sweep, the
+#   orphan scan, the loudness audit and RESTORE FROM PLEX each have
+#   their state set to `running` by the ENDPOINT and cleared only
+#   inside the thread's `try` — and each opened with a local import
+#   OUTSIDE that try. An import that raises there kills the thread
+#   with the page still reading "running", and these are
+#   deliberately not op kinds (ANIMETHEMES_SPEC §6 decision 5), so
+#   progress.sweep_stuck's 90-minute reaper never sees them: nothing
+#   short of a restart clears the page. v0.51.344 closed the sibling
+#   hole where t.start() itself raised; this is the same hole one
+#   statement later.
+#   The imports moved inside, along with the restore's lock-read.
+#   What may still precede a try is a `def` (its body does not run)
+#   and a plain assignment the `except` needs bound — the restore's
+#   `t0` and `marked`, which its failure path reads.
+#   The guard DISCOVERS these jobs instead of listing them: every
+#   threading.Thread(target=…) in api.py whose target carries its own
+#   `_*_STATE` dict rather than an op_progress row. A new page-scoped
+#   job is held to the rule without anyone remembering to add it —
+#   the mutation that proves it adds one and goes red twice, on the
+#   discovery and on the rule. The two module-level jobs also get a
+#   behavioural test: stub the module they import from, run the
+#   thread body, and the state must read "failed", not "running".
+#   5 mutants red.
+__version__ = "0.51.366"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
