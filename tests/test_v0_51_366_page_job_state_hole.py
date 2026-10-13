@@ -74,6 +74,23 @@ def test_the_page_scoped_jobs_are_found():
     )
 
 
+# What may be bound before the try because the `except` reads it: a literal, or a
+# monotonic clock read (the restore's `t0`). v0.51.368: this was "any Assign", so a
+# path join — `cache_dir = settings.config_dir / "animethemes"`, an attribute chain and
+# a `/` that can both raise — moved back in front of the try and the test stayed green,
+# weaker than the rule CLAUDE.md states for it. Found by the cross-tag review's mutation.
+_SAFE_CALLS = {("time", "monotonic")}
+
+
+def _cannot_raise(node) -> bool:
+    if node is None or isinstance(node, ast.Constant):
+        return True
+    if (isinstance(node, ast.Call) and not node.args and not node.keywords
+            and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)):
+        return (node.func.value.id, node.func.attr) in _SAFE_CALLS
+    return False
+
+
 def test_nothing_that_can_raise_runs_before_the_try():
     for name, states in _page_scoped().items():
         fn = _functions()[name]
@@ -89,13 +106,12 @@ def test_nothing_that_can_raise_runs_before_the_try():
             raise AssertionError(
                 f"v0.51.366: {name} has no try — nothing moves {states} out of 'running'")
         for st in pre:
-            assert isinstance(st, (ast.FunctionDef, ast.Assign, ast.AnnAssign)), (
-                f"v0.51.366: {name} runs a {type(st).__name__} at line {st.lineno} before its "
+            if isinstance(st, ast.FunctionDef):
+                continue                       # a def's body does not run here
+            assert isinstance(st, (ast.Assign, ast.AnnAssign)) and _cannot_raise(st.value), (
+                f"v0.51.366: {name} runs `{ast.unparse(st)[:60]}` (line {st.lineno}) before its "
                 f"try. If it raises, {states} stays 'running' and no reaper covers these — "
                 f"move it inside."
-            )
-            assert not any(isinstance(n, (ast.Import, ast.ImportFrom)) for n in ast.walk(st)), (
-                f"v0.51.366: {name} imports before its try (line {st.lineno})"
             )
 
 

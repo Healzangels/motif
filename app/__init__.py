@@ -7598,7 +7598,32 @@
 #   here, and the changelog should not pretend otherwise. The 14
 #   floor-guard cases pass on 2.0.1 unchanged.
 #   Next quarterly stays ~2027-01; this one was asked for early.
-__version__ = "0.51.367"
+# 0.51.368: two of this session's own guards were weaker than they said.
+#   From a cross-tag review of v0.51.358..v0.51.367 — nine tags shipped
+#   one at a time and never reviewed together. The review's ten finder
+#   agents died on the account's spend limit before reporting, so this
+#   is NOT a full review: it is the two findings confirmed by mutation
+#   before they failed. Both are in tests this session wrote; the
+#   shipped code is correct in each case.
+#   (1) .362 converted _delay_within from a 500-char window to "the
+#   FIRST refreshTopbarStatus after the anchor", and called that
+#   stronger. It had no end: delete the guarded kick and the search
+#   walked 8,292 chars on to an UNRELATED delayed kick and passed.
+#   That is v1.20.0's overshoot — the reason the window ratchet exists
+#   — so the conversion traded a fixed window for an unbounded one.
+#   It is now bounded by the anchor's own block: the first line
+#   indented less than the anchor ends the search, and a block with no
+#   kick fails. Deleting either guarded kick is red now; an immediate
+#   kick in front of the delayed one still is.
+#   (2) .366's page-job guard allowed ANY assignment before the try,
+#   so `cache_dir = settings.config_dir / "animethemes"` — an attribute
+#   chain and a `/`, both able to raise — moved back in front of the
+#   AT sweep's try stayed green, while the CLAUDE.md rule written for
+#   it names path joins as the hazard. An assignment before the try
+#   may now bind only a literal or a monotonic clock read (the
+#   restore's `t0`), and CLAUDE.md says exactly that.
+#   5 mutants red, two of them the review's own (green before).
+__version__ = "0.51.368"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

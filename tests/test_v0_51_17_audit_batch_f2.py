@@ -124,10 +124,19 @@ def _delay_within(anchor: str) -> bool:
     claim: it passed with an immediate kick sitting in front of the delayed one.
     """
     i = APP_JS.index(anchor)
-    j = APP_JS.index("refreshTopbarStatus", i)
-    before = APP_JS[:j].rsplit("\n", 1)[-1].strip()
-    after = APP_JS[j:].split("\n", 1)[0]
-    return before.endswith("setTimeout(") and after.startswith("refreshTopbarStatus, 1100)")
+    lines = APP_JS[APP_JS.rfind("\n", 0, i) + 1:].split("\n")
+    indent = len(lines[0]) - len(lines[0].lstrip())
+    # v0.51.368: BOUNDED by the anchor's own block. The .362 version searched to the
+    # first refreshTopbarStatus anywhere after the anchor — with the guarded kick
+    # deleted it walked 8,292 chars on to an UNRELATED delayed kick and passed: an
+    # unbounded search is the same overshoot as v1.20.0's window, which the ratchet
+    # exists to stop. The block ends at the first line indented less than the anchor.
+    for line in lines[1:]:
+        if line.strip() and len(line) - len(line.lstrip()) < indent:
+            return False                      # left the block without finding a kick
+        if "refreshTopbarStatus" in line:
+            return line.strip() == "setTimeout(refreshTopbarStatus, 1100);"
+    return False
 
 
 def test_dry_run_banner_disable_uses_delay():

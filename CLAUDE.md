@@ -145,7 +145,9 @@ reaps op_progress rows, not these.
 So **nothing that can raise may run before that `try`**. An import, a
 lock acquisition, a path join outside it kills the thread with the page
 stuck on "running" until a restart. A `def` is fine (its body does not
-run), and so is a plain assignment the `except` needs bound.
+run), and so is an assignment the `except` needs bound — but only of a
+literal or a monotonic clock read (the restore's `t0`); anything that
+can raise, a path join included, goes inside (v0.51.368).
 
 Adding a page-scoped job means obeying this; the guard finds it on its
 own, by walking `threading.Thread(target=…)` for targets that carry a
