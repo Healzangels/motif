@@ -116,6 +116,14 @@ _SECTION_ENUM_OVERDUE_WARNED: bool = False
 # unforced and keep the skip.
 _REAP_MISS_THRESHOLD: int = 2
 
+# v0.51.369: missing COLLECTION rows the reaper asks Plex about per walk. Kometa
+# re-creates a collection under a new rating_key, and the old one 404s for good —
+# the grace window left that ghost listed beside its replacement (same title-keyed
+# theme, so a delete on one hit both) for up to ~24h. 50 = the mass-guard's floor,
+# so every batch that guard would let through is fully checked; rows past the cap
+# keep the grace window.
+_REAP_PROBE_CAP: int = 50
+
 
 def _section_enum_overdue(
     db_path: Path, section_id: str, *, hours: int = 24,
@@ -562,6 +570,12 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                         coll_ins, coll_upd = _upsert_items(
                             db_path, collections, cancel_check=_cancel_check,
                             section_id=section_id,
+                            # v0.51.369: collections only. A re-created
+                            # collection starts themeless, so its 404 is a
+                            # true loss; a movie/show re-added mid-walk gets
+                            # its theme back, and the grace window is what
+                            # keeps that from a false 💔 Theme lost.
+                            exists_probe=client.item_exists,
                             progress_op_id="plex_enum",
                             progress_total=len(collections),
                             progress_phase1_label=(
@@ -1947,9 +1961,54 @@ def stat_theme_sidecar(folder_path: str) -> bool | None:
     return False
 
 
+def _probe_missing_rks(db_path: Path, section_id: str, media_type: str,
+                       seen_rks: set[str], exists_probe) -> set[str]:
+    """v0.51.369: the newly-missing rks Plex answers 404 for (reap now, no grace)."""
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT rating_key, consecutive_missing FROM plex_items "
+            "WHERE section_id = ? AND media_type = ?",
+            (section_id, media_type),
+        ).fetchall()
+    # Rows already at the threshold - 1 reap on this miss anyway; only the
+    # ones the grace window would hold are worth a round-trip.
+    missing = sorted(
+        r[0] for r in rows
+        if r[0] not in seen_rks and r[1] + 1 < _REAP_MISS_THRESHOLD)
+    if not missing:
+        return set()
+    gone: set[str] = set()
+    present = 0
+    for rk in missing[:_REAP_PROBE_CAP]:
+        try:
+            verdict = exists_probe(rk)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "v0.51.369 reaper probe: rk %s raised %s — keeping the "
+                "grace window", rk, e)
+            verdict = None
+        # Tristate on purpose (class 9): only a definite 404 skips the grace
+        # window. An error means Plex is unwell — stop, the rest keep theirs.
+        if verdict is False:
+            gone.add(rk)
+        elif verdict is True:
+            present += 1
+        else:
+            break
+    log.info(
+        "v0.51.369 reaper probe: section %s (media_type=%s) — %d newly "
+        "missing: %d gone from Plex (404, reaping now), %d still in Plex, "
+        "%d unchecked (keep the grace window).",
+        section_id, media_type, len(missing), len(gone), present,
+        len(missing) - len(gone) - present,
+    )
+    return gone
+
+
 def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                    *, cancel_check=lambda: False,
                    section_id: str | None = None,
+                   exists_probe=None,
                    progress_op_id: str | None = None,
                    progress_total: int | None = None,
                    progress_base: int = 0,
@@ -2591,6 +2650,12 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
         items_media_type = items[0].media_type
         seen_rks = set(it.rating_key for it in items if it.rating_key)
         if seen_rks:
+            # v0.51.369: ask Plex BEFORE the write txn — HTTP must not hold
+            # the writer lock.
+            _gone_rks = (
+                _probe_missing_rks(db_path, section_id, items_media_type,
+                                   seen_rks, exists_probe)
+                if exists_probe is not None else set())
             with get_conn(db_path) as conn, transaction(conn):
                 current_rks = set(
                     r[0] for r in conn.execute(
@@ -2652,6 +2717,19 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                             f"  AND rating_key IN ({_sph})",
                             [section_id, items_media_type,
                              _REAP_MISS_THRESHOLD] + _sc,
+                        )
+                    # v0.51.369: a row Plex 404'd is gone for good — skip its
+                    # grace window. The mass-guard below still sees it in
+                    # _instantaneous_stale, so a mass glitch still aborts.
+                    _gone_now = list(_gone_rks & stale_rks)
+                    if _gone_now:
+                        _gph = ",".join(["?"] * len(_gone_now))
+                        conn.execute(
+                            f"UPDATE plex_items SET consecutive_missing = ? "
+                            f"WHERE section_id = ? AND media_type = ? "
+                            f"  AND rating_key IN ({_gph})",
+                            [_REAP_MISS_THRESHOLD, section_id,
+                             items_media_type] + _gone_now,
                         )
                     # Post-increment, only rows at >= threshold reap. Reappeared
                     # rows were zeroed above, so a >= threshold row is necessarily

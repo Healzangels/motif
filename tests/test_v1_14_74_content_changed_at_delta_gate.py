@@ -198,6 +198,11 @@ class _FakeClient:
         # which now (correctly) blocks the CCA stamp under test.
         return []
 
+    def item_exists(self, rating_key):
+        # v0.51.369: the collections reaper asks this of missing rows; the
+        # real client always has it. "Still in Plex" — a stub never reaps.
+        return True
+
 
 def test_gate_skips_enum_when_live_equals_stored(tmp_path, monkeypatch):
     """When stored CCA matches live CCA, run_plex_enum must NOT

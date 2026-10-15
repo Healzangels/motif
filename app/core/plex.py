@@ -544,6 +544,15 @@ class PlexClient:
             return False
         return None
 
+    def item_exists(self, rating_key: str) -> bool | None:
+        """v0.51.369: True on 200, False on 404 (gone for good), None on anything else."""
+        status = self._head_or_get_status(self._rk_path(rating_key))
+        if status == 200:
+            return True
+        if status == 404:
+            return False
+        return None
+
     def fetch_theme_prefix(self, rating_key: str, n_bytes: int = 2048) -> bytes | None:
         """v1.13.40: Range-GET the first n_bytes of the theme stream.
 

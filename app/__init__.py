@@ -7623,7 +7623,30 @@
 #   may now bind only a literal or a monotonic clock read (the
 #   restore's `t0`), and CLAUDE.md says exactly that.
 #   5 mutants red, two of them the review's own (green before).
-__version__ = "0.51.368"
+# 0.51.369: a collection Plex has deleted is reaped on the walk that misses it.
+#   The operator saw /collections list "Alfred Hitchcock" twice, and a theme
+#   deleted on one vanished from both. Measured on prod: Kometa re-created the
+#   collection under a new rating_key; the old key answered 404; its row sat
+#   at consecutive_missing=1 behind the v0.51.128 grace window, which waits
+#   for a SECOND walk (up to ~24h on cron). Both rows map to the same
+#   title-keyed plex_orphan theme, so any theme action on one hit both. Not
+#   data loss — the next walk reaps the ghost — but a day of a duplicate row.
+#   The collections pass now asks Plex about each newly-missing row
+#   (PlexClient.item_exists: HEAD /library/metadata/{rk}, measured 5-20 ms on
+#   prod: ghost 404, live 200). 404 = gone for good, reaped on this walk. 200
+#   or any error keeps the grace window, and the first error stops the rest
+#   (Plex is unwell; nothing is reaped on a guess). At most _REAP_PROBE_CAP =
+#   50 per walk — the mass-guard's floor, so every batch it lets through is
+#   fully checked; rows past the cap keep the grace window. Plex is asked
+#   BEFORE the write txn, so no HTTP holds the writer lock. The v1.18.89
+#   mass-guard still keys off the full instantaneous miss and still aborts.
+#   Movies and shows are NOT probed, on purpose: a title Plex re-adds mid-walk
+#   gets its theme back under the new key, and the grace window is what keeps
+#   the old row's reap from a false 💔 Theme lost. A re-created collection
+#   starts themeless, so its 404 is a true loss either way.
+#   16 tests; 12 mutants red (tristate, stop-on-error, cap, the jump, the
+#   guard's set, both call sites, 404 vs /theme, flagged rows, the lock).
+__version__ = "0.51.369"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
